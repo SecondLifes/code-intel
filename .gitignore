@@ -1,0 +1,5 @@
+.venv/
+data/
+qdrant-bin/*.zip
+qdrant.log
+*.onnx
