@@ -178,13 +178,20 @@ def indexes_get():
             prof = get_profile(c.name)
             hist = hist_all.get(c.name, [])
             latest = hist[0] if hist else {}
+            path = prof.get("path") or latest.get("path", "")
+            # ucuz doğrulama: yol diskte var mı; profildeki (elle girilmiş/son) yol son
+            # GERÇEK reindex'te kullanılan yoldan farklı mı (reindex edilmemiş bir düzeltme mi)
+            path_missing = bool(path) and not pathlib.Path(path).exists()
+            path_pending = bool(prof.get("path")) and bool(latest.get("path")) and prof.get("path") != latest.get("path")
             out.append({
                 "name": c.name,
                 "version": prof.get("version", ""),
                 # elle düzeltilmiş değer (profil) otomatik tespit edilenden ÖNCELİKLİ —
                 # kullanıcı diski/klasörü taşıdığında reindex'e gerek kalmadan düzeltebilsin diye
                 "language": prof.get("language") or latest.get("language", ""),
-                "path": prof.get("path") or latest.get("path", ""),
+                "path": path,
+                "path_missing": path_missing,   # yol şu an diskte yok
+                "path_pending": path_pending,   # yol elle değiştirildi ama henüz bu yolla reindex edilmedi
                 "points": total,
                 "dense": vector_state(c.name, "dense", total) if has_dense_cfg else {"state": "n/a", "count": 0},
                 "sparse": vector_state(c.name, "sparse", total) if has_sparse_cfg else {"state": "n/a", "count": 0},
