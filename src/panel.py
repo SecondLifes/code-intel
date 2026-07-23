@@ -138,9 +138,12 @@ def health():
 def history_get(collection: str = ""):
     return get_history(collection or None)
 
-# ---------------- indeks profili (versiyon gibi kullanıcı alanları) ----------------
+# ---------------- indeks profili (versiyon, klasör, dil gibi kullanıcı alanları) ----------------
 class ProfileReq(BaseModel):
-    collection: str; version: str = ""
+    collection: str
+    version: str | None = None
+    path: str | None = None       # reindex'e gerek KALMADAN düzeltilebilsin diye (disk/klasör taşındığında)
+    language: str | None = None   # otomatik etiketi elle düzeltebilmek için
 
 @app.get("/api/profile")
 def profile_get(collection: str):
@@ -148,7 +151,8 @@ def profile_get(collection: str):
 
 @app.post("/api/profile")
 def profile_set(r: ProfileReq):
-    set_profile(r.collection, version=r.version)
+    # yalnızca gönderilen alanlar güncellenir — None olanlara dokunulmaz (set_profile zaten filtreler)
+    set_profile(r.collection, version=r.version, path=r.path, language=r.language)
     return {"ok": True}
 
 # ---------------- ayarlar sayfası için zengin indeks özeti ----------------
@@ -177,8 +181,10 @@ def indexes_get():
             out.append({
                 "name": c.name,
                 "version": prof.get("version", ""),
-                "language": latest.get("language") or prof.get("language", ""),
-                "path": latest.get("path", ""),
+                # elle düzeltilmiş değer (profil) otomatik tespit edilenden ÖNCELİKLİ —
+                # kullanıcı diski/klasörü taşıdığında reindex'e gerek kalmadan düzeltebilsin diye
+                "language": prof.get("language") or latest.get("language", ""),
+                "path": prof.get("path") or latest.get("path", ""),
                 "points": total,
                 "dense": vector_state(c.name, "dense", total) if has_dense_cfg else {"state": "n/a", "count": 0},
                 "sparse": vector_state(c.name, "sparse", total) if has_sparse_cfg else {"state": "n/a", "count": 0},
@@ -405,9 +411,16 @@ def _run_index(r: IndexReq):
         lib = r.lib or r.collection
         jsonl = ROOT / f"data/chunks-{r.collection}.jsonl"
         prev = get_history(r.collection).get(r.collection, [])
-        src_path = r.path or (prev[0]["path"] if prev else "")
+        prof = get_profile(r.collection)
+        # elle düzeltilmiş yol (profil) geçmişteki son yoldan ÖNCELİKLİ — kullanıcı disk/klasör
+        # taşındıktan sonra path'i Ayarlar'dan düzeltebilir, sonraki her "yenile" onu kullanır
+        src_path = r.path or prof.get("path") or (prev[0]["path"] if prev else "")
         if not src_path:
             raise RuntimeError("kaynak klasör yok — bir yol verin")
+        if r.path:
+            # açıkça yeni bir yol verildi — profildeki (varsa eski/elle düzeltilmiş) yolu da
+            # güncelle, yoksa bir sonraki "yenile" eski/durağan bir yolu kullanmaya devam ederdi
+            set_profile(r.collection, path=r.path)
 
         # her seferinde yeniden chunk'la — chunker hızlıdır (~300 dosya/sn), asıl maliyetli
         # kısım embedding, ve hangi dosyaların gerçekten değiştiğini bilmek için önce
