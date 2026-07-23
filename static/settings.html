@@ -67,6 +67,13 @@ table tr.collrow.sel td{background:rgba(224,162,74,.11)}
 .histentry .c{font-size:11px;color:var(--faint)}
 .histentry button{padding:5px 11px;font-size:12px;background:var(--panel);border:1px solid var(--line2);color:var(--dim);font-weight:500}
 .histentry button:hover{border-color:var(--amber-d);color:var(--amber)}
+td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.verinput{background:transparent;border:1px solid transparent;border-radius:6px;padding:4px 6px;font-size:12.5px;color:var(--txt);width:80px;font-family:var(--mono)}
+.verinput:hover{border-color:var(--line2)}
+.verinput:focus{border-color:var(--amber-d);background:var(--card)}
+.vecstate{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.vecstate button{padding:2px 7px;font-size:11px;background:var(--card);border:1px solid var(--line2);color:var(--dim);font-weight:500;border-radius:6px}
+.vecstate button:hover{border-color:var(--amber-d);color:var(--amber)}
 </style>
 </head>
 <body>
@@ -129,7 +136,10 @@ table tr.collrow.sel td{background:rgba(224,162,74,.11)}
   <div class="panelcard">
     <h3 id="t-colls">İndeksler</h3>
     <div class="note" id="t-collhint" style="margin:0 0 10px">Bir indekse tıklayın: kaynak klasörünü ve geçmişini görün.</div>
-    <table><thead><tr><th id="th-name">Ad</th><th id="th-pts">Nokta</th><th id="th-vec">Vektörler</th></tr></thead><tbody id="coll-rows"></tbody></table>
+    <table><thead><tr>
+      <th id="th-name">Ad</th><th id="th-ver">Versiyon</th><th id="th-lang">Dil</th><th id="th-path">Klasör</th>
+      <th id="th-sparse">Kelime İndex</th><th id="th-dense">Anlamsal İndex</th><th id="th-pts">Nokta</th>
+    </tr></thead><tbody id="coll-rows"></tbody></table>
     <div id="histbox" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
       <h3 style="margin-bottom:10px" id="t-histfor">Geçmiş —</h3>
       <div id="hist-rows"></div>
@@ -153,9 +163,12 @@ function applyLang(){
   $('t-note').textContent=T('Önce Kelime (hızlı, GPU gerektirmez) indeksleyip aramaya başlayabilir, Türkçe/anlamsal indekslemeyi daha sonra aynı chunk\'lar üzerine ekleyebilirsiniz — baştan başlamaz.','You can start with Keyword (fast, no GPU needed) and search right away, then add the Turkish/semantic index later on the same chunks — it will not start over.');
   $('t-models').textContent=T('Ollama Modelleri (Türkçe açıklama)','Ollama Models (explanations)');
   $('l-fast').textContent=T('Hızlı model','Fast model');$('l-deep').textContent=T('Derin model','Deep model');
-  $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');$('th-vec').textContent=T('Vektörler','Vectors');
+  $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');
+  $('th-ver').textContent=T('Versiyon','Version');$('th-lang').textContent=T('Dil','Language');$('th-path').textContent=T('Klasör','Folder');
+  $('th-sparse').textContent=T('Kelime İndex','Keyword Index');$('th-dense').textContent=T('Anlamsal İndex','Semantic Index');
   $('t-collhint').textContent=T('Bir indekse tıklayın: kaynak klasörünü ve geçmişini görün.','Click an index to see its source folder and history.');
   refreshHistory();
+  loadIndexes();
   if(SELECTED)renderHistFor(SELECTED);
 }
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
@@ -164,10 +177,36 @@ function setPill(id,ok,label){const el=$(id);el.className='pill '+(ok?'ok':'bad'
 async function health(){try{
   const h=await(await fetch('/api/health')).json();
   setPill('p-qdrant',h.qdrant,'Qdrant');setPill('p-ollama',h.ollama,'Ollama');setPill('p-gpu',h.gpu,'GPU');
-  $('coll-rows').innerHTML=(h.collections||[]).map(c=>
-    `<tr class="collrow${c.name===SELECTED?' sel':''}" onclick="selectCollection('${c.name}')">`+
-    `<td class="mono">${c.name}</td><td>${c.points.toLocaleString('tr')}</td><td>${(c.vectors||[]).join(', ')||'—'}</td></tr>`).join('');
 }catch(e){}}
+function shortPath(p){if(!p)return '—';return p.length>30?'…'+p.slice(-27):p;}
+function vecCell(v,name,type){
+  const icon=v.state==='full'?'✅':v.state==='partial'?'🟡':v.state==='n/a'?'—':'⬜';
+  const btn=v.state==='n/a'?'':`<button onclick="event.stopPropagation();refreshVector('${name}','${type}')" title="${T('Klasörden yenile','Refresh from folder')}">↻</button>`;
+  return `<span class="vecstate" title="${v.count} ${T('nokta','points')}">${icon}${btn}</span>`;
+}
+async function loadIndexes(){try{
+  const d=await(await fetch('/api/indexes')).json();
+  $('coll-rows').innerHTML=(d.indexes||[]).map(ix=>`
+    <tr class="collrow${ix.name===SELECTED?' sel':''}">
+      <td class="mono" onclick="selectCollection('${ix.name}')">${esc(ix.name)}</td>
+      <td><input class="verinput" value="${esc(ix.version||'')}" placeholder="—" onclick="event.stopPropagation()" onchange="saveVersion('${ix.name}',this.value)"></td>
+      <td onclick="selectCollection('${ix.name}')">${esc(ix.language)||'—'}</td>
+      <td class="path" onclick="selectCollection('${ix.name}')" title="${esc(ix.path)}">${esc(shortPath(ix.path))}</td>
+      <td>${vecCell(ix.sparse,ix.name,'sparse')}</td>
+      <td>${vecCell(ix.dense,ix.name,'dense')}</td>
+      <td onclick="selectCollection('${ix.name}')">${ix.points.toLocaleString('tr')}</td>
+    </tr>`).join('');
+}catch(e){}}
+async function saveVersion(name,version){
+  try{await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection:name,version})});}catch(e){}
+}
+async function refreshVector(name,type){
+  const body={collection:name,vectors:[type],device:$('idx-dev').value};
+  const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  if(r.error){alert(r.error);return;}
+  SELECTED=name;
+  $('jobbar').classList.add('show');if(jobTimer)clearInterval(jobTimer);jobTimer=setInterval(poll,1500);poll();
+}
 async function refreshHistory(){try{
   HISTORY=await(await fetch('/api/history')).json();
   const coll=$('idx-coll').value.trim();
@@ -215,7 +254,7 @@ async function loadModels(){try{
     if(want)s.value=want;s.onchange=()=>localStorage.setItem(key,s.value);
   }
 }catch(e){}}
-health();loadModels();setInterval(health,10000);
+health();loadModels();loadIndexes();setInterval(health,10000);setInterval(loadIndexes,10000);
 
 let jobTimer=null;
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
@@ -231,6 +270,7 @@ async function startIndex(vectors){
   if(r.error){alert(r.error);return;}
   SELECTED=collection;
   refreshHistory();
+  loadIndexes();
   $('jobbar').classList.add('show');if(jobTimer)clearInterval(jobTimer);jobTimer=setInterval(poll,1500);poll();
 }
 async function poll(){
@@ -245,7 +285,7 @@ async function poll(){
   $('jobeta').textContent=s.rate&&s.total?T('kalan ','ETA ')+Math.max(0,Math.round((s.total-s.done)/s.rate))+' sn':'';
   $('jobtitle').innerHTML=s.phase==='done'?'✅ '+T('Tamamlandı','Done')+` (${s.sec} sn)`:s.phase==='error'?'❌ '+esc(s.error):'<span class="spin"></span>'+T('İndeksleniyor','Indexing')+` — ${esc(s.collection||'')}`;
   if(s.phase==='done'||s.phase==='error'){
-    clearInterval(jobTimer);jobTimer=null;health();
+    clearInterval(jobTimer);jobTimer=null;health();loadIndexes();
     if(s.phase==='done'){refreshHistory().then(()=>{if(SELECTED)renderHistFor(SELECTED);});}
   }
 }
