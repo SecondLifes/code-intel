@@ -12,17 +12,23 @@ ort.preload_dlls()
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
-from fastembed import TextEmbedding, SparseTextEmbedding
-from qdrant_client import QdrantClient, models
+from qdrant_client import models
+
+try:
+    from . import retrieval
+    from .retrieval import cl, dense_model, sparse_model, gpu_available, ollama_generate  # noqa: F401
+except ImportError:
+    # `uvicorn src.panel:app` proje kökünden çalıştırıldığında paket-göreli import
+    # işe yarar; ama doğrudan `python src/panel.py` gibi çalıştırılırsa (paketsiz) düşülür.
+    import retrieval
+    from retrieval import cl, dense_model, sparse_model, gpu_available, ollama_generate  # noqa: F401
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-QDRANT, OLLAMA = "http://127.0.0.1:6333", "http://127.0.0.1:11434"   # "localhost" yerine 127.0.0.1: Windows'ta IPv6->IPv4 fallback her istekte ~2sn gecikme yaratıyordu (ölçüldü, doğrulandı)
+QDRANT, OLLAMA = retrieval.QDRANT, retrieval.OLLAMA
 HISTORY_COLL = "_index_history"    # indeksleme geçmişi
 PROFILE_COLL = "_index_profiles"   # koleksiyon başına TEK nokta (versiyon gibi kullanıcı alanları) — hepsi Qdrant'ın kendisinde, ayrı bir dosya yok
 INTERNAL_COLLS = {HISTORY_COLL, PROFILE_COLL}
 STATE = {"index_job": None}
-_dense = {}          # device -> TextEmbedding
-_sparse = None
 
 # uzantı -> dil etiketi (gerçek ayrıştırma DEĞİL — sadece klasördeki dosyaları etiketlemek için;
 # şu an chunker sadece .pas dosyalarını gerçekten ayrıştırıyor)
@@ -96,18 +102,6 @@ def get_history(collection: str | None = None) -> dict:
         entries.sort(key=lambda e: e["date"], reverse=True)
     return out
 
-def dense_model(device: str):
-    if device not in _dense:
-        _dense[device] = TextEmbedding("intfloat/multilingual-e5-large", cuda=(device == "gpu"))
-    return _dense[device]
-
-def sparse_model():
-    global _sparse
-    if _sparse is None:
-        _sparse = SparseTextEmbedding("Qdrant/bm25")
-    return _sparse
-
-cl = QdrantClient(QDRANT, timeout=120)
 app = FastAPI(title="Code-Intel Panel")
 
 # ---------------- sağlık / listeler ----------------
@@ -421,55 +415,16 @@ def hardware_suggest():
                       for t, gb in sorted(sized, key=lambda tg: -tg[1])]}
 
 # ---------------- arama (birden fazla koleksiyonda birlikte aranabilir) ----------------
+# Çekirdek hibrit RRF arama mantığı retrieval.py'de — panel.py VE mcp_server.py ortak kullanır.
 class SearchReq(BaseModel):
     q: str; collections: list[str] = ["unidac"]; mode: str = "hybrid"; top_k: int = 8
 
-def _search_one(collection: str, dv: list[float], sq, mode: str, limit: int):
-    kw = dict(collection_name=collection, limit=limit, with_payload=True)
-    if mode == "dense":
-        return cl.query_points(query=dv, using="dense", **kw).points
-    if mode == "sparse":
-        return cl.query_points(query=sq, using="sparse", **kw).points
-    return cl.query_points(prefetch=[
-        models.Prefetch(query=dv, using="dense", limit=limit),
-        models.Prefetch(query=sq, using="sparse", limit=limit)],
-        query=models.FusionQuery(fusion=models.Fusion.RRF), **kw).points
-
 @app.post("/api/search")
 def search(r: SearchReq):
-    t0 = time.time()
-    dv = list(dense_model("gpu" if "CUDAExecutionProvider" in ort.get_available_providers() else "cpu")
-              .embed([f"query: {r.q}"]))[0].tolist()
-    sv = list(sparse_model().query_embed(r.q))[0]
-    sq = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
-    per_coll_limit = max(25, r.top_k * 3)
-    by_coll, errors = {}, {}
-    for c in r.collections:
-        try:
-            by_coll[c] = _search_one(c, dv, sq, r.mode, per_coll_limit)
-        except Exception as e:
-            # örn. seçilen koleksiyonda "dense"/"sparse" adlı vektör yok (eski/farklı şema) —
-            # o koleksiyonu atla, diğerlerinde arama devam etsin.
-            errors[c] = str(e)[:200]
-    if not by_coll:
-        return JSONResponse({"error": "Hiçbir seçili koleksiyonda arama yapılamadı: " + json.dumps(errors, ensure_ascii=False)}, status_code=400)
-
-    if len(by_coll) == 1:
-        # tek koleksiyon (ya seçilen tek buydu, ya da diğerleri hata verdi): Qdrant'ın kendi
-        # (doğrudan karşılaştırılabilir) skoru korunur
-        chosen = [(c, h) for c, pts in by_coll.items() for h in pts][:r.top_k]
-    else:
-        # birden fazla koleksiyon: skorlar aralarında karşılaştırılabilir değil (farklı
-        # indeksler, farklı skor dağılımları) — bu yüzden RANK'e göre RRF ile birleştiriliyor
-        K = 60
-        scored = [(c, h, 1.0 / (K + rank + 1)) for c, pts in by_coll.items() for rank, h in enumerate(pts)]
-        scored.sort(key=lambda t: t[2], reverse=True)
-        chosen = [(c, h) for c, h, _ in scored[:r.top_k]]
-
-    return {"ms": int((time.time() - t0) * 1000), "hits": [
-        {"collection": c, "score": round(h.score, 3), "id": h.id,
-         **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
-         "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr")} for c, h in chosen]}
+    result = retrieval.search(r.q, r.collections, r.mode, r.top_k)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return result
 
 # ---------------- açıklama (cache'li) ----------------
 class ExplainReq(BaseModel):
@@ -477,33 +432,10 @@ class ExplainReq(BaseModel):
 
 @app.post("/api/explain")
 def explain(r: ExplainReq):
-    pt = cl.retrieve(r.collection, ids=[r.id], with_payload=True)[0]
-    key = "tr_deep" if r.depth == "deep" else "tr"
-    if pt.payload.get(key):
-        return {"cached": True, "text": pt.payload[key]}
-    mdl = r.model or ("qwen3.6" if r.depth == "deep" else "gemma4:12b")
-    doc = pt.payload.get("doc", "")
-    if r.depth == "fast" and doc:
-        # /// XML doc özeti var — koddan yeniden tahmin ettirmek yerine bu insan-yazımı
-        # İngilizce özeti doğrudan Türkçeye çevirmek daha ucuz ve daha güvenilir.
-        prompt = ("Asagidaki Ingilizce kod dokumantasyon ozetini dogal, net bir Turkceye cevir. "
-                  "Sadece cevrilmis metni yaz, baska aciklama ekleme.\n\n" + doc)
-    elif r.depth == "deep":
-        ctx = f"Dokumantasyon ozeti (Ingilizce): {doc}\n\n" if doc else ""
-        prompt = ("Asagidaki Delphi metodunun ne yaptigini Turkce acikla. "
-                  "Derinlemesine: mantik akisi, kenar durumlar, olasi riskler. "
-                  + ctx + pt.payload.get('code', ''))
-    else:
-        prompt = ("Asagidaki Delphi metodunun ne yaptigini Turkce acikla. 2-4 cumle, net ve sade. "
-                  f"\n\n{pt.payload.get('code', '')}")
-    body = json.dumps({"model": mdl, "prompt": prompt, "stream": False,
-                       "options": {"num_predict": 500}, "think": False}).encode()
-    t0 = time.time()
-    txt = json.loads(urllib.request.urlopen(
-        urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
-        timeout=600).read()).get("response", "").strip()
-    cl.set_payload(r.collection, payload={key: txt}, points=[r.id])
-    return {"cached": False, "model": mdl, "sec": round(time.time() - t0, 1), "text": txt}
+    result = retrieval.explain_chunk(r.collection, r.id, r.depth, r.model)
+    if "error" in result:
+        return JSONResponse(result, status_code=404)
+    return result
 
 # ---------------- indeksleme ----------------
 class IndexReq(BaseModel):

@@ -264,27 +264,39 @@ async function deleteCollection(){
   }catch(e){alert(e);}
   $('btn-detdelete').disabled=false;
 }
-function exportCollection(){
+async function exportCollection(){
   if(!SELECTED)return;
-  const a=document.createElement('a');
-  a.href='/api/collection/export?collection='+encodeURIComponent(SELECTED);
-  a.download=SELECTED+'.jsonl.gz';
-  document.body.appendChild(a);a.click();a.remove();
+  const btn=$('btn-detexport');
+  const orig=btn.innerHTML;
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span> '+T('Hazırlanıyor…','Preparing…');
+  try{
+    const r=await fetch('/api/collection/export?collection='+encodeURIComponent(SELECTED));
+    if(!r.ok){const j=await r.json().catch(()=>({}));alert(j.error||T('Dışa aktarma başarısız.','Export failed.'));return;}
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=SELECTED+'.jsonl.gz';
+    document.body.appendChild(a);a.click();a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){alert(e);}
+  btn.disabled=false;btn.innerHTML=orig;
 }
 async function importCollection(file){
   if(!file)return;
   $('btn-import').disabled=true;
   const orig=$('btn-import').innerHTML;
-  $('btn-import').innerHTML=T('Yükleniyor…','Uploading…');
+  $('btn-import').innerHTML='<span class="spin"></span> '+T('Yükleniyor, bekleyiniz…','Uploading, please wait…');
   try{
     const fd=new FormData();fd.append('file',file);
     let r=await fetch('/api/collection/import',{method:'POST',body:fd});
     let j=await r.json();
     if(j.error && r.status===409){
+      $('btn-import').disabled=false;$('btn-import').innerHTML=orig;
       if(confirm(j.error+'\n\n'+T('Üzerine yazılsın mı?','Overwrite it?'))){
+        $('btn-import').disabled=true;$('btn-import').innerHTML='<span class="spin"></span> '+T('Yükleniyor, bekleyiniz…','Uploading, please wait…');
         r=await fetch('/api/collection/import?overwrite=true',{method:'POST',body:fd});
         j=await r.json();
-      }else{$('btn-import').disabled=false;$('btn-import').innerHTML=orig;return;}
+      }else{$('import-file').value='';return;}
     }
     if(j.error){alert(j.error);}
     else{alert(T(`İçe aktarıldı: "${j.collection}" — ${j.points} nokta.`,`Imported: "${j.collection}" — ${j.points} points.`));await loadIndexes();}
