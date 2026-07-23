@@ -167,7 +167,8 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       </div>
       <h3 style="margin:18px 0 10px" id="t-histfor">Geçmiş</h3>
       <div id="hist-rows"></div>
-      <div style="display:flex;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <button type="button" onclick="deleteCollection()" id="btn-detdelete" style="background:transparent;border:1px solid var(--err);color:var(--err)">🗑️ <span id="t-detdelete">Sil</span></button>
         <button type="button" onclick="saveDetail()" id="btn-detsave">💾 <span id="t-detsave">Kaydet</span></button>
       </div>
     </div>
@@ -195,7 +196,7 @@ function applyLang(){
   $('th-sparse').textContent=T('Kelime İndex','Keyword Index');$('th-dense').textContent=T('Anlamsal İndex','Semantic Index');
   $('t-collhint').textContent=T('Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.','Click an index to see its details and history.');
   $('l-detver').textContent=T('Versiyon','Version');$('l-detlang').textContent=T('Dil','Language');$('l-detpath').textContent=T('Kaynak klasör','Source folder');
-  $('t-detsave').textContent=T('Kaydet','Save');
+  $('t-detsave').textContent=T('Kaydet','Save');$('t-detdelete').textContent=T('Sil','Delete');
   $('t-detpathnote').textContent=T('Klasörü buradan düzeltmek (örn. disk/klasör taşındıysa) yeniden indekslemez — sadece kayıtlı yolu günceller.','Correcting the folder here (e.g. after moving disks/folders) does not reindex — it only updates the saved path.');
   $('t-detrsparse').textContent=T('Kelime İndeksini Yenile','Refresh Keyword Index');$('t-detrdense').textContent=T('Anlamsal İndeksi Yenile','Refresh Semantic Index');
   $('t-histfor').textContent=T('Geçmiş','History');
@@ -238,6 +239,22 @@ async function saveDetail(){
     await loadIndexes();
   }catch(e){}
   $('btn-detsave').disabled=false;
+}
+async function deleteCollection(){
+  if(!SELECTED)return;
+  const ix=INDEXES[SELECTED]||{};
+  const msg=T(`"${SELECTED}" indeksini SİLMEK istediğinize emin misiniz? ${ix.points||0} nokta, geçmişi ve tüm ayarlarıyla birlikte KALICI olarak silinecek. Bu geri alınamaz.`,
+              `Are you sure you want to DELETE "${SELECTED}"? ${ix.points||0} points, its history, and all settings will be PERMANENTLY removed. This cannot be undone.`);
+  if(!confirm(msg))return;
+  $('btn-detdelete').disabled=true;
+  try{
+    const r=await(await fetch('/api/collection?collection='+encodeURIComponent(SELECTED),{method:'DELETE'})).json();
+    if(r.error){alert(r.error);$('btn-detdelete').disabled=false;return;}
+    SELECTED=null;
+    $('detailbox').style.display='none';
+    await loadIndexes();
+  }catch(e){alert(e);}
+  $('btn-detdelete').disabled=false;
 }
 async function refreshVector(name,type){
   const body={collection:name,vectors:[type],device:$('idx-dev').value};

@@ -155,6 +155,26 @@ def profile_set(r: ProfileReq):
     set_profile(r.collection, version=r.version, path=r.path, language=r.language)
     return {"ok": True}
 
+# ---------------- koleksiyon silme (kendisi + geçmiş + profil kayıtları) ----------------
+@app.delete("/api/collection")
+def collection_delete(collection: str):
+    if collection in INTERNAL_COLLS:
+        return JSONResponse({"error": "iç sistem koleksiyonu silinemez"}, status_code=400)
+    if not cl.collection_exists(collection):
+        return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
+    cl.delete_collection(collection)
+    if cl.collection_exists(HISTORY_COLL):
+        hist_ids = [p.id for p in cl.scroll(HISTORY_COLL, limit=10000,
+                    scroll_filter=models.Filter(must=[models.FieldCondition(key="collection", match=models.MatchValue(value=collection))]))[0]]
+        if hist_ids:
+            cl.delete(HISTORY_COLL, points_selector=models.PointIdsList(points=hist_ids))
+    if cl.collection_exists(PROFILE_COLL):
+        cl.delete(PROFILE_COLL, points_selector=models.PointIdsList(points=[profile_id(collection)]))
+    jsonl = ROOT / f"data/chunks-{collection}.jsonl"
+    if jsonl.exists():
+        jsonl.unlink()
+    return {"ok": True}
+
 # ---------------- ayarlar sayfası için zengin indeks özeti ----------------
 def vector_state(collection: str, name: str, total: int) -> dict:
     if total == 0:
