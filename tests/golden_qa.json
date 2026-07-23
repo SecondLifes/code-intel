@@ -1,0 +1,12 @@
+[
+  {"question": "connection string parse", "expected_names": ["ParseServerString", "ParseHostString", "ParseInstanceString"]},
+  {"question": "transaction commit rollback", "expected_names": ["Commit", "Rollback", "StartTransaction"]},
+  {"question": "veritabanina baglanti acma", "expected_names": ["Connect", "Open"]},
+  {"question": "SQL sorgusu calistirma execute", "expected_names": ["Execute", "ExecSQL"]},
+  {"question": "kayit ekleme insert", "expected_names": ["Insert", "Append"]},
+  {"question": "bellek serbest birakma free destroy", "expected_names": ["Free", "Destroy"]},
+  {"question": "exception hata yakalama", "expected_names": ["Exception", "Except"]},
+  {"question": "dataset alanlari field degerleri", "expected_names": ["Field", "FieldByName"]},
+  {"question": "stored procedure cagirma", "expected_names": ["Procedure", "StoredProc"]},
+  {"question": "loader class yukleme", "expected_names": ["GetLoaderClass", "Loader"]}
+]

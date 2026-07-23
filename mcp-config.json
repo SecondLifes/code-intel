@@ -1,0 +1,12 @@
+{
+  "$comment": "MCP sunucusu (src/mcp_server.py) ayarları. Değişiklik yapınca sunucuyu (stdio process) yeniden başlatmanız yeterli — panel.py'yi etkilemez.",
+  "qdrant_url": "http://127.0.0.1:6333",
+  "ollama_url": "http://127.0.0.1:11434",
+  "default_collections": ["unidac"],
+  "fast_model": "gemma4:12b",
+  "deep_model": "qwen3.6",
+  "domain_models": {
+    "$comment": "Belirli bir alanda (örn. SQL) kurulu ÖZEL bir model varsa buraya ekleyin. ask_domain_model tool'u bu eşlemeyi kullanır — bir agent 'sql sorgusu üret/açıkla ama fast_model bunda zayıf' dediğinde buradaki modele danışabilir.",
+    "sql": "sqlcoder:15b"
+  }
+}
