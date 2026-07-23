@@ -16,11 +16,55 @@ from fastembed import TextEmbedding, SparseTextEmbedding
 from qdrant_client import QdrantClient, models
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-QDRANT, OLLAMA = "http://localhost:6333", "http://localhost:11434"
-HISTORY_COLL = "_index_history"   # indeksleme geçmişi Qdrant'ın kendisinde saklanır (ayrı bir dosya değil)
+QDRANT, OLLAMA = "http://127.0.0.1:6333", "http://127.0.0.1:11434"   # "localhost" yerine 127.0.0.1: Windows'ta IPv6->IPv4 fallback her istekte ~2sn gecikme yaratıyordu (ölçüldü, doğrulandı)
+HISTORY_COLL = "_index_history"    # indeksleme geçmişi
+PROFILE_COLL = "_index_profiles"   # koleksiyon başına TEK nokta (versiyon gibi kullanıcı alanları) — hepsi Qdrant'ın kendisinde, ayrı bir dosya yok
+INTERNAL_COLLS = {HISTORY_COLL, PROFILE_COLL}
 STATE = {"index_job": None}
 _dense = {}          # device -> TextEmbedding
 _sparse = None
+
+# uzantı -> dil etiketi (gerçek ayrıştırma DEĞİL — sadece klasördeki dosyaları etiketlemek için;
+# şu an chunker sadece .pas dosyalarını gerçekten ayrıştırıyor)
+LANG_EXT = {
+    ".pas": "Pascal/Delphi", ".dpr": "Pascal/Delphi", ".dpk": "Pascal/Delphi", ".inc": "Pascal/Delphi",
+    ".cpp": "C++", ".cc": "C++", ".cxx": "C++", ".h": "C/C++", ".hpp": "C++",
+    ".c": "C", ".cs": "C#", ".java": "Java", ".py": "Python",
+    ".js": "JavaScript", ".ts": "TypeScript", ".go": "Go", ".rs": "Rust",
+}
+
+def detect_language(path: str) -> str:
+    counts: dict[str, int] = {}
+    try:
+        for p in pathlib.Path(path).rglob("*"):
+            if p.is_file():
+                lang = LANG_EXT.get(p.suffix.lower())
+                if lang:
+                    counts[lang] = counts.get(lang, 0) + 1
+    except Exception:
+        return "Bilinmiyor"
+    if not counts:
+        return "Bilinmiyor"
+    total = sum(counts.values())
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:2]
+    return ", ".join(f"{lang} (%{round(100*n/total)})" for lang, n in top)
+
+def profile_id(collection: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, collection))
+
+def get_profile(collection: str) -> dict:
+    if not cl.collection_exists(PROFILE_COLL):
+        return {}
+    pts = cl.retrieve(PROFILE_COLL, ids=[profile_id(collection)], with_payload=True)
+    return pts[0].payload if pts else {}
+
+def set_profile(collection: str, **fields):
+    if not cl.collection_exists(PROFILE_COLL):
+        cl.create_collection(PROFILE_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+    payload = get_profile(collection)
+    payload.update({k: v for k, v in fields.items() if v is not None})
+    payload["collection"] = collection
+    cl.upsert(PROFILE_COLL, points=[models.PointStruct(id=profile_id(collection), vector=[0.0], payload=payload)])
 
 def ensure_history_collection():
     if not cl.collection_exists(HISTORY_COLL):
@@ -45,7 +89,7 @@ def get_history(collection: str | None = None) -> dict:
         batch, next_page = cl.scroll(HISTORY_COLL, scroll_filter=flt, limit=1000, offset=next_page, with_payload=True)
         for p in batch:
             out.setdefault(p.payload["collection"], []).append(
-                {k: p.payload.get(k) for k in ("path", "vectors", "chunks", "date", "new", "changed", "unchanged", "deleted")})
+                {k: p.payload.get(k) for k in ("path", "vectors", "chunks", "date", "new", "changed", "unchanged", "deleted", "language")})
         if next_page is None:
             break
     for entries in out.values():
@@ -73,7 +117,7 @@ def health():
     try:
         cols = []
         for c in cl.get_collections().collections:
-            if c.name == HISTORY_COLL:
+            if c.name in INTERNAL_COLLS:
                 continue
             info = cl.get_collection(c.name)
             v = info.config.params.vectors
@@ -93,6 +137,56 @@ def health():
 @app.get("/api/history")
 def history_get(collection: str = ""):
     return get_history(collection or None)
+
+# ---------------- indeks profili (versiyon gibi kullanıcı alanları) ----------------
+class ProfileReq(BaseModel):
+    collection: str; version: str = ""
+
+@app.get("/api/profile")
+def profile_get(collection: str):
+    return get_profile(collection)
+
+@app.post("/api/profile")
+def profile_set(r: ProfileReq):
+    set_profile(r.collection, version=r.version)
+    return {"ok": True}
+
+# ---------------- ayarlar sayfası için zengin indeks özeti ----------------
+def vector_state(collection: str, name: str, total: int) -> dict:
+    if total == 0:
+        return {"state": "none", "count": 0}
+    n = cl.count(collection, count_filter=models.Filter(must=[models.HasVectorCondition(has_vector=name)])).count
+    return {"state": "full" if n == total else ("partial" if n > 0 else "none"), "count": n}
+
+@app.get("/api/indexes")
+def indexes_get():
+    try:
+        hist_all = get_history()
+        out = []
+        for c in cl.get_collections().collections:
+            if c.name in INTERNAL_COLLS:
+                continue
+            info = cl.get_collection(c.name)
+            total = info.points_count
+            v, sv = info.config.params.vectors, info.config.params.sparse_vectors
+            has_dense_cfg = isinstance(v, dict) and "dense" in v
+            has_sparse_cfg = isinstance(sv, dict) and "sparse" in sv
+            prof = get_profile(c.name)
+            hist = hist_all.get(c.name, [])
+            latest = hist[0] if hist else {}
+            out.append({
+                "name": c.name,
+                "version": prof.get("version", ""),
+                "language": latest.get("language") or prof.get("language", ""),
+                "path": latest.get("path", ""),
+                "points": total,
+                "dense": vector_state(c.name, "dense", total) if has_dense_cfg else {"state": "n/a", "count": 0},
+                "sparse": vector_state(c.name, "sparse", total) if has_sparse_cfg else {"state": "n/a", "count": 0},
+                "last_indexed": latest.get("date"),
+            })
+        return {"indexes": out}
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=500)
 
 # ---------------- yerel klasör seçim diyaloğu (aynı makinede çalıştığı için) ----------------
 @app.get("/api/pick-folder")
@@ -116,9 +210,20 @@ def ollama_models():
     except Exception as e:
         return {"models": [], "error": str(e)[:120]}
 
-# ---------------- arama ----------------
+# ---------------- arama (birden fazla koleksiyonda birlikte aranabilir) ----------------
 class SearchReq(BaseModel):
-    q: str; collection: str = "unidac"; mode: str = "hybrid"; top_k: int = 8
+    q: str; collections: list[str] = ["unidac"]; mode: str = "hybrid"; top_k: int = 8
+
+def _search_one(collection: str, dv: list[float], sq, mode: str, limit: int):
+    kw = dict(collection_name=collection, limit=limit, with_payload=True)
+    if mode == "dense":
+        return cl.query_points(query=dv, using="dense", **kw).points
+    if mode == "sparse":
+        return cl.query_points(query=sq, using="sparse", **kw).points
+    return cl.query_points(prefetch=[
+        models.Prefetch(query=dv, using="dense", limit=limit),
+        models.Prefetch(query=sq, using="sparse", limit=limit)],
+        query=models.FusionQuery(fusion=models.Fusion.RRF), **kw).points
 
 @app.post("/api/search")
 def search(r: SearchReq):
@@ -127,23 +232,34 @@ def search(r: SearchReq):
               .embed([f"query: {r.q}"]))[0].tolist()
     sv = list(sparse_model().query_embed(r.q))[0]
     sq = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
-    kw = dict(collection_name=r.collection, limit=r.top_k, with_payload=True)
-    try:
-        if r.mode == "dense":
-            res = cl.query_points(query=dv, using="dense", **kw)
-        elif r.mode == "sparse":
-            res = cl.query_points(query=sq, using="sparse", **kw)
-        else:
-            res = cl.query_points(prefetch=[
-                models.Prefetch(query=dv, using="dense", limit=max(25, r.top_k * 3)),
-                models.Prefetch(query=sq, using="sparse", limit=max(25, r.top_k * 3))],
-                query=models.FusionQuery(fusion=models.Fusion.RRF), **kw)
-    except Exception as e:
-        return JSONResponse({"error": str(e)[:300]}, status_code=400)
+    per_coll_limit = max(25, r.top_k * 3)
+    by_coll, errors = {}, {}
+    for c in r.collections:
+        try:
+            by_coll[c] = _search_one(c, dv, sq, r.mode, per_coll_limit)
+        except Exception as e:
+            # örn. seçilen koleksiyonda "dense"/"sparse" adlı vektör yok (eski/farklı şema) —
+            # o koleksiyonu atla, diğerlerinde arama devam etsin.
+            errors[c] = str(e)[:200]
+    if not by_coll:
+        return JSONResponse({"error": "Hiçbir seçili koleksiyonda arama yapılamadı: " + json.dumps(errors, ensure_ascii=False)}, status_code=400)
+
+    if len(by_coll) == 1:
+        # tek koleksiyon (ya seçilen tek buydu, ya da diğerleri hata verdi): Qdrant'ın kendi
+        # (doğrudan karşılaştırılabilir) skoru korunur
+        chosen = [(c, h) for c, pts in by_coll.items() for h in pts][:r.top_k]
+    else:
+        # birden fazla koleksiyon: skorlar aralarında karşılaştırılabilir değil (farklı
+        # indeksler, farklı skor dağılımları) — bu yüzden RANK'e göre RRF ile birleştiriliyor
+        K = 60
+        scored = [(c, h, 1.0 / (K + rank + 1)) for c, pts in by_coll.items() for rank, h in enumerate(pts)]
+        scored.sort(key=lambda t: t[2], reverse=True)
+        chosen = [(c, h) for c, h, _ in scored[:r.top_k]]
+
     return {"ms": int((time.time() - t0) * 1000), "hits": [
-        {"score": round(h.score, 3), "id": h.id,
+        {"collection": c, "score": round(h.score, 3), "id": h.id,
          **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end")},
-         "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr")} for h in res.points]}
+         "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr")} for c, h in chosen]}
 
 # ---------------- açıklama (cache'li) ----------------
 class ExplainReq(BaseModel):
@@ -219,17 +335,18 @@ def _run_index(r: IndexReq):
         # ~2 sn/çağrı — 25K nokta için saatler sürerdi. Bunun yerine her değişen/eksik
         # nokta için TEK bir tam upsert yapılıyor, ihtiyaç duyulmayan vektör türü buradan
         # olduğu gibi kopyalanıyor).
+        # GERÇEK vektör varlığı Qdrant'ın kendi vektör deposundan okunuyor (with_vectors=True) —
+        # kendi yazacağımız bir "has_dense/has_sparse" bayrağına GÜVENMİYORUZ, çünkü bu özellikten
+        # önce oluşturulmuş koleksiyonlarda (örn. unidac) böyle bir alan hiç yazılmamış olurdu ve
+        # yanlışlıkla "vektör yok" sanılırdı — doğrulandı.
         old = {}
         if exists:
             next_page = None
             while True:
                 batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
-                                              with_payload=["hash", "has_dense", "has_sparse"], with_vectors=True)
+                                              with_payload=["hash"], with_vectors=True)
                 for p_ in batch:
-                    old[p_.id] = {"hash": p_.payload.get("hash"),
-                                  "has_dense": bool(p_.payload.get("has_dense")),
-                                  "has_sparse": bool(p_.payload.get("has_sparse")),
-                                  "vector": p_.vector or {}}
+                    old[p_.id] = {"hash": p_.payload.get("hash"), "vector": p_.vector or {}}
                 if next_page is None:
                     break
 
@@ -244,27 +361,30 @@ def _run_index(r: IndexReq):
             o = old.get(pid)
             is_new = o is None
             changed = is_new or o["hash"] != x["hash"]
-            before_dense = (not is_new) and (not changed) and o["has_dense"]
-            before_sparse = (not is_new) and (not changed) and o["has_sparse"]
+            had_dense = (not is_new) and ("dense" in o["vector"])
+            had_sparse = (not is_new) and ("sparse" in o["vector"])
+            before_dense = had_dense and not changed
+            before_sparse = had_sparse and not changed
             if is_new:
                 need_dense, need_sparse = want_dense, want_sparse
                 n_new += 1
             elif changed:
-                need_dense = want_dense or o["has_dense"]     # önceden varsa, yeni içerikle güncelle
-                need_sparse = want_sparse or o["has_sparse"]
+                need_dense = want_dense or had_dense     # önceden varsa, yeni içerikle güncelle
+                need_sparse = want_sparse or had_sparse
                 n_changed += 1
             else:
-                need_dense = want_dense and not o["has_dense"]
-                need_sparse = want_sparse and not o["has_sparse"]
+                need_dense = want_dense and not had_dense
+                need_sparse = want_sparse and not had_sparse
                 n_unchanged += 1
             if need_dense or need_sparse:
                 plan.append((x, pid, need_dense, need_sparse, before_dense, before_sparse))
 
+        language = detect_language(src_path) if pathlib.Path(src_path).exists() else ""
+        hist_extra = {"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids), "language": language}
         st.update(total=len(plan), phase="embedding", done=0,
                   skipped=n_unchanged, deleted=len(stale_ids))
         if not plan:
-            record_history(r.collection, src_path, r.vectors, len(rows),
-                           extra={"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids)})
+            record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
             st.update(phase="done", sec=0.0)
             return
 
@@ -289,15 +409,13 @@ def _run_index(r: IndexReq):
                     vec["sparse"] = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
                 elif before_sparse:
                     vec["sparse"] = old[pid]["vector"]["sparse"]
-                final_dense, final_sparse = before_dense or need_dense, before_sparse or need_sparse
                 pts.append(models.PointStruct(
                     id=pid, vector=vec,
                     payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")}
-                             | {"code": x["code"][:4000], "has_dense": final_dense, "has_sparse": final_sparse}))
+                             | {"code": x["code"][:4000]}))
             cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
-        record_history(r.collection, src_path, r.vectors, len(rows),
-                       extra={"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids)})
+        record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
         st.update(phase="error", error=str(e)[:300])
@@ -321,11 +439,11 @@ def index_page():
 
 # ---------------- RAG sohbet (chat) ----------------
 class AskReq(BaseModel):
-    q: str; collection: str = "unidac"; mode: str = "hybrid"; model: str = "gemma4:12b"; lang: str = "tr"
+    q: str; collections: list[str] = ["unidac"]; mode: str = "hybrid"; model: str = "gemma4:12b"; lang: str = "tr"
 
 @app.post("/api/ask")
 def ask(r: AskReq):
-    sr = search(SearchReq(q=r.q, collection=r.collection, mode=r.mode, top_k=6))
+    sr = search(SearchReq(q=r.q, collections=r.collections, mode=r.mode, top_k=6))
     if isinstance(sr, JSONResponse):
         return sr
     hits = sr["hits"]
