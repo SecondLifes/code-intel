@@ -176,3 +176,36 @@ def index_status():
 @app.get("/")
 def index_page():
     return FileResponse(ROOT / "static" / "index.html")
+
+# ---------------- RAG sohbet (chat) ----------------
+class AskReq(BaseModel):
+    q: str; collection: str = "unidac"; mode: str = "hybrid"; model: str = "gemma4:12b"; lang: str = "tr"
+
+@app.post("/api/ask")
+def ask(r: AskReq):
+    sr = search(SearchReq(q=r.q, collection=r.collection, mode=r.mode, top_k=6))
+    if isinstance(sr, JSONResponse):
+        return sr
+    hits = sr["hits"]
+    if not hits:
+        return {"answer": "Bu soruyla eşleşen kod bulamadım." if r.lang == "tr" else "No matching code found.", "hits": []}
+    ctx = "\n\n".join(f"[{i+1}] {h['name']} ({h['unit']} L{h['line_start']}-{h['line_end']}):\n{h['code'][:1100]}"
+                      for i, h in enumerate(hits[:5]))
+    if r.lang == "tr":
+        prompt = ("Sen bir Delphi kod tabanı asistanisin. Kullanicinin sorusunu SADECE asagidaki kod parcalarina "
+                  "dayanarak Turkce yanitla. Dayandigin parcalari [1] [2] gibi isaretle. Kod parcalari soruyu "
+                  f"yanitlamaya yetmiyorsa bunu acikca soyle, uydurma.\n\nSORU: {r.q}\n\nKOD PARCALARI:\n{ctx}")
+    else:
+        prompt = ("You are a Delphi codebase assistant. Answer the user's question ONLY from the code snippets "
+                  f"below, citing them as [1] [2]. If they are insufficient, say so plainly.\n\nQUESTION: {r.q}\n\nSNIPPETS:\n{ctx}")
+    body = json.dumps({"model": r.model, "prompt": prompt, "stream": False,
+                       "options": {"num_predict": 600}, "think": False}).encode()
+    t0 = time.time()
+    txt = json.loads(urllib.request.urlopen(
+        urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
+        timeout=600).read()).get("response", "").strip()
+    return {"answer": txt, "sec": round(time.time() - t0, 1), "model": r.model, "ms_search": sr["ms"], "hits": hits}
+
+@app.get("/settings")
+def settings_page():
+    return FileResponse(ROOT / "static" / "settings.html")
