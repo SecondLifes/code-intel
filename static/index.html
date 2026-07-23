@@ -8,8 +8,8 @@
 :root{--bg:#0b0e14;--panel:#131722;--card:#1a1f2e;--line:#252b3b;--txt:#e6e9f0;--dim:#8b93a7;--acc:#5b8cff;--acc2:#22c58b;--warn:#f2b544;--err:#ef5b6b;--mono:'Cascadia Code',Consolas,monospace}
 *{box-sizing:border-box;margin:0}
 body{background:var(--bg);color:var(--txt);font:15px/1.55 'Segoe UI',system-ui,sans-serif;min-height:100vh}
-header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-header h1{font-size:17px;font-weight:600;letter-spacing:.3px}
+header{display:flex;align-items:center;gap:12px;padding:13px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+header h1{font-size:17px;font-weight:600}
 header h1 b{color:var(--acc)}
 .pill{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
 .pill.ok{color:var(--acc2);border-color:#1b4536}
@@ -17,32 +17,42 @@ header h1 b{color:var(--acc)}
 .sp{flex:1}
 .lang{cursor:pointer;user-select:none;font-size:13px;color:var(--dim)}
 .lang b{color:var(--txt)}
-main{max-width:1060px;margin:0 auto;padding:26px 20px 80px}
-.searchbox{display:flex;gap:10px;margin-bottom:8px}
-.searchbox input{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;color:var(--txt);font-size:16px;outline:none}
-.searchbox input:focus{border-color:var(--acc)}
-button{background:var(--acc);border:0;border-radius:12px;color:#fff;padding:0 22px;font-size:15px;cursor:pointer;font-weight:600}
+main{max-width:1080px;margin:0 auto;padding:24px 20px 80px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,select{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 13px;color:var(--txt);font-size:14px;outline:none}
+input:focus,select:focus{border-color:var(--acc)}
+button{background:var(--acc);border:0;border-radius:10px;color:#fff;padding:10px 20px;font-size:14px;cursor:pointer;font-weight:600}
 button.ghost{background:var(--card);border:1px solid var(--line);color:var(--dim);font-weight:400}
 button:disabled{opacity:.5;cursor:wait}
-.hint{color:var(--dim);font-size:12.5px;margin:0 4px 22px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:14px}
+.panelcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px}
+.panelcard h3{font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;cursor:pointer;user-select:none}
+.panelcard h3 span{float:right}
+.searchbox{display:flex;gap:10px;margin-bottom:8px}
+.searchbox input{flex:1;font-size:16px;padding:13px 17px;border-radius:12px}
+.chips{display:flex;gap:6px}
+.chip{font-size:12px;padding:5px 12px;border-radius:99px;border:1px solid var(--line);color:var(--dim);cursor:pointer;user-select:none}
+.chip.on{border-color:var(--acc);color:var(--acc)}
+.hint{color:var(--dim);font-size:12.5px;margin:8px 4px 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px 18px;margin-bottom:13px}
 .card .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .card .name{font-family:var(--mono);font-size:14.5px;color:var(--acc);font-weight:600}
 .card .meta{color:var(--dim);font-size:12.5px}
 .card .score{margin-left:auto;font-size:12px;color:var(--acc2)}
-pre{background:#0d1117;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0 8px;overflow-x:auto;font:12.5px/1.5 var(--mono);color:#c9d1d9;max-height:260px}
+pre{background:#0d1117;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0 8px;overflow-x:auto;font:12.5px/1.5 var(--mono);color:#c9d1d9;max-height:250px}
 .tr-box{background:#10241c;border:1px solid #1b4536;border-radius:10px;padding:11px 14px;font-size:13.5px;margin-top:8px;white-space:pre-wrap}
 .tr-box.deep{background:#241a10;border-color:#4d3a1b}
 .actions{display:flex;gap:8px;margin-top:8px}
 .actions button{padding:6px 14px;font-size:13px;border-radius:9px}
-.jobbar{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:22px;display:none}
+.jobbar{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:18px;display:none}
 .jobbar.show{display:block}
 .bar{height:9px;background:#0d1117;border-radius:99px;overflow:hidden;margin:9px 0 6px}
 .bar>div{height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2));width:0%;transition:width .5s}
 .jobmeta{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)}
-.empty{text-align:center;color:var(--dim);padding:60px 0;font-size:14px}
+.empty{text-align:center;color:var(--dim);padding:56px 0;font-size:14px}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--dim);border-top-color:var(--acc);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:7px}
 @keyframes s{to{transform:rotate(360deg)}}
+label{font-size:12px;color:var(--dim);display:block;margin:0 0 4px 3px}
+.field{display:flex;flex-direction:column}
 </style>
 </head>
 <body>
@@ -53,60 +63,140 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:10px;padding:1
   <span id="p-gpu" class="pill">GPU</span>
   <span id="p-points" class="pill"></span>
   <div class="sp"></div>
-  <button class="ghost" id="btn-index" onclick="startIndex()" data-tr="Yeniden İndeksle" data-en="Re-index">Yeniden İndeksle</button>
   <span class="lang" onclick="toggleLang()"><b id="lang-now">TR</b> / <span id="lang-alt">EN</span></span>
 </header>
 <main>
-  <div class="jobbar" id="jobbar">
-    <div style="font-size:13.5px" id="jobtitle">İndeksleniyor…</div>
-    <div class="bar"><div id="jobfill"></div></div>
-    <div class="jobmeta"><span id="jobnums">0 / 0</span><span id="jobrate"></span><span id="jobeta"></span></div>
+  <!-- İNDEKSLEME AYARLARI -->
+  <div class="panelcard">
+    <h3 onclick="toggleIdx()" id="idx-h" data-tr="📦 İndeksleme" data-en="📦 Indexing">📦 İndeksleme<span id="idx-arrow">▾</span></h3>
+    <div id="idx-body">
+      <div class="row" style="margin-bottom:10px">
+        <div class="field" style="flex:2;min-width:280px">
+          <label data-tr="Kaynak klasör (yeni tarama için — boş bırakılırsa mevcut chunk dosyası kullanılır)" data-en="Source folder (for a fresh scan — leave empty to reuse existing chunks)">Kaynak klasör</label>
+          <input id="idx-path" placeholder="E:\system\dev\...\Source">
+        </div>
+        <div class="field">
+          <label data-tr="İndeks adı (koleksiyon)" data-en="Index name (collection)">İndeks adı</label>
+          <input id="idx-coll" value="unidac" style="width:150px">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label data-tr="İndeks türü" data-en="Index type">İndeks türü</label>
+          <select id="idx-mode">
+            <option value="hybrid" data-tr="Hibrit (anlamsal + kelime) — önerilen" data-en="Hybrid (semantic + keyword) — recommended">Hibrit (anlamsal + kelime) — önerilen</option>
+            <option value="dense" data-tr="Anlamsal (dense)" data-en="Semantic (dense)">Anlamsal (dense)</option>
+            <option value="sparse" data-tr="Kelime-bazlı (BM25) — GPU gerekmez, çok hızlı" data-en="Keyword (BM25) — no GPU, very fast">Kelime-bazlı (BM25)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label data-tr="Donanım" data-en="Device">Donanım</label>
+          <select id="idx-dev">
+            <option value="gpu">GPU (RTX 5080)</option>
+            <option value="cpu">CPU</option>
+          </select>
+        </div>
+        <div class="field" style="justify-content:flex-end">
+          <label>&nbsp;</label>
+          <button onclick="startIndex()" id="btn-index" data-tr="İndekslemeyi Başlat" data-en="Start Indexing">İndekslemeyi Başlat</button>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <div class="jobbar" id="jobbar">
+    <div style="font-size:13.5px" id="jobtitle">…</div>
+    <div class="bar"><div id="jobfill"></div></div>
+    <div class="jobmeta"><span id="jobnums"></span><span id="jobrate"></span><span id="jobeta"></span></div>
+  </div>
+
+  <!-- ARAMA -->
   <div class="searchbox">
-    <input id="q" placeholder="Kod tabanında ara — Türkçe veya İngilizce… (örn: bağlantı havuzu nasıl yönetiliyor)" onkeydown="if(event.key==='Enter')doSearch()">
+    <select id="s-coll" style="min-width:130px" title="Koleksiyon"></select>
+    <input id="q" onkeydown="if(event.key==='Enter')doSearch()">
     <button onclick="doSearch()" id="btn-search" data-tr="Ara" data-en="Search">Ara</button>
   </div>
-  <div class="hint" data-tr="25.201 UniDAC metodu ve tip bildirimi üzerinde anlamsal arama · ⚡ hızlı açıklama: gemma4 · 🔬 derin: qwen3.6" data-en="Semantic search over 25,201 UniDAC methods & types · ⚡ fast explain: gemma4 · 🔬 deep: qwen3.6">25.201 UniDAC metodu ve tip bildirimi üzerinde anlamsal arama · ⚡ hızlı açıklama: gemma4 · 🔬 derin: qwen3.6</div>
+  <div class="row" style="margin:0 2px">
+    <div class="chips" id="mode-chips">
+      <span class="chip on" data-m="hybrid" data-tr="Hibrit" data-en="Hybrid">Hibrit</span>
+      <span class="chip" data-m="dense" data-tr="Anlamsal" data-en="Semantic">Anlamsal</span>
+      <span class="chip" data-m="sparse" data-tr="Kelime" data-en="Keyword">Kelime</span>
+    </div>
+    <div class="sp"></div>
+    <span style="font-size:12px;color:var(--dim)" data-tr="⚡ hızlı model:" data-en="⚡ fast model:">⚡ hızlı model:</span>
+    <select id="m-fast" style="padding:5px 9px;font-size:12.5px"></select>
+    <span style="font-size:12px;color:var(--dim)" data-tr="🔬 derin model:" data-en="🔬 deep model:">🔬 derin model:</span>
+    <select id="m-deep" style="padding:5px 9px;font-size:12.5px"></select>
+  </div>
+  <div class="hint" id="subline"></div>
   <div id="results"><div class="empty" data-tr="Aramak için bir soru yazın — kod, Türkçe soruyu anlar 🙂" data-en="Type a question — the code understands you 🙂">Aramak için bir soru yazın — kod, Türkçe soruyu anlar 🙂</div></div>
 </main>
 <script>
 let LANG = localStorage.getItem('ci-lang') || 'tr';
-const T = (tr,en) => LANG==='tr'?tr:en;
+let MODE = 'hybrid';
+const T=(tr,en)=>LANG==='tr'?tr:en;
+const $=id=>document.getElementById(id);
 function applyLang(){
-  document.querySelectorAll('[data-tr]').forEach(el=>{ el.textContent = el.dataset[LANG==='tr'?'tr':'en']; });
-  document.getElementById('lang-now').textContent = LANG.toUpperCase();
-  document.getElementById('lang-alt').textContent = LANG==='tr'?'EN':'TR';
-  document.getElementById('q').placeholder = T('Kod tabanında ara — Türkçe veya İngilizce… (örn: bağlantı havuzu nasıl yönetiliyor)','Search the codebase — Turkish or English… (e.g. how is connection pooling managed)');
+  document.querySelectorAll('[data-tr]').forEach(el=>{
+    const v=el.dataset[LANG==='tr'?'tr':'en'];
+    if(el.tagName==='OPTION'||!el.querySelector('span')) el.textContent=v;
+    else el.childNodes[0].textContent=v;
+  });
+  $('lang-now').textContent=LANG.toUpperCase(); $('lang-alt').textContent=LANG==='tr'?'EN':'TR';
+  $('q').placeholder=T('Kod tabanında ara — Türkçe veya İngilizce… (örn: bağlantı havuzu nasıl yönetiliyor)','Search the codebase — Turkish or English…');
+  $('subline').textContent=T('Arama modu: Hibrit = anlam + tam sembol adı birlikte · her açıklama kalıcı önbelleğe alınır','Search mode: Hybrid = meaning + exact symbols · every explanation is cached forever');
 }
-function toggleLang(){ LANG = LANG==='tr'?'en':'tr'; localStorage.setItem('ci-lang',LANG); applyLang(); }
+function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
+function toggleIdx(){const b=$('idx-body');const c=b.style.display==='none';b.style.display=c?'':'none';$('idx-arrow').textContent=c?'▾':'▸';}
+document.querySelectorAll('#mode-chips .chip').forEach(ch=>ch.onclick=()=>{
+  document.querySelectorAll('#mode-chips .chip').forEach(x=>x.classList.remove('on'));
+  ch.classList.add('on'); MODE=ch.dataset.m;
+});
 applyLang();
 
 async function health(){
   try{
-    const h = await (await fetch('/api/health')).json();
-    setPill('p-qdrant', h.qdrant, 'Qdrant'); setPill('p-ollama', h.ollama, 'Ollama'); setPill('p-gpu', h.gpu, 'GPU');
-    const pts = (h.collections||[]).reduce((a,c)=>a+c.points,0);
-    document.getElementById('p-points').textContent = pts.toLocaleString('tr') + ' ' + T('nokta','points');
+    const h=await(await fetch('/api/health')).json();
+    setPill('p-qdrant',h.qdrant,'Qdrant');setPill('p-ollama',h.ollama,'Ollama');setPill('p-gpu',h.gpu,'GPU');
+    const pts=(h.collections||[]).reduce((a,c)=>a+c.points,0);
+    $('p-points').textContent=pts.toLocaleString('tr')+' '+T('nokta','points');
+    const sc=$('s-coll'), cur=sc.value;
+    sc.innerHTML=(h.collections||[]).map(c=>`<option>${c.name}</option>`).join('')||'<option>unidac</option>';
+    if([...sc.options].some(o=>o.value===cur)) sc.value=cur;
   }catch(e){}
 }
-function setPill(id, ok, label){ const el=document.getElementById(id); el.className='pill '+(ok?'ok':'bad'); el.textContent=(ok?'● ':'○ ')+label; }
-health(); setInterval(health, 10000);
+function setPill(id,ok,label){const el=$(id);el.className='pill '+(ok?'ok':'bad');el.textContent=(ok?'● ':'○ ')+label;}
+async function loadModels(){
+  try{
+    const d=await(await fetch('/api/ollama/models')).json();
+    for(const [sel,def,key] of [['m-fast','gemma4:12b','ci-mfast'],['m-deep','qwen3.6','ci-mdeep']]){
+      const s=$(sel);
+      s.innerHTML=(d.models||[]).map(m=>`<option>${m}</option>`).join('');
+      const saved=localStorage.getItem(key);
+      const want=(saved&&d.models.includes(saved))?saved:(d.models.find(m=>m.startsWith(def.split(':')[0]))||d.models[0]||'');
+      if(want)s.value=want;
+      s.onchange=()=>localStorage.setItem(key,s.value);
+    }
+  }catch(e){}
+}
+health();loadModels();setInterval(health,10000);
 
 async function doSearch(){
-  const q = document.getElementById('q').value.trim(); if(!q) return;
-  const btn=document.getElementById('btn-search'); btn.disabled=true;
-  document.getElementById('results').innerHTML = '<div class="empty"><span class="spin"></span>'+T('Aranıyor…','Searching…')+'</div>';
+  const q=$('q').value.trim();if(!q)return;
+  $('btn-search').disabled=true;
+  $('results').innerHTML='<div class="empty"><span class="spin"></span>'+T('Aranıyor…','Searching…')+'</div>';
   try{
-    const r = await (await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})})).json();
-    render(r);
-  }catch(e){ document.getElementById('results').innerHTML='<div class="empty">⚠️ '+e+'</div>'; }
-  btn.disabled=false;
+    const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({q,collection:$('s-coll').value,mode:MODE})})).json();
+    if(r.error){$('results').innerHTML='<div class="empty">⚠️ '+esc(r.error)+'</div>';}
+    else render(r);
+  }catch(e){$('results').innerHTML='<div class="empty">⚠️ '+e+'</div>';}
+  $('btn-search').disabled=false;
 }
-function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function render(r){
-  if(!r.hits || !r.hits.length){ document.getElementById('results').innerHTML='<div class="empty">'+T('Sonuç yok','No results')+'</div>'; return; }
-  document.getElementById('results').innerHTML =
-    `<div class="hint">${r.hits.length} ${T('sonuç','results')} · ${r.ms} ms</div>` +
+  if(!r.hits||!r.hits.length){$('results').innerHTML='<div class="empty">'+T('Sonuç yok','No results')+'</div>';return;}
+  $('results').innerHTML=`<div class="hint">${r.hits.length} ${T('sonuç','results')} · ${r.ms} ms · ${MODE}</div>`+
     r.hits.map(h=>`
     <div class="card" id="c${h.id}">
       <div class="top">
@@ -122,39 +212,45 @@ function render(r){
       </div>
     </div>`).join('');
 }
-async function explain(id, depth, btn){
-  btn.disabled=true; const old=btn.textContent; btn.innerHTML='<span class="spin"></span>'+T('Üretiliyor…','Generating…');
+async function explain(id,depth,btn){
+  btn.disabled=true;const old=btn.textContent;btn.innerHTML='<span class="spin"></span>'+T('Üretiliyor…','Generating…');
   try{
-    const r = await (await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection:'unidac',id,depth})})).json();
-    const card = document.getElementById('c'+id);
-    const box = document.createElement('div'); box.className='tr-box'+(depth==='deep'?' deep':'');
-    box.textContent = r.text + (r.cached?'':`\n\n(${r.model} · ${r.sec} sn)`);
-    card.querySelector('.actions').before(box);
-  }catch(e){ alert(e); }
-  btn.disabled=false; btn.textContent=old;
+    const model=depth==='deep'?$('m-deep').value:$('m-fast').value;
+    const r=await(await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({collection:$('s-coll').value,id,depth,model})})).json();
+    const box=document.createElement('div');box.className='tr-box'+(depth==='deep'?' deep':'');
+    box.textContent=r.text+(r.cached?'  📌':`\n\n(${r.model} · ${r.sec} sn)`);
+    document.getElementById('c'+id).querySelector('.actions').before(box);
+  }catch(e){alert(e);}
+  btn.disabled=false;btn.textContent=old;
 }
 
 let jobTimer=null;
 async function startIndex(){
-  if(!confirm(T('25.201 chunk GPU ile yeniden indekslenecek (~6 dk). Başlasın mı?','Re-index 25,201 chunks on GPU (~6 min). Start?'))) return;
-  await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-  document.getElementById('jobbar').classList.add('show');
-  jobTimer = setInterval(pollJob, 1500); pollJob();
+  const body={path:$('idx-path').value.trim(),collection:$('idx-coll').value.trim()||'unidac',
+              mode:$('idx-mode').value,device:$('idx-dev').value};
+  const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  if(r.error){alert(r.error);return;}
+  $('jobbar').classList.add('show');
+  if(jobTimer)clearInterval(jobTimer);
+  jobTimer=setInterval(pollJob,1500);pollJob();
 }
 async function pollJob(){
-  const s = await (await fetch('/api/index/status')).json();
-  if(s.phase==='idle'||!s.phase) return;
-  document.getElementById('jobbar').classList.add('show');
-  if(!jobTimer && s.phase!=='done' && s.phase!=='error') jobTimer=setInterval(pollJob,1500);
-  const pct = s.total? Math.round(100*s.done/s.total):0;
-  document.getElementById('jobfill').style.width=pct+'%';
-  document.getElementById('jobnums').textContent=`${(s.done||0).toLocaleString('tr')} / ${(s.total||0).toLocaleString('tr')} (${pct}%)`;
-  document.getElementById('jobrate').textContent=s.rate? s.rate+' chunk/sn':'';
-  document.getElementById('jobeta').textContent = s.rate&&s.total? T('kalan ','ETA ')+Math.max(0,Math.round((s.total-s.done)/s.rate))+' sn':'';
-  document.getElementById('jobtitle').innerHTML = s.phase==='done'? '✅ '+T('İndeksleme tamamlandı','Indexing complete')+` (${s.sec} sn)` : s.phase==='error'? '❌ '+esc(s.error) : '<span class="spin"></span>'+T('İndeksleniyor…','Indexing…');
-  if(s.phase==='done'||s.phase==='error'){ clearInterval(jobTimer); health(); setTimeout(()=>document.getElementById('jobbar').classList.remove('show'), 6000); }
+  const s=await(await fetch('/api/index/status')).json();
+  if(s.phase==='idle'||!s.phase)return;
+  $('jobbar').classList.add('show');
+  if(!jobTimer&&s.phase!=='done'&&s.phase!=='error')jobTimer=setInterval(pollJob,1500);
+  const pct=s.total?Math.round(100*s.done/s.total):0;
+  $('jobfill').style.width=pct+'%';
+  $('jobnums').textContent=s.phase==='chunking'?T('Kod ayrıştırılıyor…','Parsing code…'):`${(s.done||0).toLocaleString('tr')} / ${(s.total||0).toLocaleString('tr')} (${pct}%)`;
+  $('jobrate').textContent=(s.rate?s.rate+' chunk/sn':'')+(s.device?` · ${s.device.toUpperCase()}`:'')+(s.mode?` · ${s.mode}`:'');
+  $('jobeta').textContent=s.rate&&s.total?T('kalan ','ETA ')+Math.max(0,Math.round((s.total-s.done)/s.rate))+' sn':'';
+  $('jobtitle').innerHTML=s.phase==='done'?'✅ '+T('İndeksleme tamamlandı','Indexing complete')+` (${s.sec} sn)`
+    :s.phase==='error'?'❌ '+esc(s.error)
+    :'<span class="spin"></span>'+T('İndeksleniyor','Indexing')+` — ${esc(s.collection||'')}`;
+  if(s.phase==='done'||s.phase==='error'){clearInterval(jobTimer);jobTimer=null;health();setTimeout(()=>$('jobbar').classList.remove('show'),8000);}
 }
-pollJob(); // sayfa açılışında süren iş varsa yakala
+pollJob();
 </script>
 </body>
 </html>
