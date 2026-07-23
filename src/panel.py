@@ -3,7 +3,7 @@
 Özellikler: hibrit arama (dense+BM25/RRF), CPU/GPU seçimi, klasörden yeni
 indeksleme (chunk→embed), Ollama model seçimi, koleksiyon yönetimi.
 """
-import json, pathlib, subprocess, sys, threading, time, urllib.request, uuid
+import json, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid
 from datetime import datetime, timezone
 
 import onnxruntime as ort
@@ -243,6 +243,16 @@ def hardware():
         out["gpu"] = _ps("(Get-CimInstance Win32_VideoController | Select-Object -First 1).Name")
     return out
 
+GEN_RE = re.compile(r"(\d+(?:\.\d+)?)")
+
+def model_generation(tag: str) -> float:
+    """Aile adındaki (etiketten ÖNCEKİ kısım — boyut değil) ilk sayı: qwen3-coder->3,
+    qwen2.5-coder->2.5, deepseek-coder-v2->2, gemma4->4. Bulunamazsa 0 (bilinmiyor,
+    en düşük öncelik, boyuta göre sıralanır)."""
+    family = tag.split(":")[0]
+    m = GEN_RE.search(family)
+    return float(m.group(1)) if m else 0.0
+
 @app.get("/api/hardware/suggest")
 def hardware_suggest():
     hw = hardware()
@@ -261,30 +271,40 @@ def hardware_suggest():
     vram = hw["vram_gb"]
     RESERVE_GB = 3.5     # embedding modeli + Qdrant + sistem için ayrılan pay
     budget = max(0.0, vram - RESERVE_GB)
-    fits = [(t, gb) for t, gb in sized if gb <= budget] if vram > 0 else []
     coder = [(t, gb) for t, gb in sized if "coder" in t.lower()]
+    pool = coder or sized   # kodlamaya özel model yoksa genel modellerden seç
 
-    # hızlı: kodlamaya özel modeller arasından VRAM'e sığanların en küçüğü — yoksa tüm
-    # sığanların en küçüğü — o da yoksa kurulu en küçük model (hız önceliği, sık çağrılıyor)
-    coder_fits = [(t, gb) for t, gb in coder if gb <= budget]
-    if coder_fits:
-        fast = min(coder_fits, key=lambda tg: tg[1])[0]
-    elif fits:
-        fast = min(fits, key=lambda tg: tg[1])[0]
-    else:
+    # boyut TEK BAŞINA kalite göstergesi değil (örn. qwen2.5-coder:32b dosyası qwen3-coder:30b'den
+    # büyük ama qwen3 daha yeni/güçlü nesil) — önce aynı ailenin en yeni nesli, sonra o nesil
+    # içinde boyut kıyaslanıyor.
+    by_gen_size = sorted(pool, key=lambda tg: (model_generation(tg[0]), tg[1]), reverse=True)
+    top_gen = model_generation(by_gen_size[0][0])
+    top_tier = [(t, gb) for t, gb in pool if model_generation(t) == top_gen]
+
+    # derin: en yeni nesildeki en büyük model. VRAM'e tam sığmasa da olur (zaten 30-40sn
+    # bekleniyor, Ollama gerekirse kısmen CPU'ya taşırır; sığmayınca sadece yavaşlar).
+    deep = max(top_tier, key=lambda tg: tg[1])[0]
+    deep_gb = dict(sized)[deep]
+
+    # hızlı: en yeni nesilden VRAM'e sığan en küçük model; o nesilde hiçbiri sığmıyorsa
+    # bir alt nesle düş — hâlâ yoksa kurulu en küçük modele düş (hız önceliği, sık çağrılıyor).
+    fast = None
+    for gen in sorted({model_generation(t) for t, _ in pool}, reverse=True):
+        tier_fits = [(t, gb) for t, gb in pool if model_generation(t) == gen and gb <= budget]
+        if tier_fits:
+            fast = min(tier_fits, key=lambda tg: tg[1])[0]
+            break
+    if fast is None:
         fast = min(sized, key=lambda tg: tg[1])[0]
 
-    # derin: kodlamaya özel modellerin en büyüğü — yoksa kurulu en büyük model.
-    # VRAM'e tam sığmasa da olur (zaten 30-40sn bekleniyor, Ollama gerekirse kısmen
-    # CPU'ya taşırır; sığmayınca sadece yavaşlar, hata vermez).
-    deep = max(coder, key=lambda tg: tg[1])[0] if coder else max(sized, key=lambda tg: tg[1])[0]
-    deep_gb = dict(sized)[deep]
     fits_note = "VRAM'e tam sığıyor." if deep_gb <= budget else f"VRAM'e tam sığmıyor (~{deep_gb}GB > ~{budget:.1f}GB bütçe) — kısmen CPU'ya taşabilir, yavaş ama çalışır."
     reason = (f"GPU: {hw['gpu']} (~{vram}GB VRAM, ~{budget:.1f}GB kullanılabilir bütçe, {RESERVE_GB}GB rezerv). "
-               f"Kodlamaya özel modeller önceliklendirildi{'' if coder else ' (kurulu böyle bir model bulunamadı, genel modellerden seçildi)'}. "
-               f"Hızlı: sığan en küçük kodlama modeli. Derin: en büyük kodlama modeli — {fits_note}")
+               f"Kodlamaya özel modeller önceliklendirildi{'' if coder else ' (kurulu böyle bir model bulunamadı, genel modellerden seçildi)'}, "
+               f"aralarında en yeni nesil (v{top_gen:g}) tercih edildi. "
+               f"Hızlı: o nesilden sığan en küçük model. Derin: o nesildeki en büyük model — {fits_note}")
     return {"hardware": hw, "fast": fast, "deep": deep, "reason": reason,
-            "sized": [{"model": t, "gb": gb, "coder": "coder" in t.lower()} for t, gb in sorted(sized, key=lambda tg: -tg[1])]}
+            "sized": [{"model": t, "gb": gb, "coder": "coder" in t.lower(), "gen": model_generation(t)}
+                      for t, gb in sorted(sized, key=lambda tg: -tg[1])]}
 
 # ---------------- arama (birden fazla koleksiyonda birlikte aranabilir) ----------------
 class SearchReq(BaseModel):
