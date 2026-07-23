@@ -5,191 +5,224 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Code-Intel</title>
 <style>
-:root{--bg:#0b0e14;--panel:#131722;--card:#1a1f2e;--line:#252b3b;--txt:#e6e9f0;--dim:#8b93a7;--acc:#5b8cff;--acc2:#22c58b;--mono:'Cascadia Code',Consolas,monospace}
+/* Palette: warm ink workshop — amber for code (the hero), teal for signal.
+   Deliberately NOT the near-black + electric-blue AI default. */
+:root{
+  --bg:#14110c; --panel:#1b1710; --card:#211c14; --code:#0f0d09;
+  --line:#332b1f; --line2:#463b2a;
+  --txt:#f1ebdd; --dim:#a99a83; --faint:#6f6555;
+  --amber:#e0a24a; --amber-d:#c58a37; --teal:#49b39c; --teal-d:#2f7e6c;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,monospace;
+}
 *{box-sizing:border-box;margin:0}
-body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
-header{display:flex;align-items:center;gap:12px;padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--line)}
-header h1{font-size:16px;font-weight:600}
-header h1 b{color:var(--acc)}
-.pill{font-size:11.5px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
-.pill.ok{color:var(--acc2);border-color:#1b4536}
-.pill.bad{color:#ef5b6b;border-color:#552731}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+::selection{background:rgba(224,162,74,.28)}
+
+/* ── top bar ── */
+.top{display:flex;align-items:center;gap:14px;padding:11px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font-size:15.5px;font-weight:700;letter-spacing:-.2px;display:flex;align-items:center;gap:7px}
+.brand .bolt{color:var(--amber)}
+.brand b{color:var(--amber);font-weight:700}
+.dot{font-size:11.5px;color:var(--dim);font-family:var(--mono)}
 .sp{flex:1}
-a.gear{color:var(--dim);text-decoration:none;font-size:17px}
-a.gear:hover{color:var(--txt)}
-.lang{cursor:pointer;user-select:none;font-size:12.5px;color:var(--dim)}
+.lang{cursor:pointer;user-select:none;font-size:12.5px;color:var(--faint)}
 .lang b{color:var(--txt)}
-#feed{flex:1;overflow-y:auto;padding:26px 0}
-.wrap{max-width:860px;margin:0 auto;padding:0 20px}
-.msg{margin-bottom:22px;display:flex}
-.msg.user{justify-content:flex-end}
-.bubble{max-width:78%;padding:12px 16px;border-radius:16px;font-size:14.5px}
-.user .bubble{background:var(--acc);color:#fff;border-bottom-right-radius:5px}
-.bot .bubble{background:var(--card);border:1px solid var(--line);border-bottom-left-radius:5px;max-width:100%;width:100%;white-space:pre-wrap}
-.srcs{margin-top:10px;display:flex;flex-direction:column;gap:8px}
-.src{border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.src>.head{display:flex;gap:9px;align-items:baseline;padding:8px 12px;background:#151a27;cursor:pointer;font-size:12.5px}
-.src .n{font-family:var(--mono);color:var(--acc);font-weight:600}
-.src .m{color:var(--dim)}
-.src .sc{margin-left:auto;color:var(--acc2);font-size:11px}
-.src pre{display:none;background:#0d1117;padding:11px 13px;margin:0;overflow-x:auto;font:12px/1.5 var(--mono);color:#c9d1d9;max-height:240px}
-.src.open pre{display:block}
-.src .exp{display:none;padding:9px 13px;background:#10241c;border-top:1px solid #1b4536;font-size:13px;white-space:pre-wrap}
-.src.open .exp.has{display:block}
-.src .bar2{display:none;padding:7px 12px;gap:8px;border-top:1px solid var(--line)}
-.src.open .bar2{display:flex}
-.src .bar2 button{font-size:12px;padding:4px 12px;border-radius:8px;background:var(--panel);border:1px solid var(--line);color:var(--dim);cursor:pointer}
-.meta-line{font-size:11.5px;color:var(--dim);margin-top:8px}
-footer{padding:14px 0 20px;background:linear-gradient(transparent,var(--bg) 40%)}
-.inputrow{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:8px 8px 8px 18px;align-items:center}
-.inputrow:focus-within{border-color:var(--acc)}
-.inputrow input{flex:1;background:none;border:0;outline:none;color:var(--txt);font-size:15.5px}
-.inputrow button{background:var(--acc);border:0;border-radius:11px;color:#fff;padding:10px 20px;font-size:14px;cursor:pointer;font-weight:600}
-.inputrow button:disabled{opacity:.5}
-.below{display:flex;gap:6px;margin-top:9px;align-items:center;flex-wrap:wrap}
-.chip{font-size:11.5px;padding:4px 11px;border-radius:99px;border:1px solid var(--line);color:var(--dim);cursor:pointer;user-select:none}
-.chip.on{border-color:var(--acc);color:var(--acc)}
-select.mini{background:var(--card);border:1px solid var(--line);border-radius:8px;color:var(--dim);font-size:11.5px;padding:4px 8px;outline:none}
-.empty{text-align:center;color:var(--dim);padding-top:11vh}
-.empty .big{font-size:34px;margin-bottom:14px}
-.sugg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:18px}
-.sugg span{font-size:12.5px;border:1px solid var(--line);border-radius:99px;padding:6px 14px;cursor:pointer;color:var(--dim)}
-.sugg span:hover{border-color:var(--acc);color:var(--acc)}
-.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--dim);border-top-color:var(--acc);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:7px}
-@keyframes s{to{transform:rotate(360deg)}}
-.jobchip{display:none;font-size:11.5px;color:var(--acc2)}
+.gear{color:var(--faint);text-decoration:none;font-size:16px;transition:.15s}
+.gear:hover{color:var(--amber)}
+.jobchip{font-size:11.5px;color:var(--teal);font-family:var(--mono);display:none}
 .jobchip.show{display:inline}
+
+/* ── fixed search zone ── */
+.searchzone{padding:20px 24px 14px;border-bottom:1px solid var(--line);background:linear-gradient(var(--panel),var(--bg))}
+.searchzone .inner{max-width:900px;margin:0 auto}
+.field{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line2);border-radius:14px;padding:6px 6px 6px 18px;transition:.15s}
+.field:focus-within{border-color:var(--amber-d);box-shadow:0 0 0 3px rgba(224,162,74,.08)}
+.field .mag{color:var(--faint);font-size:16px}
+.field input{flex:1;background:none;border:0;outline:none;color:var(--txt);font-size:16px;padding:9px 0}
+.field input::placeholder{color:var(--faint)}
+.go{background:var(--amber);border:0;border-radius:10px;color:#1a1305;padding:10px 18px;font-size:15px;font-weight:700;cursor:pointer}
+.go:disabled{opacity:.45;cursor:wait}
+.controls{display:flex;align-items:center;gap:7px;margin-top:11px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg span{font-size:12.5px;padding:6px 13px;cursor:pointer;color:var(--dim);user-select:none;border-right:1px solid var(--line)}
+.seg span:last-child{border-right:0}
+.seg span.on{background:rgba(224,162,74,.14);color:var(--amber)}
+.controls .divider{width:1px;height:20px;background:var(--line);margin:0 4px}
+.mini{background:var(--card);border:1px solid var(--line);border-radius:8px;color:var(--dim);font-size:12px;padding:6px 9px;outline:none}
+
+/* ── results (scrolls) ── */
+.scroll{flex:1;overflow-y:auto;padding:22px 24px 40px}
+.scroll .inner{max-width:900px;margin:0 auto}
+.answer{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:12px;padding:16px 20px;font-size:14.5px;white-space:pre-wrap;margin-bottom:8px}
+.answer b.cite{color:var(--amber);font-weight:600}
+.metaline{font-size:11.5px;color:var(--faint);font-family:var(--mono);margin:2px 4px 20px}
+.reslabel{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:0 2px 12px}
+
+.src{border:1px solid var(--line);border-radius:11px;margin-bottom:12px;overflow:hidden;background:var(--card)}
+.src .head{display:flex;align-items:baseline;gap:11px;padding:11px 15px;cursor:pointer}
+.src .idx{font-family:var(--mono);color:var(--amber);font-weight:700;font-size:13px}
+.src .n{font-family:var(--mono);color:var(--txt);font-weight:600;font-size:13.5px}
+.src .m{color:var(--dim);font-size:12px;font-family:var(--mono)}
+.src .sc{margin-left:auto;color:var(--teal);font-size:11.5px;font-family:var(--mono);background:rgba(73,179,156,.1);padding:2px 8px;border-radius:6px}
+/* code preview ALWAYS visible, capped; expands on click */
+.src .codewrap{position:relative;max-height:132px;overflow:hidden;transition:max-height .25s ease}
+.src.open .codewrap{max-height:520px;overflow:auto}
+.src .codewrap::after{content:'';position:absolute;left:0;right:0;bottom:0;height:34px;background:linear-gradient(transparent,var(--code));pointer-events:none;transition:opacity .2s}
+.src.open .codewrap::after{opacity:0}
+pre{background:var(--code);margin:0;padding:12px 16px;font:12.5px/1.55 var(--mono);color:#d8cbb0;overflow-x:auto}
+pre .kw{color:var(--amber)}
+.exp{display:none;padding:11px 16px;background:rgba(73,179,156,.06);border-top:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;color:#dfe8e3}
+.exp.has{display:block}
+.tools{display:flex;gap:8px;padding:9px 15px;border-top:1px solid var(--line)}
+.tools button{font-size:12px;padding:5px 13px;border-radius:8px;background:var(--panel);border:1px solid var(--line2);color:var(--dim);cursor:pointer;transition:.15s}
+.tools button:hover{border-color:var(--amber-d);color:var(--amber)}
+.tools .more{margin-left:auto;color:var(--faint);border:0;background:none;font-size:12px}
+
+.hero{text-align:center;padding-top:9vh;color:var(--dim)}
+.hero .mark{font-size:46px;color:var(--amber);opacity:.85;margin-bottom:16px;font-family:var(--mono)}
+.hero h2{font-size:19px;font-weight:600;color:var(--txt);margin-bottom:6px}
+.hero p{font-size:13.5px}
+.sugg{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;margin-top:22px;max-width:640px;margin-left:auto;margin-right:auto}
+.sugg span{font-size:12.5px;border:1px solid var(--line2);border-radius:9px;padding:8px 14px;cursor:pointer;color:var(--dim);font-family:var(--mono);transition:.15s}
+.sugg span:hover{border-color:var(--amber-d);color:var(--amber);background:rgba(224,162,74,.06)}
+
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line2);border-top-color:var(--amber);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:7px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.scroll::-webkit-scrollbar{width:10px}.scroll::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px}
 </style>
 </head>
 <body>
-<header>
-  <h1>⚡ Code-<b>Intel</b></h1>
-  <span id="p-points" class="pill"></span>
-  <span id="jobchip" class="jobchip"></span>
+<div class="top">
+  <div class="brand"><span class="bolt">⚡</span>Code-<b>Intel</b></div>
+  <span class="dot" id="pts"></span>
+  <span class="jobchip" id="jobchip"></span>
   <div class="sp"></div>
-  <span class="lang" onclick="toggleLang()"><b id="lang-now">TR</b> / <span id="lang-alt">EN</span></span>
-  <a class="gear" href="/settings" title="Ayarlar / İndeksleme">⚙️</a>
-</header>
-
-<div id="feed">
-  <div class="wrap" id="feedwrap">
-    <div class="empty" id="empty">
-      <div class="big">⚡</div>
-      <div id="empty-t1" style="font-size:17px;font-weight:600">Kod tabanınla sohbet et</div>
-      <div id="empty-t2" style="font-size:13.5px;margin-top:6px">Türkçe veya İngilizce sor — kodu bulur, kaynak göstererek cevaplar</div>
-      <div class="sugg" id="sugg"></div>
-    </div>
-  </div>
+  <span class="lang" onclick="toggleLang()"><b id="ln">TR</b> / <span id="la">EN</span></span>
+  <a class="gear" href="/settings" title="Ayarlar">⚙</a>
 </div>
 
-<footer><div class="wrap">
-  <div class="inputrow">
-    <input id="q" onkeydown="if(event.key==='Enter')send()">
-    <button onclick="send()" id="btn">➤</button>
+<div class="searchzone"><div class="inner">
+  <div class="field">
+    <span class="mag">🔍</span>
+    <input id="q" onkeydown="if(event.key==='Enter')run()">
+    <button class="go" id="go" onclick="run()">➤</button>
   </div>
-  <div class="below">
-    <span class="chip" data-a="ask" id="ch-ask">💬</span>
-    <span class="chip" data-a="find" id="ch-find">🔍</span>
-    <span style="width:8px"></span>
-    <span class="chip on" data-m="hybrid">Hibrit</span>
-    <span class="chip" data-m="dense" id="ch-dense">Anlamsal</span>
-    <span class="chip" data-m="sparse" id="ch-sparse">Kelime</span>
+  <div class="controls">
+    <div class="seg" id="seg-act">
+      <span data-a="ask" class="on">💬 <span id="a-ask">Cevapla</span></span>
+      <span data-a="find">🔍 <span id="a-find">Bul</span></span>
+    </div>
+    <div class="divider"></div>
+    <div class="seg" id="seg-mode">
+      <span data-m="hybrid" class="on" id="m-hy">Hibrit</span>
+      <span data-m="dense" id="m-de">Anlamsal</span>
+      <span data-m="sparse" id="m-sp">Kelime</span>
+    </div>
     <div class="sp"></div>
-    <select class="mini" id="s-coll"></select>
+    <select class="mini" id="coll"></select>
   </div>
-</div></footer>
+</div></div>
+
+<div class="scroll"><div class="inner" id="out">
+  <div class="hero" id="hero">
+    <div class="mark">{ }</div>
+    <h2 id="h-t1">Kod tabanına sor</h2>
+    <p id="h-t2">Türkçe ya da İngilizce — kodu bulur, kaynak göstererek yanıtlar.</p>
+    <div class="sugg" id="sugg"></div>
+  </div>
+</div></div>
 
 <script>
-let LANG=localStorage.getItem('ci-lang')||'tr', MODE='hybrid', ACTION=localStorage.getItem('ci-action')||'ask';
-const T=(tr,en)=>LANG==='tr'?tr:en, $=id=>document.getElementById(id);
-const SUGG_TR=['Veritabanı bağlantısı nasıl açılıp kapatılıyor?','Transaction commit ve rollback nerede?','ApplyUpdates','Bağlantı kopunca yeniden bağlanma var mı?'];
-const SUGG_EN=['How is a database connection opened and closed?','Where are transactions committed?','ApplyUpdates','Is there reconnect-on-failure logic?'];
+let LANG=localStorage.getItem('ci-lang')||'tr', MODE='hybrid', ACT=localStorage.getItem('ci-act')||'ask';
+const T=(t,e)=>LANG==='tr'?t:e, $=id=>document.getElementById(id);
+const SUGG={tr:['Bağlantı nasıl açılıp kapatılıyor?','Transaction commit / rollback','ApplyUpdates','Yeniden bağlanma mantığı var mı?'],
+           en:['How is a connection opened & closed?','Transaction commit / rollback','ApplyUpdates','Is there reconnect logic?']};
 function applyLang(){
-  $('lang-now').textContent=LANG.toUpperCase();$('lang-alt').textContent=LANG==='tr'?'EN':'TR';
-  $('q').placeholder=T('Kod tabanına sor… (💬 cevap yazar, 🔍 sadece bulur)','Ask the codebase… (💬 answers, 🔍 just finds)');
-  $('empty-t1').textContent=T('Kod tabanınla sohbet et','Chat with your codebase');
-  $('empty-t2').textContent=T('Türkçe veya İngilizce sor — kodu bulur, kaynak göstererek cevaplar','Ask in Turkish or English — it finds the code and answers with citations');
-  $('ch-ask').textContent='💬 '+T('Cevapla','Answer');$('ch-find').textContent='🔍 '+T('Sadece Bul','Find only');
-  $('ch-dense').textContent=T('Anlamsal','Semantic');$('ch-sparse').textContent=T('Kelime','Keyword');
-  $('sugg').innerHTML=(LANG==='tr'?SUGG_TR:SUGG_EN).map(s=>`<span onclick="$('q').value=this.textContent;send()">${s}</span>`).join('');
-  syncActionChips();
+  $('ln').textContent=LANG.toUpperCase();$('la').textContent=LANG==='tr'?'EN':'TR';
+  $('q').placeholder=T('Kod tabanına sor…  (💬 yanıtlar · 🔍 bulur)','Ask the codebase…  (💬 answers · 🔍 finds)');
+  $('a-ask').textContent=T('Cevapla','Answer');$('a-find').textContent=T('Bul','Find');
+  $('m-hy').textContent=T('Hibrit','Hybrid');$('m-de').textContent=T('Anlamsal','Semantic');$('m-sp').textContent=T('Kelime','Keyword');
+  $('h-t1').textContent=T('Kod tabanına sor','Ask the codebase');
+  $('h-t2').textContent=T('Türkçe ya da İngilizce — kodu bulur, kaynak göstererek yanıtlar.','Turkish or English — it finds the code and answers with citations.');
+  $('sugg').innerHTML=SUGG[LANG].map(s=>`<span onclick="pick(this)">${s}</span>`).join('');
 }
+function pick(el){$('q').value=el.textContent;run();}
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
-document.querySelectorAll('.chip[data-m]').forEach(c=>c.onclick=()=>{document.querySelectorAll('.chip[data-m]').forEach(x=>x.classList.remove('on'));c.classList.add('on');MODE=c.dataset.m;});
-document.querySelectorAll('.chip[data-a]').forEach(c=>c.onclick=()=>{ACTION=c.dataset.a;localStorage.setItem('ci-action',ACTION);syncActionChips();});
-function syncActionChips(){document.querySelectorAll('.chip[data-a]').forEach(x=>x.classList.toggle('on',x.dataset.a===ACTION));}
+$('seg-act').onclick=e=>{const s=e.target.closest('span[data-a]');if(!s)return;[...$('seg-act').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');ACT=s.dataset.a;localStorage.setItem('ci-act',ACT);};
+$('seg-mode').onclick=e=>{const s=e.target.closest('span[data-m]');if(!s)return;[...$('seg-mode').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');MODE=s.dataset.m;};
+[...$('seg-act').children].forEach(x=>x.classList.toggle('on',x.dataset.a===ACT));
 applyLang();
 
 async function health(){try{
   const h=await(await fetch('/api/health')).json();
-  const pts=(h.collections||[]).reduce((a,c)=>a+c.points,0);
-  $('p-points').textContent=pts.toLocaleString('tr')+' '+T('nokta','points');
-  $('p-points').className='pill '+(h.qdrant?'ok':'bad');
-  const sc=$('s-coll'),cur=sc.value;
+  const p=(h.collections||[]).filter(c=>c.name!=='pilot').reduce((a,c)=>a+c.points,0);
+  $('pts').textContent='◆ '+p.toLocaleString('tr')+' '+T('parça','chunks');
+  const sc=$('coll'),cur=sc.value;
   sc.innerHTML=(h.collections||[]).filter(c=>c.name!=='pilot').map(c=>`<option>${c.name}</option>`).join('')||'<option>unidac</option>';
   if([...sc.options].some(o=>o.value===cur))sc.value=cur;
-}catch(e){$('p-points').className='pill bad';$('p-points').textContent='⚠';}}
+}catch(e){$('pts').textContent='⚠';}}
 async function jobPeek(){try{
-  const s=await(await fetch('/api/index/status')).json();
-  const el=$('jobchip');
-  if(s.phase==='embedding'||s.phase==='chunking'){el.classList.add('show');
-    el.textContent='📦 '+(s.total?Math.round(100*s.done/s.total)+'%':'…')+' '+T('indeksleniyor','indexing');}
+  const s=await(await fetch('/api/index/status')).json();const el=$('jobchip');
+  if(s.phase==='embedding'||s.phase==='chunking'){el.classList.add('show');el.textContent='◷ '+(s.total?Math.round(100*s.done/s.total)+'%':'…')+' '+T('indeksleniyor','indexing');}
   else el.classList.remove('show');
 }catch(e){}}
 health();jobPeek();setInterval(()=>{health();jobPeek();},8000);
 
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function addMsg(cls,html){
-  $('empty')&&$('empty').remove();
-  const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=`<div class="bubble">${html}</div>`;
-  $('feedwrap').appendChild(d);$('feed').scrollTop=$('feed').scrollHeight;return d;
-}
+function hl(code){return esc(code).replace(/\b(procedure|function|begin|end|var|const|type|if|then|else|try|finally|except|for|while|do|class|record|nil|inherited|override|virtual)\b/g,'<span class="kw">$1</span>');}
+function citeFmt(t){return esc(t).replace(/\[(\d+)\]/g,'<b class="cite">[$1]</b>');}
 function srcCard(h,i){return `
   <div class="src" id="s${h.id}">
-    <div class="head" onclick="this.parentElement.classList.toggle('open')">
-      <span class="n">[${i+1}] ${esc(h.name)}</span>
+    <div class="head" onclick="tog('${h.id}')">
+      <span class="idx">[${i+1}]</span>
+      <span class="n">${esc(h.name)}</span>
       <span class="m">${esc(h.unit)} · L${h.line_start}-${h.line_end}</span>
       <span class="sc">${h.score}</span>
     </div>
-    <pre>${esc(h.code)}</pre>
+    <div class="codewrap"><pre>${hl(h.code)}</pre></div>
     <div class="exp ${h.tr?'has':''}" id="e${h.id}">${esc(h.tr||'')}</div>
-    <div class="bar2">
-      <button onclick="explain(${h.id},'fast',this)">⚡ ${T('Açıkla','Explain')}</button>
-      <button onclick="explain(${h.id},'deep',this)">🔬 ${T('Derin','Deep')}</button>
+    <div class="tools">
+      <button onclick="explain('${h.id}','fast',this)">⚡ ${T('Açıkla','Explain')}</button>
+      <button onclick="explain('${h.id}','deep',this)">🔬 ${T('Derin','Deep')}</button>
+      <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
     </div>
   </div>`;}
+function tog(id){$('s'+id).classList.toggle('open');}
 
-async function send(){
+async function run(){
   const q=$('q').value.trim();if(!q)return;
-  $('q').value='';$('btn').disabled=true;
-  addMsg('user',esc(q));
-  const wait=addMsg('bot','<span class="spin"></span>'+(ACTION==='ask'?T('Kod aranıyor ve cevap yazılıyor…','Searching code & writing answer…'):T('Aranıyor…','Searching…')));
+  $('go').disabled=true;
+  $('out').innerHTML=`<div class="answer"><span class="spin"></span>${ACT==='ask'?T('Kod aranıyor, yanıt yazılıyor…','Searching code, writing answer…'):T('Aranıyor…','Searching…')}</div>`;
   try{
-    if(ACTION==='find'){
-      const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({q,collection:$('s-coll').value,mode:MODE})})).json();
-      wait.querySelector('.bubble').innerHTML=r.error?('⚠️ '+esc(r.error)):
-        (r.hits.length?`${r.hits.length} ${T('sonuç','results')} · ${r.ms} ms<div class="srcs">${r.hits.map(srcCard).join('')}</div>`:T('Sonuç yok','No results'));
+    if(ACT==='find'){
+      const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q,collection:$('coll').value,mode:MODE})})).json();
+      $('out').innerHTML=r.error?err(r.error):(r.hits.length
+        ?`<div class="reslabel">${r.hits.length} ${T('sonuç','results')} · ${r.ms} ms · ${MODE}</div>`+r.hits.map(srcCard).join('')
+        :none());
     }else{
-      const r=await(await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({q,collection:$('s-coll').value,mode:MODE,lang:LANG,model:localStorage.getItem('ci-mfast')||'gemma4:12b'})})).json();
-      wait.querySelector('.bubble').innerHTML=r.error?('⚠️ '+esc(r.error)):
-        esc(r.answer)+
-        (r.hits&&r.hits.length?`<div class="srcs">${r.hits.slice(0,5).map(srcCard).join('')}</div>`:'')+
-        `<div class="meta-line">${r.model||''} · ${T('cevap','answer')} ${r.sec||'?'} sn · ${T('arama','search')} ${r.ms_search||'?'} ms · ${MODE}</div>`;
+      const r=await(await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q,collection:$('coll').value,mode:MODE,lang:LANG,model:localStorage.getItem('ci-mfast')||'gemma4:12b'})})).json();
+      $('out').innerHTML=r.error?err(r.error):
+        `<div class="answer">${citeFmt(r.answer)}</div>
+         <div class="metaline">${esc(r.model||'')} · ${T('yanıt','answer')} ${r.sec||'?'}s · ${T('arama','search')} ${r.ms_search||'?'}ms · ${MODE}</div>`+
+        (r.hits&&r.hits.length?`<div class="reslabel">${T('kaynaklar','sources')}</div>`+r.hits.slice(0,5).map(srcCard).join(''):'');
     }
-  }catch(e){wait.querySelector('.bubble').textContent='⚠️ '+e;}
-  $('btn').disabled=false;$('feed').scrollTop=$('feed').scrollHeight;$('q').focus();
+  }catch(e){$('out').innerHTML=err(e);}
+  $('go').disabled=false;$('q').focus();
 }
+function err(m){return `<div class="answer" style="border-left-color:#c65">⚠️ ${esc(m)}</div>`;}
+function none(){return `<div class="hero"><div class="mark">∅</div><p>${T('Sonuç bulunamadı — başka bir ifadeyle dene.','No results — try rephrasing.')}</p></div>`;}
+
 async function explain(id,depth,btn){
-  btn.disabled=true;const old=btn.textContent;btn.innerHTML='<span class="spin"></span>';
+  btn.disabled=true;const old=btn.innerHTML;btn.innerHTML='<span class="spin"></span>';
+  $('s'+id).classList.add('open');
   try{
     const model=depth==='deep'?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
-    const r=await(await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({collection:$('s-coll').value,id,depth,model})})).json();
-    const e=$('e'+id);e.textContent=r.text+(r.cached?' 📌':'');e.classList.add('has');
-  }catch(err){alert(err);}
-  btn.disabled=false;btn.textContent=old;
+    const r=await(await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection:$('coll').value,id:+id,depth,model})})).json();
+    const e=$('e'+id);e.textContent=r.text+(r.cached?'  📌':'');e.classList.add('has');
+  }catch(x){alert(x);}
+  btn.disabled=false;btn.innerHTML=old;
 }
 $('q').focus();
 </script>
