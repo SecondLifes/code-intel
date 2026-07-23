@@ -3,7 +3,7 @@
 Özellikler: hibrit arama (dense+BM25/RRF), CPU/GPU seçimi, klasörden yeni
 indeksleme (chunk→embed), Ollama model seçimi, koleksiyon yönetimi.
 """
-import json, pathlib, subprocess, sys, threading, time, urllib.request, uuid
+import json, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid
 from datetime import datetime, timezone
 
 import onnxruntime as ort
@@ -209,6 +209,78 @@ def ollama_models():
         return {"models": [m["name"] for m in d.get("models", [])]}
     except Exception as e:
         return {"models": [], "error": str(e)[:120]}
+
+# ---------------- donanım tarama + uyumlu Ollama modeli önerisi ----------------
+def _ps(cmd: str, timeout: int = 15) -> str:
+    try:
+        return subprocess.run(["powershell", "-NoProfile", "-Command", cmd],
+                               capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except Exception:
+        return ""
+
+@app.get("/api/hardware")
+def hardware():
+    out = {"cpu": "", "cores": 0, "ram_gb": 0.0, "gpu": "", "vram_gb": 0.0}
+    out["cpu"] = _ps("(Get-CimInstance Win32_Processor).Name")
+    try:
+        out["cores"] = int(_ps("(Get-CimInstance Win32_Processor).NumberOfLogicalProcessors") or 0)
+    except ValueError:
+        pass
+    try:
+        b = int(_ps("(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory") or 0)
+        out["ram_gb"] = round(b / (1024 ** 3), 1)
+    except ValueError:
+        pass
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                            capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            name, vram_mb = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")]
+            out["gpu"], out["vram_gb"] = name, round(int(vram_mb) / 1024, 1)
+    except Exception:
+        pass
+    if not out["gpu"]:
+        out["gpu"] = _ps("(Get-CimInstance Win32_VideoController | Select-Object -First 1).Name")
+    return out
+
+MODEL_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)b", re.I)
+
+def model_b_params(tag: str) -> float | None:
+    m = MODEL_SIZE_RE.search(tag)
+    return float(m.group(1)) if m else None
+
+@app.get("/api/hardware/suggest")
+def hardware_suggest():
+    hw = hardware()
+    try:
+        d = json.loads(urllib.request.urlopen(OLLAMA + "/api/tags", timeout=5).read())
+        tags = [m["name"] for m in d.get("models", [])]
+    except Exception as e:
+        return {"hardware": hw, "error": str(e)[:150]}
+
+    sized = [(t, model_b_params(t)) for t in tags]
+    sized = [(t, b) for t, b in sized if b is not None]
+    if not sized:
+        return {"hardware": hw, "fast": tags[0] if tags else None, "deep": tags[0] if tags else None,
+                "reason": "Model adlarından parametre büyüklüğü çıkarılamadı — ilk model varsayılan seçildi."}
+
+    vram = hw["vram_gb"]
+    GB_PER_B = 0.65      # Q4 nicemleme için kaba tahmin: ~0.65 GB VRAM / milyar parametre
+    RESERVE_GB = 3.5     # embedding modeli + Qdrant + sistem için ayrılan pay
+    budget = max(0.0, vram - RESERVE_GB)
+    fits = [(t, b) for t, b in sized if b * GB_PER_B <= budget] if vram > 0 else []
+
+    if fits:
+        fast = min(fits, key=lambda tb: tb[1])[0]     # sığanların en küçüğü: hız için
+        deep = max(fits, key=lambda tb: tb[1])[0]     # sığanların en büyüğü: derinlik için
+        reason = (f"GPU: {hw['gpu']} (~{vram}GB VRAM). Yaklaşık {budget:.1f}GB kullanılabilir bütçeye göre "
+                   f"(diğer modeller/Qdrant için {RESERVE_GB}GB ayrıldı) en küçük model hız, en büyük sığan model derinlik için seçildi.")
+    else:
+        fast = min(sized, key=lambda tb: tb[1])[0]
+        deep = fast
+        reason = "Hiçbir kurulu model GPU VRAM'ine rahatça sığmıyor gibi görünüyor — en küçük model hem hızlı hem derin için önerildi (CPU'da da çalışabilir)."
+    return {"hardware": hw, "fast": fast, "deep": deep, "reason": reason,
+            "sized": [{"model": t, "b_params": b} for t, b in sized]}
 
 # ---------------- arama (birden fazla koleksiyonda birlikte aranabilir) ----------------
 class SearchReq(BaseModel):

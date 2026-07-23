@@ -129,7 +129,9 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
     <div class="row">
       <div class="field"><label>⚡ <span id="l-fast">Hızlı model</span></label><select id="m-fast" style="min-width:220px"></select></div>
       <div class="field"><label>🔬 <span id="l-deep">Derin model</span></label><select id="m-deep" style="min-width:220px"></select></div>
+      <div class="field"><button type="button" onclick="scanHardware()" id="btn-scan" style="background:var(--card);border:1px solid var(--line2);color:var(--dim)">🖥️ <span id="t-scan">Donanımı Tara ve Öner</span></button></div>
     </div>
+    <div class="note" id="hw-result"></div>
   </div>
 
   <!-- KOLEKSİYONLAR -->
@@ -163,6 +165,7 @@ function applyLang(){
   $('t-note').textContent=T('Önce Kelime (hızlı, GPU gerektirmez) indeksleyip aramaya başlayabilir, Türkçe/anlamsal indekslemeyi daha sonra aynı chunk\'lar üzerine ekleyebilirsiniz — baştan başlamaz.','You can start with Keyword (fast, no GPU needed) and search right away, then add the Turkish/semantic index later on the same chunks — it will not start over.');
   $('t-models').textContent=T('Ollama Modelleri (Türkçe açıklama)','Ollama Models (explanations)');
   $('l-fast').textContent=T('Hızlı model','Fast model');$('l-deep').textContent=T('Derin model','Deep model');
+  $('t-scan').textContent=T('Donanımı Tara ve Öner','Scan Hardware & Suggest');
   $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');
   $('th-ver').textContent=T('Versiyon','Version');$('th-lang').textContent=T('Dil','Language');$('th-path').textContent=T('Klasör','Folder');
   $('th-sparse').textContent=T('Kelime İndex','Keyword Index');$('th-dense').textContent=T('Anlamsal İndex','Semantic Index');
@@ -254,6 +257,25 @@ async function loadModels(){try{
     if(want)s.value=want;s.onchange=()=>localStorage.setItem(key,s.value);
   }
 }catch(e){}}
+async function scanHardware(){
+  $('btn-scan').disabled=true;
+  $('hw-result').textContent=T('Taranıyor…','Scanning…');
+  try{
+    const d=await(await fetch('/api/hardware/suggest')).json();
+    if(d.error){$('hw-result').textContent='⚠️ '+d.error;$('btn-scan').disabled=false;return;}
+    const h=d.hardware;
+    $('hw-result').innerHTML=
+      `<b>${esc(h.cpu)}</b> (${h.cores} ${T('çekirdek','threads')}) · ${h.ram_gb}GB RAM · <b>${esc(h.gpu)}</b> (${h.vram_gb}GB VRAM)<br>`+
+      esc(d.reason)+
+      (d.fast&&d.deep?`<br>${T('Önerilen','Suggested')}: ⚡ <b>${esc(d.fast)}</b> · 🔬 <b>${esc(d.deep)}</b> — `+
+       `<button onclick="applySuggestion('${esc(d.fast)}','${esc(d.deep)}')" style="padding:4px 10px;font-size:12px;margin-left:4px">${T('Uygula','Apply')}</button>`:'');
+  }catch(e){$('hw-result').textContent='⚠️ '+e;}
+  $('btn-scan').disabled=false;
+}
+function applySuggestion(fast,deep){
+  if([...$('m-fast').options].some(o=>o.value===fast)){$('m-fast').value=fast;localStorage.setItem('ci-mfast',fast);}
+  if([...$('m-deep').options].some(o=>o.value===deep)){$('m-deep').value=deep;localStorage.setItem('ci-mdeep',deep);}
+}
 health();loadModels();loadIndexes();setInterval(health,10000);setInterval(loadIndexes,10000);
 
 let jobTimer=null;
