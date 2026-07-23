@@ -3,7 +3,8 @@
 Özellikler: hibrit arama (dense+BM25/RRF), CPU/GPU seçimi, klasörden yeni
 indeksleme (chunk→embed), Ollama model seçimi, koleksiyon yönetimi.
 """
-import json, pathlib, subprocess, sys, threading, time, urllib.request
+import json, pathlib, subprocess, sys, threading, time, urllib.request, uuid
+from datetime import datetime, timezone
 
 import onnxruntime as ort
 ort.preload_dlls()
@@ -16,20 +17,39 @@ from qdrant_client import QdrantClient, models
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 QDRANT, OLLAMA = "http://localhost:6333", "http://localhost:11434"
-SOURCES_FILE = ROOT / "data" / "sources.json"
+HISTORY_COLL = "_index_history"   # indeksleme geçmişi Qdrant'ın kendisinde saklanır (ayrı bir dosya değil)
 STATE = {"index_job": None}
 _dense = {}          # device -> TextEmbedding
 _sparse = None
 
-def load_sources() -> dict:
-    if SOURCES_FILE.exists():
-        return json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
-    return {}
+def ensure_history_collection():
+    if not cl.collection_exists(HISTORY_COLL):
+        cl.create_collection(HISTORY_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
 
-def save_source(collection: str, path: str):
-    SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    d = load_sources(); d[collection] = path
-    SOURCES_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+def record_history(collection: str, path: str, vectors: list[str], chunks: int):
+    ensure_history_collection()
+    cl.upsert(HISTORY_COLL, points=[models.PointStruct(
+        id=str(uuid.uuid4()), vector=[0.0],
+        payload={"collection": collection, "path": path, "vectors": vectors, "chunks": chunks,
+                  "date": datetime.now(timezone.utc).isoformat()})])
+
+def get_history(collection: str | None = None) -> dict:
+    """collection -> [ {path, vectors, chunks, date}, ... ] , en yeni önce."""
+    if not cl.collection_exists(HISTORY_COLL):
+        return {}
+    flt = models.Filter(must=[models.FieldCondition(key="collection", match=models.MatchValue(value=collection))]) if collection else None
+    out: dict = {}
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(HISTORY_COLL, scroll_filter=flt, limit=1000, offset=next_page, with_payload=True)
+        for p in batch:
+            out.setdefault(p.payload["collection"], []).append(
+                {k: p.payload[k] for k in ("path", "vectors", "chunks", "date")})
+        if next_page is None:
+            break
+    for entries in out.values():
+        entries.sort(key=lambda e: e["date"], reverse=True)
+    return out
 
 def dense_model(device: str):
     if device not in _dense:
@@ -52,6 +72,8 @@ def health():
     try:
         cols = []
         for c in cl.get_collections().collections:
+            if c.name == HISTORY_COLL:
+                continue
             info = cl.get_collection(c.name)
             v = info.config.params.vectors
             vecs = list(v.keys()) if isinstance(v, dict) else (["default"] if v else [])
@@ -66,18 +88,10 @@ def health():
     except Exception: pass
     return out
 
-# ---------------- kaynak klasör kayıtları (koleksiyon -> yol) ----------------
-@app.get("/api/sources")
-def sources_get():
-    return load_sources()
-
-class SourceReq(BaseModel):
-    collection: str; path: str
-
-@app.post("/api/sources")
-def sources_set(r: SourceReq):
-    save_source(r.collection, r.path)
-    return {"ok": True}
+# ---------------- indeksleme geçmişi (koleksiyon -> [{yol, tarih, vektörler, chunk}]) ----------------
+@app.get("/api/history")
+def history_get(collection: str = ""):
+    return get_history(collection or None)
 
 # ---------------- yerel klasör seçim diyaloğu (aynı makinede çalıştığı için) ----------------
 @app.get("/api/pick-folder")
@@ -166,9 +180,18 @@ def _run_index(r: IndexReq):
     try:
         lib = r.lib or r.collection
         jsonl = ROOT / f"data/chunks-{r.collection}.jsonl"
-        src_path = r.path or load_sources().get(r.collection, "")
-        if r.path:
-            save_source(r.collection, r.path)
+        prev = get_history(r.collection).get(r.collection, [])
+        prev_path = prev[0]["path"] if prev else ""
+        src_path = r.path or prev_path
+
+        # aynı koleksiyon adına DAHA ÖNCEKİNDEN FARKLI bir klasör verildiyse: bu bir
+        # klasör değişikliğidir — eski chunk'lar yeni klasörle karışmasın diye koleksiyon
+        # sıfırdan kurulur (geçmiş kaydı silinmez, sadece o an aktif vektörler değişir).
+        changed_source = bool(r.path) and bool(prev_path) and r.path != prev_path
+        if changed_source and cl.collection_exists(r.collection):
+            st["phase"] = "chunking"
+            cl.delete_collection(r.collection)
+
         if src_path and (r.path or not jsonl.exists()):
             st["phase"] = "chunking"
             p = subprocess.run([sys.executable, str(ROOT / "src/chunker.py"), src_path, lib, str(jsonl)],
@@ -228,6 +251,7 @@ def _run_index(r: IndexReq):
             if upd_pts:
                 cl.update_vectors(r.collection, points=upd_pts)
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
+        record_history(r.collection, src_path, r.vectors, len(rows))
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
         st.update(phase="error", error=str(e)[:300])

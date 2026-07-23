@@ -57,6 +57,16 @@ td.mono{font-family:var(--mono);color:var(--amber)}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--dim);border-top-color:var(--amber);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes s{to{transform:rotate(360deg)}}
 .note{font-size:12px;color:var(--faint);margin-top:6px}
+table tr.collrow{cursor:pointer;transition:.12s}
+table tr.collrow:hover td{background:rgba(224,162,74,.06)}
+table tr.collrow.sel td{background:rgba(224,162,74,.11)}
+.histentry{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--card);border:1px solid var(--line);border-radius:9px;margin-bottom:8px;flex-wrap:wrap}
+.histentry .p{font-family:var(--mono);color:var(--amber);font-size:12.5px;flex:1;min-width:220px;word-break:break-all}
+.histentry .d{font-size:12px;color:var(--dim);font-family:var(--mono)}
+.histentry .v{font-size:11px;color:var(--teal);background:rgba(73,179,156,.1);padding:2px 7px;border-radius:6px}
+.histentry .c{font-size:11px;color:var(--faint)}
+.histentry button{padding:5px 11px;font-size:12px;background:var(--panel);border:1px solid var(--line2);color:var(--dim);font-weight:500}
+.histentry button:hover{border-color:var(--amber-d);color:var(--amber)}
 </style>
 </head>
 <body>
@@ -118,12 +128,18 @@ td.mono{font-family:var(--mono);color:var(--amber)}
   <!-- KOLEKSİYONLAR -->
   <div class="panelcard">
     <h3 id="t-colls">İndeksler</h3>
+    <div class="note" id="t-collhint" style="margin:0 0 10px">Bir indekse tıklayın: kaynak klasörünü ve geçmişini görün.</div>
     <table><thead><tr><th id="th-name">Ad</th><th id="th-pts">Nokta</th><th id="th-vec">Vektörler</th></tr></thead><tbody id="coll-rows"></tbody></table>
+    <div id="histbox" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <h3 style="margin-bottom:10px" id="t-histfor">Geçmiş —</h3>
+      <div id="hist-rows"></div>
+    </div>
   </div>
 </main>
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr';
 const T=(tr,en)=>LANG==='tr'?tr:en, $=id=>document.getElementById(id);
+let HISTORY={}, SELECTED=null;
 function applyLang(){
   $('lang-now').textContent=LANG.toUpperCase();$('lang-alt').textContent=LANG==='tr'?'EN':'TR';
   $('t-settings').textContent=T('Ayarlar','Settings');$('t-back').textContent=T('← Sohbete dön','← Back to chat');
@@ -138,7 +154,9 @@ function applyLang(){
   $('t-models').textContent=T('Ollama Modelleri (Türkçe açıklama)','Ollama Models (explanations)');
   $('l-fast').textContent=T('Hızlı model','Fast model');$('l-deep').textContent=T('Derin model','Deep model');
   $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');$('th-vec').textContent=T('Vektörler','Vectors');
-  refreshSavedSource();
+  $('t-collhint').textContent=T('Bir indekse tıklayın: kaynak klasörünü ve geçmişini görün.','Click an index to see its source folder and history.');
+  refreshHistory();
+  if(SELECTED)renderHistFor(SELECTED);
 }
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
 applyLang();
@@ -146,16 +164,38 @@ function setPill(id,ok,label){const el=$(id);el.className='pill '+(ok?'ok':'bad'
 async function health(){try{
   const h=await(await fetch('/api/health')).json();
   setPill('p-qdrant',h.qdrant,'Qdrant');setPill('p-ollama',h.ollama,'Ollama');setPill('p-gpu',h.gpu,'GPU');
-  $('coll-rows').innerHTML=(h.collections||[]).map(c=>`<tr><td class="mono">${c.name}</td><td>${c.points.toLocaleString('tr')}</td><td>${(c.vectors||[]).join(', ')||'—'}</td></tr>`).join('');
+  $('coll-rows').innerHTML=(h.collections||[]).map(c=>
+    `<tr class="collrow${c.name===SELECTED?' sel':''}" onclick="selectCollection('${c.name}')">`+
+    `<td class="mono">${c.name}</td><td>${c.points.toLocaleString('tr')}</td><td>${(c.vectors||[]).join(', ')||'—'}</td></tr>`).join('');
 }catch(e){}}
-let SOURCES={};
-async function refreshSavedSource(){try{
-  SOURCES=await(await fetch('/api/sources')).json();
+async function refreshHistory(){try{
+  HISTORY=await(await fetch('/api/history')).json();
   const coll=$('idx-coll').value.trim();
-  const saved=SOURCES[coll];
-  $('t-savedsrc').textContent=saved?T('Kayıtlı kaynak: ','Saved source: ')+saved:'';
-  if(saved && !$('idx-path').value.trim())$('idx-path').placeholder=saved;
+  const entries=HISTORY[coll]||[];
+  $('t-savedsrc').textContent=entries.length?T('Kayıtlı kaynak: ','Saved source: ')+entries[0].path:'';
+  if(entries.length && !$('idx-path').value.trim())$('idx-path').placeholder=entries[0].path;
 }catch(e){}}
+function fmtDate(iso){try{return new Date(iso).toLocaleString(LANG==='tr'?'tr-TR':'en-US',{dateStyle:'medium',timeStyle:'short'});}catch(e){return iso;}}
+function selectCollection(name){
+  SELECTED=name;
+  $('idx-coll').value=name;
+  refreshHistory();
+  renderHistFor(name);
+  health();
+}
+function renderHistFor(name){
+  const entries=HISTORY[name]||[];
+  $('histbox').style.display='block';
+  $('t-histfor').textContent=T('Geçmiş — ','History — ')+name;
+  $('hist-rows').innerHTML=entries.length?entries.map(e=>
+    `<div class="histentry"><span class="p">${esc(e.path)}</span>`+
+    `<span class="v">${(e.vectors||[]).join('+')}</span>`+
+    `<span class="c">${(e.chunks||0).toLocaleString('tr')} chunk</span>`+
+    `<span class="d">${fmtDate(e.date)}</span>`+
+    `<button onclick="useHistPath('${esc(e.path).replace(/'/g,"\\'")}')">${T('Bu klasörü kullan','Use this folder')}</button></div>`
+  ).join(''):`<div class="note">${T('Bu indeks için henüz geçmiş yok.','No history for this index yet.')}</div>`;
+}
+function useHistPath(path){$('idx-path').value=path;window.scrollTo({top:0,behavior:'smooth'});}
 async function pickFolder(){
   $('btn-pick').disabled=true;$('btn-pick').textContent=T('Seçiliyor…','Choosing…');
   try{
@@ -164,8 +204,8 @@ async function pickFolder(){
   }catch(e){}
   $('btn-pick').disabled=false;$('btn-pick').textContent=T('📁 Klasör Seç','📁 Choose Folder');
 }
-$('idx-coll').addEventListener('change',refreshSavedSource);
-$('idx-coll').addEventListener('blur',refreshSavedSource);
+$('idx-coll').addEventListener('change',refreshHistory);
+$('idx-coll').addEventListener('blur',refreshHistory);
 async function loadModels(){try{
   const d=await(await fetch('/api/ollama/models')).json();
   for(const [sel,def,key] of [['m-fast','gemma4','ci-mfast'],['m-deep','qwen3.6','ci-mdeep']]){
@@ -182,14 +222,15 @@ function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':
 async function startIndex(vectors){
   const path=$('idx-path').value.trim();
   const collection=$('idx-coll').value.trim()||'unidac';
-  if(!path && !SOURCES[collection]){
+  if(!path && !(HISTORY[collection]||[]).length){
     alert(T('Bu indeks için kayıtlı bir kaynak klasör yok — önce klasör seçin.','No saved source folder for this index yet — choose a folder first.'));
     return;
   }
   const body={path,collection,vectors,device:$('idx-dev').value};
   const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(r.error){alert(r.error);return;}
-  refreshSavedSource();
+  SELECTED=collection;
+  refreshHistory();
   $('jobbar').classList.add('show');if(jobTimer)clearInterval(jobTimer);jobTimer=setInterval(poll,1500);poll();
 }
 async function poll(){
@@ -203,7 +244,10 @@ async function poll(){
   $('jobrate').textContent=(s.rate?s.rate+' chunk/sn':'')+(s.device?` · ${s.device.toUpperCase()}`:'')+(s.mode?` · ${s.mode}`:'');
   $('jobeta').textContent=s.rate&&s.total?T('kalan ','ETA ')+Math.max(0,Math.round((s.total-s.done)/s.rate))+' sn':'';
   $('jobtitle').innerHTML=s.phase==='done'?'✅ '+T('Tamamlandı','Done')+` (${s.sec} sn)`:s.phase==='error'?'❌ '+esc(s.error):'<span class="spin"></span>'+T('İndeksleniyor','Indexing')+` — ${esc(s.collection||'')}`;
-  if(s.phase==='done'||s.phase==='error'){clearInterval(jobTimer);jobTimer=null;health();}
+  if(s.phase==='done'||s.phase==='error'){
+    clearInterval(jobTimer);jobTimer=null;health();
+    if(s.phase==='done'){refreshHistory().then(()=>{if(SELECTED)renderHistFor(SELECTED);});}
+  }
 }
 poll();
 </script>
