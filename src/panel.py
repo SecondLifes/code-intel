@@ -16,9 +16,20 @@ from qdrant_client import QdrantClient, models
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 QDRANT, OLLAMA = "http://localhost:6333", "http://localhost:11434"
+SOURCES_FILE = ROOT / "data" / "sources.json"
 STATE = {"index_job": None}
 _dense = {}          # device -> TextEmbedding
 _sparse = None
+
+def load_sources() -> dict:
+    if SOURCES_FILE.exists():
+        return json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+    return {}
+
+def save_source(collection: str, path: str):
+    SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    d = load_sources(); d[collection] = path
+    SOURCES_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def dense_model(device: str):
     if device not in _dense:
@@ -39,14 +50,48 @@ app = FastAPI(title="Code-Intel Panel")
 def health():
     out = {"qdrant": False, "ollama": False, "gpu": "CUDAExecutionProvider" in ort.get_available_providers(), "collections": []}
     try:
-        out["collections"] = [{"name": c.name, "points": cl.get_collection(c.name).points_count}
-                              for c in cl.get_collections().collections]
+        cols = []
+        for c in cl.get_collections().collections:
+            info = cl.get_collection(c.name)
+            v = info.config.params.vectors
+            vecs = list(v.keys()) if isinstance(v, dict) else (["default"] if v else [])
+            sv = info.config.params.sparse_vectors
+            svecs = list(sv.keys()) if isinstance(sv, dict) else []
+            cols.append({"name": c.name, "points": info.points_count, "vectors": vecs + [f"{s}(sparse)" for s in svecs]})
+        out["collections"] = cols
         out["qdrant"] = True
     except Exception: pass
     try:
         urllib.request.urlopen(OLLAMA + "/api/tags", timeout=3); out["ollama"] = True
     except Exception: pass
     return out
+
+# ---------------- kaynak klasör kayıtları (koleksiyon -> yol) ----------------
+@app.get("/api/sources")
+def sources_get():
+    return load_sources()
+
+class SourceReq(BaseModel):
+    collection: str; path: str
+
+@app.post("/api/sources")
+def sources_set(r: SourceReq):
+    save_source(r.collection, r.path)
+    return {"ok": True}
+
+# ---------------- yerel klasör seçim diyaloğu (aynı makinede çalıştığı için) ----------------
+@app.get("/api/pick-folder")
+def pick_folder():
+    ps = ("Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
+          "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+          "$f.Description = 'Kaynak klasoru sec'; "
+          "if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                              capture_output=True, text=True, timeout=120)
+        return {"path": out.stdout.strip()}
+    except Exception as e:
+        return {"path": "", "error": str(e)[:200]}
 
 @app.get("/api/ollama/models")
 def ollama_models():
@@ -110,51 +155,78 @@ def explain(r: ExplainReq):
 
 # ---------------- indeksleme ----------------
 class IndexReq(BaseModel):
-    path: str = ""            # boşsa: mevcut data/chunks-<collection>.jsonl kullanılır
-    lib: str = ""             # boşsa: collection adı
+    path: str = ""                    # boşsa: kayıtlı kaynak veya mevcut chunk dosyası kullanılır
+    lib: str = ""                     # boşsa: collection adı
     collection: str = "unidac"
-    mode: str = "hybrid"      # hybrid | dense | sparse
-    device: str = "gpu"       # gpu | cpu
+    vectors: list[str] = ["dense", "sparse"]   # bu çalıştırmada hesaplanacak vektör türleri
+    device: str = "gpu"                        # gpu | cpu (yalnız dense için)
 
 def _run_index(r: IndexReq):
     st = STATE["index_job"]
     try:
         lib = r.lib or r.collection
         jsonl = ROOT / f"data/chunks-{r.collection}.jsonl"
+        src_path = r.path or load_sources().get(r.collection, "")
         if r.path:
+            save_source(r.collection, r.path)
+        if src_path and (r.path or not jsonl.exists()):
             st["phase"] = "chunking"
-            p = subprocess.run([sys.executable, str(ROOT / "src/chunker.py"), r.path, lib, str(jsonl)],
+            p = subprocess.run([sys.executable, str(ROOT / "src/chunker.py"), src_path, lib, str(jsonl)],
                                capture_output=True, text=True, timeout=3600)
             if p.returncode != 0:
                 raise RuntimeError("chunker: " + (p.stderr or p.stdout)[-250:])
         if not jsonl.exists():
-            raise RuntimeError(f"chunk dosyası yok: {jsonl.name} — klasör yolu verin")
+            raise RuntimeError(f"chunk dosyası yok: {jsonl.name} — kaynak klasör verin")
         rows = [json.loads(l) for l in open(jsonl, encoding="utf-8")]
-        st.update(total=len(rows), phase="embedding")
+        st.update(total=len(rows), phase="embedding", done=0)
 
-        vec_cfg = {"dense": models.VectorParams(size=1024, distance=models.Distance.COSINE)} if r.mode != "sparse" else {}
-        sp_cfg = {"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)} if r.mode != "dense" else None
-        if cl.collection_exists(r.collection):
-            cl.delete_collection(r.collection)
-        cl.create_collection(r.collection, vectors_config=vec_cfg, sparse_vectors_config=sp_cfg)
+        want_dense = "dense" in r.vectors
+        want_sparse = "sparse" in r.vectors
+        exists = cl.collection_exists(r.collection)
+        if not exists:
+            # her zaman iki vektör türünü de tanımla — hangisi bu turda hesaplanırsa hesaplansın,
+            # diğeri daha sonra ayrı bir çalıştırmada update_vectors ile eklenebilsin.
+            cl.create_collection(r.collection,
+                vectors_config={"dense": models.VectorParams(size=1024, distance=models.Distance.COSINE)},
+                sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)})
 
-        dm = dense_model(r.device) if r.mode != "sparse" else None
-        sm = sparse_model() if r.mode != "dense" else None
+        # hangi nokta id'leri koleksiyonda zaten var — onlara update_vectors (partial),
+        # yenilerine tam upsert (payload dahil) uygulanmalı.
+        existing_ids = set()
+        if exists:
+            next_page = None
+            while True:
+                batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
+                                              with_payload=False, with_vectors=False)
+                existing_ids.update(p.id for p in batch)
+                if next_page is None:
+                    break
+
+        dm = dense_model(r.device) if want_dense else None
+        sm = sparse_model() if want_sparse else None
         t0 = time.time(); B = 128
         for i in range(0, len(rows), B):
             b = rows[i:i + B]
             texts = [f"passage: {x['unit']} {x['name']}\n{x['code'][:2000]}" for x in b]
             dvs = list(dm.embed(texts)) if dm else [None] * len(b)
             svs = list(sm.embed(texts)) if sm else [None] * len(b)
-            pts = []
+            new_pts, upd_pts = [], []
             for x, dv, sv in zip(b, dvs, svs):
+                pid = int(x["id"][:12], 16)
                 vec = {}
                 if dv is not None: vec["dense"] = dv.tolist()
                 if sv is not None: vec["sparse"] = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
-                pts.append(models.PointStruct(
-                    id=int(x["id"][:12], 16), vector=vec,
-                    payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")} | {"code": x["code"][:4000]}))
-            cl.upsert(r.collection, points=pts)
+                if pid in existing_ids:
+                    upd_pts.append(models.PointVectors(id=pid, vector=vec))
+                else:
+                    new_pts.append(models.PointStruct(
+                        id=pid, vector=vec,
+                        payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")} | {"code": x["code"][:4000]}))
+                    existing_ids.add(pid)
+            if new_pts:
+                cl.upsert(r.collection, points=new_pts)
+            if upd_pts:
+                cl.update_vectors(r.collection, points=upd_pts)
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
@@ -164,7 +236,7 @@ def _run_index(r: IndexReq):
 def index_start(r: IndexReq):
     if STATE["index_job"] and STATE["index_job"].get("phase") in ("starting", "chunking", "embedding"):
         return JSONResponse({"error": "zaten çalışan iş var"}, status_code=409)
-    STATE["index_job"] = {"collection": r.collection, "mode": r.mode, "device": r.device,
+    STATE["index_job"] = {"collection": r.collection, "mode": "+".join(r.vectors), "device": r.device,
                           "total": 0, "done": 0, "rate": 0, "phase": "starting"}
     threading.Thread(target=_run_index, args=(r,), daemon=True).start()
     return {"ok": True}

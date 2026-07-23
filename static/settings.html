@@ -5,42 +5,58 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Code-Intel — Ayarlar</title>
 <style>
-:root{--bg:#0b0e14;--panel:#131722;--card:#1a1f2e;--line:#252b3b;--txt:#e6e9f0;--dim:#8b93a7;--acc:#5b8cff;--acc2:#22c58b;--err:#ef5b6b;--mono:'Cascadia Code',Consolas,monospace}
+/* Aynı "ink workshop" paleti — index.html ile tutarlı: kehribar (amber) = birincil eylem/kod,
+   çay yeşili (teal) = anlamsal/başarı sinyali. */
+:root{
+  --bg:#14110c; --panel:#1b1710; --card:#211c14;
+  --line:#332b1f; --line2:#463b2a;
+  --txt:#f1ebdd; --dim:#a99a83; --faint:#6f6555;
+  --amber:#e0a24a; --amber-d:#c58a37; --teal:#49b39c; --teal-d:#2f7e6c; --err:#e0704a;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,monospace;
+}
 *{box-sizing:border-box;margin:0}
 body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sans-serif;min-height:100vh}
-header{display:flex;align-items:center;gap:12px;padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--line)}
-header h1{font-size:16px;font-weight:600}
-header h1 b{color:var(--acc)}
+header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;font-weight:700;letter-spacing:-.2px}
+header h1 b{color:var(--amber)}
 .sp{flex:1}
-a.back{color:var(--dim);text-decoration:none;font-size:13.5px}
-a.back:hover{color:var(--txt)}
-.lang{cursor:pointer;user-select:none;font-size:12.5px;color:var(--dim)}
+a.back{color:var(--faint);text-decoration:none;font-size:13.5px;transition:.15s}
+a.back:hover{color:var(--amber)}
+.lang{cursor:pointer;user-select:none;font-size:12.5px;color:var(--faint)}
 .lang b{color:var(--txt)}
 main{max-width:860px;margin:0 auto;padding:26px 20px 80px}
 .panelcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:18px}
-.panelcard h3{font-size:12.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px}
+.panelcard h3{font-size:12.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
 label{font-size:12px;color:var(--dim);display:block;margin:0 0 4px 3px}
 .field{display:flex;flex-direction:column;margin-bottom:10px}
-input,select{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 13px;color:var(--txt);font-size:14px;outline:none}
-input:focus,select:focus{border-color:var(--acc)}
-button{background:var(--acc);border:0;border-radius:10px;color:#fff;padding:11px 22px;font-size:14px;cursor:pointer;font-weight:600}
+input,select{background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:10px 13px;color:var(--txt);font-size:14px;outline:none;transition:.15s}
+input:focus,select:focus{border-color:var(--amber-d);box-shadow:0 0 0 3px rgba(224,162,74,.08)}
+button{background:var(--amber);border:0;border-radius:10px;color:#1a1305;padding:11px 22px;font-size:14px;cursor:pointer;font-weight:700;transition:.15s}
+button:hover{background:var(--amber-d)}
 button:disabled{opacity:.5;cursor:wait}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.actions button{flex:1;min-width:200px}
+#btn-sparse{background:var(--teal);color:#0c231d}
+#btn-sparse:hover{background:var(--teal-d);color:var(--txt)}
+#btn-dense{background:var(--amber)}
+#btn-both,#btn-pick{background:var(--card);border:1px solid var(--line2);color:var(--dim)}
+#btn-both:hover,#btn-pick:hover{border-color:var(--amber-d);color:var(--amber)}
 .pill{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim);margin-right:6px}
-.pill.ok{color:var(--acc2);border-color:#1b4536}
-.pill.bad{color:var(--err);border-color:#552731}
+.pill.ok{color:var(--teal);border-color:var(--teal-d)}
+.pill.bad{color:var(--err);border-color:#6b3a26}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{color:var(--dim);text-align:left;font-weight:500;font-size:12px;padding:6px 10px;border-bottom:1px solid var(--line)}
 td{padding:8px 10px;border-bottom:1px solid var(--line)}
-td.mono{font-family:var(--mono);color:var(--acc)}
+td.mono{font-family:var(--mono);color:var(--amber)}
 .jobbar{display:none;margin-top:14px}
 .jobbar.show{display:block}
-.bar{height:9px;background:#0d1117;border-radius:99px;overflow:hidden;margin:8px 0 6px}
-.bar>div{height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2));width:0%;transition:width .5s}
+.bar{height:9px;background:#0f0d09;border-radius:99px;overflow:hidden;margin:8px 0 6px}
+.bar>div{height:100%;background:linear-gradient(90deg,var(--teal-d),var(--amber));width:0%;transition:width .5s}
 .jobmeta{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim)}
-.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--dim);border-top-color:var(--acc);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--dim);border-top-color:var(--amber);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes s{to{transform:rotate(360deg)}}
-.note{font-size:12px;color:var(--dim);margin-top:6px}
+.note{font-size:12px;color:var(--faint);margin-top:6px}
 </style>
 </head>
 <body>
@@ -63,22 +79,26 @@ td.mono{font-family:var(--mono);color:var(--acc)}
   <div class="panelcard">
     <h3 id="t-index">Yeni İndeksleme</h3>
     <div class="field">
-      <label id="l-path">Kaynak klasör (boş = mevcut chunk dosyasını yeniden kullan)</label>
-      <input id="idx-path" placeholder="E:\system\dev\...\Source">
+      <label id="l-name">İndeks adı</label><input id="idx-coll" value="unidac" style="width:220px">
+    </div>
+    <div class="field">
+      <label id="l-path">Kaynak klasör (boş = kayıtlı yol veya mevcut chunk dosyası kullanılır)</label>
+      <div class="row" style="align-items:center">
+        <input id="idx-path" placeholder="E:\system\dev\...\Source" style="flex:1;min-width:280px">
+        <button type="button" onclick="pickFolder()" id="btn-pick">📁 Klasör Seç</button>
+      </div>
+      <div class="note" id="t-savedsrc"></div>
     </div>
     <div class="row">
-      <div class="field"><label id="l-name">İndeks adı</label><input id="idx-coll" value="unidac" style="width:160px"></div>
-      <div class="field"><label id="l-type">İndeks türü</label>
-        <select id="idx-mode">
-          <option value="hybrid">Hibrit — önerilen</option>
-          <option value="dense">Anlamsal (dense)</option>
-          <option value="sparse">Kelime (BM25)</option>
-        </select></div>
-      <div class="field"><label id="l-dev">Donanım</label>
+      <div class="field"><label id="l-dev">Donanım (Türkçe/anlamsal için)</label>
         <select id="idx-dev"><option value="gpu">GPU (RTX 5080)</option><option value="cpu">CPU</option></select></div>
-      <div class="field"><button onclick="startIndex()" id="btn-index">İndekslemeyi Başlat</button></div>
     </div>
-    <div class="note" id="t-note">Var olan aynı adlı indeks silinip yeniden oluşturulur. Kelime (BM25) modu GPU gerektirmez ve çok hızlıdır.</div>
+    <div class="actions">
+      <button onclick="startIndex(['sparse'])" id="btn-sparse">🔤 Kelime İndeksini Başlat</button>
+      <button onclick="startIndex(['dense'])" id="btn-dense">🇹🇷 Türkçe (Anlamsal) İndeksini Başlat</button>
+      <button onclick="startIndex(['dense','sparse'])" id="btn-both">İkisini Birden Başlat</button>
+    </div>
+    <div class="note" id="t-note">Önce Kelime (hızlı, GPU gerektirmez) indeksleyip aramaya başlayabilir, Türkçe/anlamsal indekslemeyi daha sonra aynı chunk'lar üzerine ekleyebilirsiniz — baştan başlamaz.</div>
     <div class="jobbar" id="jobbar">
       <div style="font-size:13.5px" id="jobtitle">…</div>
       <div class="bar"><div id="jobfill"></div></div>
@@ -98,7 +118,7 @@ td.mono{font-family:var(--mono);color:var(--acc)}
   <!-- KOLEKSİYONLAR -->
   <div class="panelcard">
     <h3 id="t-colls">İndeksler</h3>
-    <table><thead><tr><th id="th-name">Ad</th><th id="th-pts">Nokta</th></tr></thead><tbody id="coll-rows"></tbody></table>
+    <table><thead><tr><th id="th-name">Ad</th><th id="th-pts">Nokta</th><th id="th-vec">Vektörler</th></tr></thead><tbody id="coll-rows"></tbody></table>
   </div>
 </main>
 <script>
@@ -108,14 +128,17 @@ function applyLang(){
   $('lang-now').textContent=LANG.toUpperCase();$('lang-alt').textContent=LANG==='tr'?'EN':'TR';
   $('t-settings').textContent=T('Ayarlar','Settings');$('t-back').textContent=T('← Sohbete dön','← Back to chat');
   $('t-health').textContent=T('Sistem Durumu','System Health');$('t-index').textContent=T('Yeni İndeksleme','New Indexing');
-  $('l-path').textContent=T('Kaynak klasör (boş = mevcut chunk dosyasını yeniden kullan)','Source folder (empty = reuse existing chunks)');
-  $('l-name').textContent=T('İndeks adı','Index name');$('l-type').textContent=T('İndeks türü','Index type');$('l-dev').textContent=T('Donanım','Device');
-  $('btn-index').textContent=T('İndekslemeyi Başlat','Start Indexing');
-  $('t-note').textContent=T('Var olan aynı adlı indeks silinip yeniden oluşturulur. Kelime (BM25) modu GPU gerektirmez ve çok hızlıdır.','An existing index with the same name is recreated. Keyword (BM25) mode needs no GPU and is very fast.');
+  $('l-path').textContent=T('Kaynak klasör (boş = kayıtlı yol veya mevcut chunk dosyası kullanılır)','Source folder (empty = saved path or existing chunks are reused)');
+  $('l-name').textContent=T('İndeks adı','Index name');$('l-dev').textContent=T('Donanım (Türkçe/anlamsal için)','Device (for Turkish/semantic)');
+  $('btn-pick').textContent=T('📁 Klasör Seç','📁 Choose Folder');
+  $('btn-sparse').textContent=T('🔤 Kelime İndeksini Başlat','🔤 Start Keyword Index');
+  $('btn-dense').textContent=T('🇹🇷 Türkçe (Anlamsal) İndeksini Başlat','🇹🇷 Start Semantic Index');
+  $('btn-both').textContent=T('İkisini Birden Başlat','Start Both');
+  $('t-note').textContent=T('Önce Kelime (hızlı, GPU gerektirmez) indeksleyip aramaya başlayabilir, Türkçe/anlamsal indekslemeyi daha sonra aynı chunk\'lar üzerine ekleyebilirsiniz — baştan başlamaz.','You can start with Keyword (fast, no GPU needed) and search right away, then add the Turkish/semantic index later on the same chunks — it will not start over.');
   $('t-models').textContent=T('Ollama Modelleri (Türkçe açıklama)','Ollama Models (explanations)');
   $('l-fast').textContent=T('Hızlı model','Fast model');$('l-deep').textContent=T('Derin model','Deep model');
-  $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');
-  const im=$('idx-mode');im.options[0].text=T('Hibrit — önerilen','Hybrid — recommended');im.options[1].text=T('Anlamsal (dense)','Semantic (dense)');im.options[2].text=T('Kelime (BM25)','Keyword (BM25)');
+  $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');$('th-vec').textContent=T('Vektörler','Vectors');
+  refreshSavedSource();
 }
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
 applyLang();
@@ -123,8 +146,26 @@ function setPill(id,ok,label){const el=$(id);el.className='pill '+(ok?'ok':'bad'
 async function health(){try{
   const h=await(await fetch('/api/health')).json();
   setPill('p-qdrant',h.qdrant,'Qdrant');setPill('p-ollama',h.ollama,'Ollama');setPill('p-gpu',h.gpu,'GPU');
-  $('coll-rows').innerHTML=(h.collections||[]).map(c=>`<tr><td class="mono">${c.name}</td><td>${c.points.toLocaleString('tr')}</td></tr>`).join('');
+  $('coll-rows').innerHTML=(h.collections||[]).map(c=>`<tr><td class="mono">${c.name}</td><td>${c.points.toLocaleString('tr')}</td><td>${(c.vectors||[]).join(', ')||'—'}</td></tr>`).join('');
 }catch(e){}}
+let SOURCES={};
+async function refreshSavedSource(){try{
+  SOURCES=await(await fetch('/api/sources')).json();
+  const coll=$('idx-coll').value.trim();
+  const saved=SOURCES[coll];
+  $('t-savedsrc').textContent=saved?T('Kayıtlı kaynak: ','Saved source: ')+saved:'';
+  if(saved && !$('idx-path').value.trim())$('idx-path').placeholder=saved;
+}catch(e){}}
+async function pickFolder(){
+  $('btn-pick').disabled=true;$('btn-pick').textContent=T('Seçiliyor…','Choosing…');
+  try{
+    const r=await(await fetch('/api/pick-folder')).json();
+    if(r.path)$('idx-path').value=r.path;
+  }catch(e){}
+  $('btn-pick').disabled=false;$('btn-pick').textContent=T('📁 Klasör Seç','📁 Choose Folder');
+}
+$('idx-coll').addEventListener('change',refreshSavedSource);
+$('idx-coll').addEventListener('blur',refreshSavedSource);
 async function loadModels(){try{
   const d=await(await fetch('/api/ollama/models')).json();
   for(const [sel,def,key] of [['m-fast','gemma4','ci-mfast'],['m-deep','qwen3.6','ci-mdeep']]){
@@ -138,10 +179,17 @@ health();loadModels();setInterval(health,10000);
 
 let jobTimer=null;
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-async function startIndex(){
-  const body={path:$('idx-path').value.trim(),collection:$('idx-coll').value.trim()||'unidac',mode:$('idx-mode').value,device:$('idx-dev').value};
+async function startIndex(vectors){
+  const path=$('idx-path').value.trim();
+  const collection=$('idx-coll').value.trim()||'unidac';
+  if(!path && !SOURCES[collection]){
+    alert(T('Bu indeks için kayıtlı bir kaynak klasör yok — önce klasör seçin.','No saved source folder for this index yet — choose a folder first.'));
+    return;
+  }
+  const body={path,collection,vectors,device:$('idx-dev').value};
   const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(r.error){alert(r.error);return;}
+  refreshSavedSource();
   $('jobbar').classList.add('show');if(jobTimer)clearInterval(jobTimer);jobTimer=setInterval(poll,1500);poll();
 }
 async function poll(){
