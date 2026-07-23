@@ -1,6 +1,9 @@
 """Phase 1 chunker v1 — Pascal kaynaklarını anlamsal chunk'lara ayırır.
-Çıktı: JSONL (chunk başına: id, lib, unit, kind, name, satır aralığı, kod, hash)."""
-import hashlib, json, pathlib, re, sys, time
+Çıktı: JSONL (chunk başına: id, lib, unit, kind, name, satır aralığı, kod, hash).
+Hash: XXH3-64 (xxhash paketi, SSE2/AVX2 hızlandırmalı) — kriptografik olmayan,
+sadece içerik değişikliği tespiti (diffleme) için kullanılıyor, sha1'den ~5x hızlı."""
+import json, pathlib, re, sys, time
+import xxhash
 from tree_sitter import Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
@@ -19,10 +22,10 @@ def chunk_file(path: pathlib.Path, lib: str):
                 continue
             m = NAME_RE.search(text[:200])
             name = m.group(1) if m else text.split("\n")[0][:60].strip()
-            cid = hashlib.sha1(f"{path.name}:{n.start_point[0]}:{text[:80]}".encode()).hexdigest()[:16]
+            cid = xxhash.xxh3_64(f"{path.name}:{n.start_point[0]}:{text[:80]}".encode()).hexdigest()
             yield {"id": cid, "lib": lib, "unit": path.name, "kind": kind, "name": name,
                    "line_start": n.start_point[0]+1, "line_end": n.end_point[0]+1,
-                   "hash": hashlib.sha1(text.encode()).hexdigest()[:12], "code": text}
+                   "hash": xxhash.xxh3_64(text.encode()).hexdigest()[:12], "code": text}
 
 def main(root: str, lib: str, out: str):
     rootp = pathlib.Path(root); t0 = time.time(); total = 0; files = 0

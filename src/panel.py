@@ -26,15 +26,16 @@ def ensure_history_collection():
     if not cl.collection_exists(HISTORY_COLL):
         cl.create_collection(HISTORY_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
 
-def record_history(collection: str, path: str, vectors: list[str], chunks: int):
+def record_history(collection: str, path: str, vectors: list[str], chunks: int, extra: dict | None = None):
     ensure_history_collection()
-    cl.upsert(HISTORY_COLL, points=[models.PointStruct(
-        id=str(uuid.uuid4()), vector=[0.0],
-        payload={"collection": collection, "path": path, "vectors": vectors, "chunks": chunks,
-                  "date": datetime.now(timezone.utc).isoformat()})])
+    payload = {"collection": collection, "path": path, "vectors": vectors, "chunks": chunks,
+               "date": datetime.now(timezone.utc).isoformat()}
+    if extra:
+        payload.update(extra)   # örn. new/changed/unchanged/deleted sayaçları
+    cl.upsert(HISTORY_COLL, points=[models.PointStruct(id=str(uuid.uuid4()), vector=[0.0], payload=payload)])
 
 def get_history(collection: str | None = None) -> dict:
-    """collection -> [ {path, vectors, chunks, date}, ... ] , en yeni önce."""
+    """collection -> [ {path, vectors, chunks, date, new, changed, unchanged, deleted}, ... ] , en yeni önce."""
     if not cl.collection_exists(HISTORY_COLL):
         return {}
     flt = models.Filter(must=[models.FieldCondition(key="collection", match=models.MatchValue(value=collection))]) if collection else None
@@ -44,7 +45,7 @@ def get_history(collection: str | None = None) -> dict:
         batch, next_page = cl.scroll(HISTORY_COLL, scroll_filter=flt, limit=1000, offset=next_page, with_payload=True)
         for p in batch:
             out.setdefault(p.payload["collection"], []).append(
-                {k: p.payload[k] for k in ("path", "vectors", "chunks", "date")})
+                {k: p.payload.get(k) for k in ("path", "vectors", "chunks", "date", "new", "changed", "unchanged", "deleted")})
         if next_page is None:
             break
     for entries in out.values():
@@ -181,27 +182,25 @@ def _run_index(r: IndexReq):
         lib = r.lib or r.collection
         jsonl = ROOT / f"data/chunks-{r.collection}.jsonl"
         prev = get_history(r.collection).get(r.collection, [])
-        prev_path = prev[0]["path"] if prev else ""
-        src_path = r.path or prev_path
+        src_path = r.path or (prev[0]["path"] if prev else "")
+        if not src_path:
+            raise RuntimeError("kaynak klasör yok — bir yol verin")
 
-        # aynı koleksiyon adına DAHA ÖNCEKİNDEN FARKLI bir klasör verildiyse: bu bir
-        # klasör değişikliğidir — eski chunk'lar yeni klasörle karışmasın diye koleksiyon
-        # sıfırdan kurulur (geçmiş kaydı silinmez, sadece o an aktif vektörler değişir).
-        changed_source = bool(r.path) and bool(prev_path) and r.path != prev_path
-        if changed_source and cl.collection_exists(r.collection):
-            st["phase"] = "chunking"
-            cl.delete_collection(r.collection)
-
-        if src_path and (r.path or not jsonl.exists()):
+        # her seferinde yeniden chunk'la — chunker hızlıdır (~300 dosya/sn), asıl maliyetli
+        # kısım embedding, ve hangi dosyaların gerçekten değiştiğini bilmek için önce
+        # klasörün GÜNCEL halini görmemiz gerekir. Sadece yol artık diskte yoksa
+        # (klasör taşınmış/silinmiş) elimizdeki son chunk dosyasına düşülür.
+        if pathlib.Path(src_path).exists():
             st["phase"] = "chunking"
             p = subprocess.run([sys.executable, str(ROOT / "src/chunker.py"), src_path, lib, str(jsonl)],
                                capture_output=True, text=True, timeout=3600)
             if p.returncode != 0:
                 raise RuntimeError("chunker: " + (p.stderr or p.stdout)[-250:])
         if not jsonl.exists():
-            raise RuntimeError(f"chunk dosyası yok: {jsonl.name} — kaynak klasör verin")
+            raise RuntimeError(f"chunk dosyası yok ve kaynak klasör bulunamadı: {src_path}")
         rows = [json.loads(l) for l in open(jsonl, encoding="utf-8")]
-        st.update(total=len(rows), phase="embedding", done=0)
+        row_by_id = {int(x["id"][:12], 16): x for x in rows}
+        st.update(total=len(rows), phase="diffing", done=0)
 
         want_dense = "dense" in r.vectors
         want_sparse = "sparse" in r.vectors
@@ -213,45 +212,92 @@ def _run_index(r: IndexReq):
                 vectors_config={"dense": models.VectorParams(size=1024, distance=models.Distance.COSINE)},
                 sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)})
 
-        # hangi nokta id'leri koleksiyonda zaten var — onlara update_vectors (partial),
-        # yenilerine tam upsert (payload dahil) uygulanmalı.
-        existing_ids = set()
+        # mevcut noktaların hash + hangi vektör türlerine sahip oldukları + VEKTÖRLERİN
+        # KENDİSİ (with_vectors=True) tek toplu scroll ile — değişmeyen chunk'larda eksik
+        # vektör türü eklenirken diğer türü yeniden hesaplamak yerine olduğu gibi geri
+        # yazabilelim (tek tek set_payload/update_vectors çağrısı YAPMIYORUZ; ölçüldü,
+        # ~2 sn/çağrı — 25K nokta için saatler sürerdi. Bunun yerine her değişen/eksik
+        # nokta için TEK bir tam upsert yapılıyor, ihtiyaç duyulmayan vektör türü buradan
+        # olduğu gibi kopyalanıyor).
+        old = {}
         if exists:
             next_page = None
             while True:
                 batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
-                                              with_payload=False, with_vectors=False)
-                existing_ids.update(p.id for p in batch)
+                                              with_payload=["hash", "has_dense", "has_sparse"], with_vectors=True)
+                for p_ in batch:
+                    old[p_.id] = {"hash": p_.payload.get("hash"),
+                                  "has_dense": bool(p_.payload.get("has_dense")),
+                                  "has_sparse": bool(p_.payload.get("has_sparse")),
+                                  "vector": p_.vector or {}}
                 if next_page is None:
                     break
 
-        dm = dense_model(r.device) if want_dense else None
-        sm = sparse_model() if want_sparse else None
+        # kaynakta artık bulunmayan (silinmiş/yeniden adlandırılmış) eski noktalar
+        stale_ids = [pid for pid in old if pid not in row_by_id]
+        if stale_ids:
+            cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
+
+        plan = []          # (row, pid, need_dense, need_sparse, before_dense, before_sparse)
+        n_new = n_changed = n_unchanged = 0
+        for pid, x in row_by_id.items():
+            o = old.get(pid)
+            is_new = o is None
+            changed = is_new or o["hash"] != x["hash"]
+            before_dense = (not is_new) and (not changed) and o["has_dense"]
+            before_sparse = (not is_new) and (not changed) and o["has_sparse"]
+            if is_new:
+                need_dense, need_sparse = want_dense, want_sparse
+                n_new += 1
+            elif changed:
+                need_dense = want_dense or o["has_dense"]     # önceden varsa, yeni içerikle güncelle
+                need_sparse = want_sparse or o["has_sparse"]
+                n_changed += 1
+            else:
+                need_dense = want_dense and not o["has_dense"]
+                need_sparse = want_sparse and not o["has_sparse"]
+                n_unchanged += 1
+            if need_dense or need_sparse:
+                plan.append((x, pid, need_dense, need_sparse, before_dense, before_sparse))
+
+        st.update(total=len(plan), phase="embedding", done=0,
+                  skipped=n_unchanged, deleted=len(stale_ids))
+        if not plan:
+            record_history(r.collection, src_path, r.vectors, len(rows),
+                           extra={"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids)})
+            st.update(phase="done", sec=0.0)
+            return
+
+        dm = dense_model(r.device) if any(pl[2] for pl in plan) else None
+        sm = sparse_model() if any(pl[3] for pl in plan) else None
         t0 = time.time(); B = 128
-        for i in range(0, len(rows), B):
-            b = rows[i:i + B]
-            texts = [f"passage: {x['unit']} {x['name']}\n{x['code'][:2000]}" for x in b]
-            dvs = list(dm.embed(texts)) if dm else [None] * len(b)
-            svs = list(sm.embed(texts)) if sm else [None] * len(b)
-            new_pts, upd_pts = [], []
-            for x, dv, sv in zip(b, dvs, svs):
-                pid = int(x["id"][:12], 16)
+        for i in range(0, len(plan), B):
+            b = plan[i:i + B]
+            texts = [f"passage: {x['unit']} {x['name']}\n{x['code'][:2000]}" for x, *_ in b]
+            need_d_any = any(nd for _, _, nd, _, _, _ in b)
+            need_s_any = any(ns for _, _, _, ns, _, _ in b)
+            dvs = list(dm.embed(texts)) if (dm and need_d_any) else [None] * len(b)
+            svs = list(sm.embed(texts)) if (sm and need_s_any) else [None] * len(b)
+            pts = []
+            for (x, pid, need_dense, need_sparse, before_dense, before_sparse), dv, sv in zip(b, dvs, svs):
                 vec = {}
-                if dv is not None: vec["dense"] = dv.tolist()
-                if sv is not None: vec["sparse"] = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
-                if pid in existing_ids:
-                    upd_pts.append(models.PointVectors(id=pid, vector=vec))
-                else:
-                    new_pts.append(models.PointStruct(
-                        id=pid, vector=vec,
-                        payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")} | {"code": x["code"][:4000]}))
-                    existing_ids.add(pid)
-            if new_pts:
-                cl.upsert(r.collection, points=new_pts)
-            if upd_pts:
-                cl.update_vectors(r.collection, points=upd_pts)
+                if need_dense and dv is not None:
+                    vec["dense"] = dv.tolist()
+                elif before_dense:
+                    vec["dense"] = old[pid]["vector"]["dense"]     # değişmedi — olduğu gibi yeniden yaz
+                if need_sparse and sv is not None:
+                    vec["sparse"] = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
+                elif before_sparse:
+                    vec["sparse"] = old[pid]["vector"]["sparse"]
+                final_dense, final_sparse = before_dense or need_dense, before_sparse or need_sparse
+                pts.append(models.PointStruct(
+                    id=pid, vector=vec,
+                    payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")}
+                             | {"code": x["code"][:4000], "has_dense": final_dense, "has_sparse": final_sparse}))
+            cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
-        record_history(r.collection, src_path, r.vectors, len(rows))
+        record_history(r.collection, src_path, r.vectors, len(rows),
+                       extra={"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids)})
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
         st.update(phase="error", error=str(e)[:300])
