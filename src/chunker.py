@@ -45,7 +45,14 @@ def chunk_file(path: pathlib.Path, lib: str):
                 continue
             m = NAME_RE.search(text[:200])
             name = m.group(1) if m else text.split("\n")[0][:60].strip()
-            cid = xxhash.xxh3_64(f"{path.name}:{n.start_point[0]}:{full_text[:80]}".encode()).hexdigest()
+            # KRİTİK: satır numarası ID'ye KATILMIYOR — üstüne bir satır eklenince tüm
+            # dosyadaki chunk'ların satır numaraları kayar, ID'ye dahil edilirse içerik
+            # DEĞİŞMEMİŞ olsa bile ID değişir (doğrulandı: canlı testte tüm chunk'lar
+            # "silinmiş+yeniden eklenmiş" görünüp önbellekteki Türkçe çeviriler kaybolurdu).
+            # Aşırı yüklü (overload) metodları ayırt etmek için satır no yerine imzanın
+            # kendisi (full_text önek) kullanılıyor — parametre listesi farklı olduğu
+            # sürece bu zaten benzersiz kalır.
+            cid = xxhash.xxh3_64(f"{path.name}:{kind_key}:{full_text[:160]}".encode()).hexdigest()
             yield {"id": cid, "lib": lib, "unit": path.name, "kind": kind, "name": name,
                    "line_start": n.start_point[0]+1, "line_end": n.end_point[0]+1,
                    "hash": xxhash.xxh3_64(full_text.encode()).hexdigest()[:12],
