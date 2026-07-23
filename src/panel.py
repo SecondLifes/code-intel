@@ -3,7 +3,7 @@
 Özellikler: hibrit arama (dense+BM25/RRF), CPU/GPU seçimi, klasörden yeni
 indeksleme (chunk→embed), Ollama model seçimi, koleksiyon yönetimi.
 """
-import json, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid
+import json, pathlib, subprocess, sys, threading, time, urllib.request, uuid
 from datetime import datetime, timezone
 
 import onnxruntime as ort
@@ -243,44 +243,48 @@ def hardware():
         out["gpu"] = _ps("(Get-CimInstance Win32_VideoController | Select-Object -First 1).Name")
     return out
 
-MODEL_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)b", re.I)
-
-def model_b_params(tag: str) -> float | None:
-    m = MODEL_SIZE_RE.search(tag)
-    return float(m.group(1)) if m else None
-
 @app.get("/api/hardware/suggest")
 def hardware_suggest():
     hw = hardware()
     try:
         d = json.loads(urllib.request.urlopen(OLLAMA + "/api/tags", timeout=5).read())
-        tags = [m["name"] for m in d.get("models", [])]
+        # Ollama'nın kendi bildirdiği GERÇEK boyut (byte) kullanılıyor — isimdeki "30b" gibi bir
+        # rakamdan tahmin YOK: MoE modellerde bu tür isim-tabanlı tahminler yanıltıcı olabiliyor
+        # (örn. qwen3-coder:30b adında "30" geçse de gerçek Q4_K_M dosyası 18.6GB).
+        sized = [(m["name"], round(m.get("size", 0) / (1024 ** 3), 1)) for m in d.get("models", [])]
+        sized = [(t, gb) for t, gb in sized if gb > 0]
     except Exception as e:
         return {"hardware": hw, "error": str(e)[:150]}
-
-    sized = [(t, model_b_params(t)) for t in tags]
-    sized = [(t, b) for t, b in sized if b is not None]
     if not sized:
-        return {"hardware": hw, "fast": tags[0] if tags else None, "deep": tags[0] if tags else None,
-                "reason": "Model adlarından parametre büyüklüğü çıkarılamadı — ilk model varsayılan seçildi."}
+        return {"hardware": hw, "fast": None, "deep": None, "reason": "Kurulu model bulunamadı."}
 
     vram = hw["vram_gb"]
-    GB_PER_B = 0.65      # Q4 nicemleme için kaba tahmin: ~0.65 GB VRAM / milyar parametre
     RESERVE_GB = 3.5     # embedding modeli + Qdrant + sistem için ayrılan pay
     budget = max(0.0, vram - RESERVE_GB)
-    fits = [(t, b) for t, b in sized if b * GB_PER_B <= budget] if vram > 0 else []
+    fits = [(t, gb) for t, gb in sized if gb <= budget] if vram > 0 else []
+    coder = [(t, gb) for t, gb in sized if "coder" in t.lower()]
 
-    if fits:
-        fast = min(fits, key=lambda tb: tb[1])[0]     # sığanların en küçüğü: hız için
-        deep = max(fits, key=lambda tb: tb[1])[0]     # sığanların en büyüğü: derinlik için
-        reason = (f"GPU: {hw['gpu']} (~{vram}GB VRAM). Yaklaşık {budget:.1f}GB kullanılabilir bütçeye göre "
-                   f"(diğer modeller/Qdrant için {RESERVE_GB}GB ayrıldı) en küçük model hız, en büyük sığan model derinlik için seçildi.")
+    # hızlı: kodlamaya özel modeller arasından VRAM'e sığanların en küçüğü — yoksa tüm
+    # sığanların en küçüğü — o da yoksa kurulu en küçük model (hız önceliği, sık çağrılıyor)
+    coder_fits = [(t, gb) for t, gb in coder if gb <= budget]
+    if coder_fits:
+        fast = min(coder_fits, key=lambda tg: tg[1])[0]
+    elif fits:
+        fast = min(fits, key=lambda tg: tg[1])[0]
     else:
-        fast = min(sized, key=lambda tb: tb[1])[0]
-        deep = fast
-        reason = "Hiçbir kurulu model GPU VRAM'ine rahatça sığmıyor gibi görünüyor — en küçük model hem hızlı hem derin için önerildi (CPU'da da çalışabilir)."
+        fast = min(sized, key=lambda tg: tg[1])[0]
+
+    # derin: kodlamaya özel modellerin en büyüğü — yoksa kurulu en büyük model.
+    # VRAM'e tam sığmasa da olur (zaten 30-40sn bekleniyor, Ollama gerekirse kısmen
+    # CPU'ya taşırır; sığmayınca sadece yavaşlar, hata vermez).
+    deep = max(coder, key=lambda tg: tg[1])[0] if coder else max(sized, key=lambda tg: tg[1])[0]
+    deep_gb = dict(sized)[deep]
+    fits_note = "VRAM'e tam sığıyor." if deep_gb <= budget else f"VRAM'e tam sığmıyor (~{deep_gb}GB > ~{budget:.1f}GB bütçe) — kısmen CPU'ya taşabilir, yavaş ama çalışır."
+    reason = (f"GPU: {hw['gpu']} (~{vram}GB VRAM, ~{budget:.1f}GB kullanılabilir bütçe, {RESERVE_GB}GB rezerv). "
+               f"Kodlamaya özel modeller önceliklendirildi{'' if coder else ' (kurulu böyle bir model bulunamadı, genel modellerden seçildi)'}. "
+               f"Hızlı: sığan en küçük kodlama modeli. Derin: en büyük kodlama modeli — {fits_note}")
     return {"hardware": hw, "fast": fast, "deep": deep, "reason": reason,
-            "sized": [{"model": t, "b_params": b} for t, b in sized]}
+            "sized": [{"model": t, "gb": gb, "coder": "coder" in t.lower()} for t, gb in sorted(sized, key=lambda tg: -tg[1])]}
 
 # ---------------- arama (birden fazla koleksiyonda birlikte aranabilir) ----------------
 class SearchReq(BaseModel):
