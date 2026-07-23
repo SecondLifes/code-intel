@@ -136,7 +136,13 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
 
   <!-- KOLEKSİYONLAR -->
   <div class="panelcard">
-    <h3 id="t-colls">İndeksler</h3>
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 id="t-colls" style="margin:0">İndeksler</h3>
+      <div>
+        <input type="file" id="import-file" accept=".gz" style="display:none" onchange="importCollection(this.files[0])">
+        <button type="button" onclick="document.getElementById('import-file').click()" id="btn-import" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:7px 14px;font-size:12.5px">📥 <span id="t-import">İçe Aktar</span></button>
+      </div>
+    </div>
     <div class="note" id="t-collhint" style="margin:0 0 10px">Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.</div>
     <table><thead><tr>
       <th id="th-name">Ad</th><th id="th-sparse">Kelime İndex</th><th id="th-dense">Anlamsal İndex</th><th id="th-pts">Nokta</th>
@@ -164,6 +170,7 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       <div class="actions" style="margin-top:6px">
         <button onclick="refreshVector(SELECTED,'sparse')" id="btn-detsparse" style="background:var(--teal);color:#0c231d">🔤 <span id="t-detrsparse">Kelime İndeksini Yenile</span></button>
         <button onclick="refreshVector(SELECTED,'dense')" id="btn-detdense">🇹🇷 <span id="t-detrdense">Anlamsal İndeksi Yenile</span></button>
+        <button onclick="exportCollection()" id="btn-detexport" style="background:var(--card);border:1px solid var(--line2);color:var(--dim)">📤 <span id="t-detexport">Dışa Aktar</span></button>
       </div>
       <h3 style="margin:18px 0 10px" id="t-histfor">Geçmiş</h3>
       <div id="hist-rows"></div>
@@ -197,6 +204,7 @@ function applyLang(){
   $('t-collhint').textContent=T('Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.','Click an index to see its details and history.');
   $('l-detver').textContent=T('Versiyon','Version');$('l-detlang').textContent=T('Dil','Language');$('l-detpath').textContent=T('Kaynak klasör','Source folder');
   $('t-detsave').textContent=T('Kaydet','Save');$('t-detdelete').textContent=T('Sil','Delete');
+  $('t-import').textContent=T('İçe Aktar','Import');$('t-detexport').textContent=T('Dışa Aktar','Export');
   $('t-detpathnote').textContent=T('Klasörü buradan düzeltmek (örn. disk/klasör taşındıysa) yeniden indekslemez — sadece kayıtlı yolu günceller.','Correcting the folder here (e.g. after moving disks/folders) does not reindex — it only updates the saved path.');
   $('t-detrsparse').textContent=T('Kelime İndeksini Yenile','Refresh Keyword Index');$('t-detrdense').textContent=T('Anlamsal İndeksi Yenile','Refresh Semantic Index');
   $('t-histfor').textContent=T('Geçmiş','History');
@@ -255,6 +263,34 @@ async function deleteCollection(){
     await loadIndexes();
   }catch(e){alert(e);}
   $('btn-detdelete').disabled=false;
+}
+function exportCollection(){
+  if(!SELECTED)return;
+  const a=document.createElement('a');
+  a.href='/api/collection/export?collection='+encodeURIComponent(SELECTED);
+  a.download=SELECTED+'.jsonl.gz';
+  document.body.appendChild(a);a.click();a.remove();
+}
+async function importCollection(file){
+  if(!file)return;
+  $('btn-import').disabled=true;
+  const orig=$('btn-import').innerHTML;
+  $('btn-import').innerHTML=T('Yükleniyor…','Uploading…');
+  try{
+    const fd=new FormData();fd.append('file',file);
+    let r=await fetch('/api/collection/import',{method:'POST',body:fd});
+    let j=await r.json();
+    if(j.error && r.status===409){
+      if(confirm(j.error+'\n\n'+T('Üzerine yazılsın mı?','Overwrite it?'))){
+        r=await fetch('/api/collection/import?overwrite=true',{method:'POST',body:fd});
+        j=await r.json();
+      }else{$('btn-import').disabled=false;$('btn-import').innerHTML=orig;return;}
+    }
+    if(j.error){alert(j.error);}
+    else{alert(T(`İçe aktarıldı: "${j.collection}" — ${j.points} nokta.`,`Imported: "${j.collection}" — ${j.points} points.`));await loadIndexes();}
+  }catch(e){alert(e);}
+  $('btn-import').disabled=false;$('btn-import').innerHTML=orig;
+  $('import-file').value='';
 }
 async function refreshVector(name,type){
   const body={collection:name,vectors:[type],device:$('idx-dev').value};

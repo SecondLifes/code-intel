@@ -62,6 +62,7 @@ pydantic-core==2.46.4
 pygments==2.20.0
 pyreadline3==3.5.6
 pytest==9.1.1
+python-multipart==0.0.32
 pywin32==312
 pyyaml==6.0.3
 qdrant-client==1.18.0

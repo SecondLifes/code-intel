@@ -3,14 +3,14 @@
 Özellikler: hibrit arama (dense+BM25/RRF), CPU/GPU seçimi, klasörden yeni
 indeksleme (chunk→embed), Ollama model seçimi, koleksiyon yönetimi.
 """
-import json, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid
+import gzip, json, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid
 from datetime import datetime, timezone
 
 import onnxruntime as ort
 ort.preload_dlls()
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 from fastembed import TextEmbedding, SparseTextEmbedding
 from qdrant_client import QdrantClient, models
@@ -174,6 +174,87 @@ def collection_delete(collection: str):
     if jsonl.exists():
         jsonl.unlink()
     return {"ok": True}
+
+# ---------------- koleksiyon dışa/içe aktarma (gzip, max sıkıştırma) ----------------
+def _vector_to_json(val):
+    if hasattr(val, "indices"):   # models.SparseVector
+        return {"_sparse": True, "indices": list(val.indices), "values": list(val.values)}
+    return val
+
+@app.get("/api/collection/export")
+def collection_export(collection: str):
+    if collection in INTERNAL_COLLS or not cl.collection_exists(collection):
+        return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
+    info = cl.get_collection(collection)
+    v, sv = info.config.params.vectors, info.config.params.sparse_vectors
+    manifest = {
+        "_manifest": True, "collection": collection,
+        "dense_vectors": {k: {"size": vp.size, "distance": vp.distance.value} for k, vp in v.items()} if isinstance(v, dict) else {},
+        "sparse_vectors": list(sv.keys()) if isinstance(sv, dict) else [],
+        "points_count": info.points_count,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "profile": get_profile(collection),
+    }
+    lines = [json.dumps(manifest, ensure_ascii=False)]
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=1000, offset=next_page, with_payload=True, with_vectors=True)
+        for p in batch:
+            vec_out = {k: _vector_to_json(val) for k, val in (p.vector or {}).items()}
+            lines.append(json.dumps({"id": p.id, "payload": p.payload, "vector": vec_out}, ensure_ascii=False))
+        if next_page is None:
+            break
+    raw = ("\n".join(lines) + "\n").encode("utf-8")
+    compressed = gzip.compress(raw, compresslevel=9)   # max sıkıştırma seviyesi
+    return Response(content=compressed, media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{collection}.jsonl.gz"',
+                 "X-Raw-Bytes": str(len(raw)), "X-Compressed-Bytes": str(len(compressed))})
+
+@app.post("/api/collection/import")
+async def collection_import(file: UploadFile = File(...), overwrite: bool = False):
+    try:
+        raw = gzip.decompress(await file.read())
+    except Exception as e:
+        return JSONResponse({"error": f"dosya gzip olarak açılamadı: {str(e)[:150]}"}, status_code=400)
+    lines = [l for l in raw.decode("utf-8", "replace").splitlines() if l.strip()]
+    if not lines:
+        return JSONResponse({"error": "dosya boş"}, status_code=400)
+    try:
+        manifest = json.loads(lines[0])
+    except Exception:
+        return JSONResponse({"error": "ilk satır geçerli bir manifest değil"}, status_code=400)
+    if not manifest.get("_manifest"):
+        return JSONResponse({"error": "bu dosya Code-Intel export formatında değil (manifest yok)"}, status_code=400)
+    collection = manifest["collection"]
+    if collection in INTERNAL_COLLS:
+        return JSONResponse({"error": "iç sistem koleksiyonu adı kullanılamaz"}, status_code=400)
+    if cl.collection_exists(collection):
+        if not overwrite:
+            return JSONResponse({"error": f'"{collection}" zaten var — üzerine yazmak için overwrite=true gönderin'}, status_code=409)
+        cl.delete_collection(collection)
+
+    dense_cfg = {k: models.VectorParams(size=vc["size"], distance=models.Distance(vc["distance"]))
+                 for k, vc in manifest.get("dense_vectors", {}).items()}
+    sparse_names = manifest.get("sparse_vectors", [])
+    sparse_cfg = {k: models.SparseVectorParams(modifier=models.Modifier.IDF) for k in sparse_names} if sparse_names else None
+    cl.create_collection(collection, vectors_config=dense_cfg, sparse_vectors_config=sparse_cfg)
+
+    B = 200; pts = []; count = 0
+    for line in lines[1:]:
+        row = json.loads(line)
+        vec = {}
+        for k, val in row["vector"].items():
+            vec[k] = models.SparseVector(indices=val["indices"], values=val["values"]) if isinstance(val, dict) and val.get("_sparse") else val
+        pts.append(models.PointStruct(id=row["id"], vector=vec, payload=row["payload"]))
+        if len(pts) >= B:
+            cl.upsert(collection, points=pts); count += len(pts); pts = []
+    if pts:
+        cl.upsert(collection, points=pts); count += len(pts)
+
+    if manifest.get("profile"):
+        prof = {k: v for k, v in manifest["profile"].items() if k != "collection"}
+        set_profile(collection, **prof)
+    return {"ok": True, "collection": collection, "points": count}
 
 # ---------------- ayarlar sayfası için zengin indeks özeti ----------------
 def vector_state(collection: str, name: str, total: int) -> dict:
