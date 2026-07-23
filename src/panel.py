@@ -330,7 +330,7 @@ def search(r: SearchReq):
 
     return {"ms": int((time.time() - t0) * 1000), "hits": [
         {"collection": c, "score": round(h.score, 3), "id": h.id,
-         **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end")},
+         **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
          "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr")} for c, h in chosen]}
 
 # ---------------- açıklama (cache'li) ----------------
@@ -344,9 +344,20 @@ def explain(r: ExplainReq):
     if pt.payload.get(key):
         return {"cached": True, "text": pt.payload[key]}
     mdl = r.model or ("qwen3.6" if r.depth == "deep" else "gemma4:12b")
-    prompt = ("Asagidaki Delphi metodunun ne yaptigini Turkce acikla. "
-              + ("Derinlemesine: mantik akisi, kenar durumlar, olasi riskler. " if r.depth == "deep"
-                 else "2-4 cumle, net ve sade. ") + f"\n\n{pt.payload.get('code','')}")
+    doc = pt.payload.get("doc", "")
+    if r.depth == "fast" and doc:
+        # /// XML doc özeti var — koddan yeniden tahmin ettirmek yerine bu insan-yazımı
+        # İngilizce özeti doğrudan Türkçeye çevirmek daha ucuz ve daha güvenilir.
+        prompt = ("Asagidaki Ingilizce kod dokumantasyon ozetini dogal, net bir Turkceye cevir. "
+                  "Sadece cevrilmis metni yaz, baska aciklama ekleme.\n\n" + doc)
+    elif r.depth == "deep":
+        ctx = f"Dokumantasyon ozeti (Ingilizce): {doc}\n\n" if doc else ""
+        prompt = ("Asagidaki Delphi metodunun ne yaptigini Turkce acikla. "
+                  "Derinlemesine: mantik akisi, kenar durumlar, olasi riskler. "
+                  + ctx + pt.payload.get('code', ''))
+    else:
+        prompt = ("Asagidaki Delphi metodunun ne yaptigini Turkce acikla. 2-4 cumle, net ve sade. "
+                  f"\n\n{pt.payload.get('code', '')}")
     body = json.dumps({"model": mdl, "prompt": prompt, "stream": False,
                        "options": {"num_predict": 500}, "think": False}).encode()
     t0 = time.time()
@@ -484,7 +495,7 @@ def _run_index(r: IndexReq):
                 pts.append(models.PointStruct(
                     id=pid, vector=vec,
                     payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")}
-                             | {"code": x["code"][:4000]}))
+                             | {"code": x["code"][:4000], "doc": x.get("doc", "")}))
             cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
         record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
