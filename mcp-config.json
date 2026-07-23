@@ -6,7 +6,7 @@
   "fast_model": "gemma4:12b",
   "deep_model": "qwen3.6",
   "domain_models": {
-    "$comment": "Belirli bir alanda (örn. SQL) kurulu ÖZEL bir model varsa buraya ekleyin. ask_domain_model tool'u bu eşlemeyi kullanır — bir agent 'sql sorgusu üret/açıkla ama fast_model bunda zayıf' dediğinde buradaki modele danışabilir.",
-    "sql": "sqlcoder:15b"
+    "$comment": "Belirli bir alanda (örn. SQL) kurulu ÖZEL bir model varsa buraya ekleyin. ask_domain_model tool'u bu eşlemeyi kullanır — bir agent 'sql sorgusu üret/açıkla ama fast_model bunda zayıf' dediğinde buradaki modele danışabilir. sqlcoder:15b DEĞİL: gerçek testte (2026-07-23) çalışan/eksiksiz sorgu üretemedi (sözdizimi hatalı, limit uygulanmamış) ve kendi kimliği/desteklediği lehçeler sorulunca alakasız bir sorgu üretti (halüsinasyon) — qwen3-coder:30b aynı görevi temiz ve doğru çözdü.",
+    "sql": "qwen3-coder:30b"
   }
 }
