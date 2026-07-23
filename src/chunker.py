@@ -32,7 +32,14 @@ def extract_doc(node, code: bytes) -> str:
     txt = SUMMARY_TAG_RE.sub("", txt).strip()
     return txt
 
-def chunk_file(path: pathlib.Path, lib: str):
+def chunk_file(path: pathlib.Path, lib: str, unit: str | None = None):
+    """unit: kaynak kök klasöre göre GÖRELİ yol (örn. "Providers/Utils.pas") —
+    sadece dosya adı (path.name) DEĞİL. Aynı isimli ama farklı klasörlerdeki
+    dosyalar (büyük çok-sağlayıcılı kütüphanelerde yaygın, örn. UniDAC'ın
+    kendisinde henüz yok ama başka kütüphanelerde olabilir) aksi halde aynı
+    "unit" etiketini alır ve ID'leri çakışabilirdi. Verilmezse path.name'e düşer
+    (geriye dönük uyumluluk / tek dosya testleri için)."""
+    unit = unit or path.name
     code = path.read_bytes()
     tree = PARSER.parse(code)
     caps = QueryCursor(Q).captures(tree.root_node)
@@ -52,8 +59,8 @@ def chunk_file(path: pathlib.Path, lib: str):
             # Aşırı yüklü (overload) metodları ayırt etmek için satır no yerine imzanın
             # kendisi (full_text önek) kullanılıyor — parametre listesi farklı olduğu
             # sürece bu zaten benzersiz kalır.
-            cid = xxhash.xxh3_64(f"{path.name}:{kind_key}:{full_text[:160]}".encode()).hexdigest()
-            yield {"id": cid, "lib": lib, "unit": path.name, "kind": kind, "name": name,
+            cid = xxhash.xxh3_64(f"{unit}:{kind_key}:{full_text[:160]}".encode()).hexdigest()
+            yield {"id": cid, "lib": lib, "unit": unit, "kind": kind, "name": name,
                    "line_start": n.start_point[0]+1, "line_end": n.end_point[0]+1,
                    "hash": xxhash.xxh3_64(full_text.encode()).hexdigest()[:12],
                    "code": full_text, "doc": doc}
@@ -63,7 +70,8 @@ def main(root: str, lib: str, out: str):
     with open(out, "w", encoding="utf-8") as f:
         for p in sorted(rootp.rglob("*.pas")):
             files += 1
-            for ch in chunk_file(p, lib):
+            unit = p.relative_to(rootp).as_posix()   # forward-slash: platformdan bağımsız, kararlı
+            for ch in chunk_file(p, lib, unit):
                 f.write(json.dumps(ch, ensure_ascii=False) + "\n"); total += 1
     print(f"{files} dosya -> {total} chunk, {time.time()-t0:.1f} sn -> {out}")
 

@@ -470,10 +470,12 @@ def _run_index(r: IndexReq):
                 if next_page is None:
                     break
 
-        # kaynakta artık bulunmayan (silinmiş/yeniden adlandırılmış) eski noktalar
+        # kaynakta artık bulunmayan (silinmiş/yeniden adlandırılmış) eski noktalar —
+        # SİLME İŞLEMİ BİLEREK BURADA YAPILMIYOR: embed/upsert bitmeden silinirse ve süreç
+        # bu ikisi arasında çökerse (GPU/Ollama/ağ hatası), eskiler zaten gitmiş ama
+        # yeni/değişen noktalar henüz yazılmamış olabilir — indeks olduğundan daha eksik
+        # kalır. Silme, aşağıdaki embed/upsert döngüsü TAMAMEN bittikten sonra yapılıyor.
         stale_ids = [pid for pid in old if pid not in row_by_id]
-        if stale_ids:
-            cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
 
         plan = []          # (row, pid, need_dense, need_sparse, before_dense, before_sparse)
         n_new = n_changed = n_unchanged = 0
@@ -504,6 +506,8 @@ def _run_index(r: IndexReq):
         st.update(total=len(plan), phase="embedding", done=0,
                   skipped=n_unchanged, deleted=len(stale_ids))
         if not plan:
+            if stale_ids:
+                cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
             record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
             st.update(phase="done", sec=0.0)
             return
@@ -535,6 +539,9 @@ def _run_index(r: IndexReq):
                              | {"code": x["code"][:4000], "doc": x.get("doc", "")}))
             cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
+        # yeni/değişen içerik güvenle yazıldıktan SONRA eskiler silinir (yukarıdaki not)
+        if stale_ids:
+            cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
         record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
