@@ -1,8 +1,8 @@
 """Code-Intel MCP sunucusu — stdio üzerinden Claude Code, Codex CLI, Gemini CLI
 gibi MCP-uyumlu ajanlara Delphi kod tabanı arama/açıklama/inceleme araçları sunar.
-16 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
+17 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
 get_type_hierarchy, find_references, get_unit_deps, get_context_pack, analyze_impact, document_unit, explain_chunk, review_code,
-ask_domain_model, list_domain_models, list_collections.
+propose_edit, ask_domain_model, list_domain_models, list_collections.
 
 Çalıştır:  .venv/Scripts/python.exe -m src.mcp_server
 (Claude Code / Codex / Gemini CLI'nin kendi MCP client ayarına bu komutu ekleyin.)
@@ -182,6 +182,15 @@ def review_code(collection: str, id: int) -> dict:
     mantık hatası gibi somut sorunları Türkçe raporlar. İSTEK ÜZERİNE çalışır
     (otonom/arka plan DEĞİL), YENİ KOD ÜRETMEZ — sadece mevcut kodu değerlendirir."""
     return retrieval.review_chunk(collection, id, DEEP_MODEL)
+
+@tool
+def propose_edit(collection: str, id: int, instruction: str) -> dict:
+    """Bir kod parçası + doğal-dilde talimat alıp Ollama'dan UNIFIED DIFF üretir
+    ("şu değişikliği yap" gibi bir istek için "böyle görünürdü" önerisi). YALNIZ-
+    GÖSTER: hiçbir dosyaya yazmaz, kaynak diski ASLA değiştirmez, indeksi
+    etkilemez — dönen diff'i uygulamak (isterse) tamamen çağıran ajanın/kullanıcının
+    kararıdır. huge/kırpık chunk'larda bile TAM kod kullanılır (diskten okunur)."""
+    return retrieval.propose_edit(collection, id, instruction, DEEP_MODEL)
 
 @tool
 def ask_domain_model(question: str, domain: str, code_context: str = "") -> dict:

@@ -498,6 +498,38 @@ def review_chunk(collection: str, id: int, model: str = "") -> dict:
     txt = ollama_generate(mdl, prompt, num_predict=700)
     return {"model": mdl, "sec": round(time.time() - t0, 1), "review": txt}
 
+def propose_edit(collection: str, id: int, instruction: str, model: str = "") -> dict:
+    """Sıra 11c — YALNIZ-GÖSTER agentic edit: bir chunk + doğal-dilde talimat alır,
+    Ollama'dan unified diff (`--- / +++ / @@`) üretir. HİÇBİR dosyaya YAZMAZ, kaynak
+    diskine ASLA dokunmaz, indeksi DEĞİŞTİRMEZ — yalnızca "bu değişiklik nasıl
+    görünürdü" önerisi döner; uygulamak (varsa) tamamen çağıran ajanın/insanın
+    sorumluluğu. get_chunk(full_code=True) ile TAM kod kullanılır (huge/kırpık
+    chunk'larda bile diskten tam hâli okunur) — kesik koda göre üretilen bir diff
+    yanlış satır/bağlamla eşleşirdi."""
+    ch = get_chunk(collection, id, full_code=True)
+    if ch is None:
+        return {"error": f"chunk bulunamadı: {id}"}
+    if not instruction or not instruction.strip():
+        return {"error": "instruction boş olamaz"}
+    mdl = model or _CFG.get("deep_model", "qwen3.6")
+    code = ch.get("code", "")
+    unit = ch.get("unit", "")
+    prompt = (
+        "Asagidaki Delphi/Pascal kod parcasi icin istenen degisikligi UYGULA ve "
+        "SADECE unified diff formatinda (--- eski\\n+++ yeni\\n@@ ... @@ satirlariyla) "
+        "cikti ver. Aciklama, giris cumlesi, kod bloğu isaretleyici (```) veya baska "
+        "hicbir metin EKLEME — yalniz diff. Satir numaralarini ORIJINAL koda gore ver. "
+        "Yalnizca istenen degisikligi yap, alakasiz bicimlendirme/yeniden duzenleme YAPMA.\n\n"
+        f"DOSYA: {unit} (satir {ch.get('line_start')}-{ch.get('line_end')})\n"
+        f"ISTENEN DEGISIKLIK: {instruction.strip()}\n\n"
+        f"MEVCUT KOD:\n{code}")
+    t0 = time.time()
+    diff = ollama_generate(mdl, prompt, num_predict=1200)
+    return {"id": id, "collection": collection, "unit": unit, "name": ch.get("name"),
+            "line_start": ch.get("line_start"), "line_end": ch.get("line_end"),
+            "instruction": instruction.strip(), "model": mdl, "sec": round(time.time() - t0, 1),
+            "diff": diff, "note": "Bu yalnızca bir ÖNERİ — hiçbir dosya değiştirilmedi/yazılmadı."}
+
 def get_relations(collection: str, id: int) -> dict:
     """Bir chunk'ın önceden hesaplanmış (indeksleme sırasında panel.py'nin
     _link_call_graph'ı tarafından yazılan) çağrı ilişkilerini döndürür:

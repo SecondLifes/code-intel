@@ -102,6 +102,61 @@ def test_feedback_and_analytics(client):
 
 
 @needs_qdrant
+def test_propose_edit_never_writes_and_returns_diff_shape(client, tmp_path, monkeypatch):
+    """Sıra 11c — yalnız-göster agentic edit: chunk bulunamama/boş talimat hata
+    yolları + gerçek bir fixture üzerinde 'diske ASLA yazmaz' garantisi. Ollama
+    monkeypatch'lenir (proje kuralı: otomatik testler yavaş/kararsız gerçek LLM
+    çağrısına dayanmaz — bkz. tests/test_manual.py aynı disiplin; gerçek Ollama
+    ile uçtan uca canlı doğrulama ayrıca elle yapıldı)."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    import retrieval
+
+    coll = "__test_propose_edit"
+    src = tmp_path / "src"
+    src.mkdir()
+    pas = src / "Calc.pas"
+    original = "unit Calc;\n\ninterface\n\nfunction Add(A, B: Integer): Integer;\n\nimplementation\n\nfunction Add(A, B: Integer): Integer;\nbegin\n  Result := A + B;\nend;\n\nend.\n"
+    pas.write_text(original, encoding="utf-8")
+
+    from services import indexing_svc as isvc
+    from services.common import STATE
+    STATE["index_job"] = {"collection": coll, "phase": "starting"}
+    isvc._run_index(isvc.IndexReq(collection=coll, path=str(src), vectors=["sparse"], device="cpu", patterns="*.pas"))
+    try:
+        assert STATE["index_job"]["phase"] == "done", STATE["index_job"].get("error")
+        hit = next(p for p in retrieval.cl.scroll(coll, limit=50, with_payload=True)[0] if p.payload.get("name") == "Add")
+
+        assert retrieval.propose_edit(coll, 99999999, "hata kontrolü ekle") == {"error": "chunk bulunamadı: 99999999"}
+        assert retrieval.propose_edit(coll, hit.id, "   ") == {"error": "instruction boş olamaz"}
+
+        canned_diff = "--- a/Calc.pas\n+++ b/Calc.pas\n@@ -9,3 +9,5 @@\n begin\n+  if (A < 0) or (B < 0) then raise Exception.Create('negative');\n   Result := A + B;\n end;\n"
+        monkeypatch.setattr(retrieval, "ollama_generate", lambda *a, **kw: canned_diff)
+
+        r = retrieval.propose_edit(coll, hit.id, "negatif girdilerde exception fırlat")
+        assert r["diff"] == canned_diff
+        assert r["id"] == hit.id and r["unit"] == "Calc.pas" and r["name"] == "Add"
+        assert "hiçbir dosya değiştirilmedi" in r["note"]
+        assert pas.read_text(encoding="utf-8") == original, "propose_edit KAYNAK DOSYAYA DOKUNMAMALI"
+    finally:
+        if retrieval.cl.collection_exists(coll):
+            retrieval.cl.delete_collection(coll)
+        jf = _pl.Path(__file__).resolve().parent.parent / f"data/chunks-{coll}.jsonl"
+        if jf.exists():
+            jf.unlink()
+
+
+def test_propose_edit_registered_as_mcp_tool():
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    import mcp_server
+    assert "propose_edit" in mcp_server.TOOLS
+    import inspect
+    params = list(inspect.signature(mcp_server.TOOLS["propose_edit"]).parameters)
+    assert params == ["collection", "id", "instruction"]
+
+
+@needs_qdrant
 def test_owners_groups_registry_crud(client):
     name = "__test_owner_apitest"
     r = client.post("/api/owners", json={"name": name, "url": "https://example.com/x"})
@@ -228,7 +283,7 @@ def test_mcp_server_default_import_stays_stdio():
     _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
     import mcp_server as ms
     assert ms.MCP_TRANSPORT == "stdio"
-    assert len(ms.TOOLS) == 16
+    assert len(ms.TOOLS) == 17
 
 
 def test_middleware_role_gate_pure():
