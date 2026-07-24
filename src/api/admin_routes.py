@@ -467,12 +467,38 @@ def viewer_page():
 
 _VIEWABLE_EXT = {".md": "md", ".markdown": "md", ".html": "html", ".htm": "html", ".txt": "text"}
 
+def _view_roots() -> list[pathlib.Path]:
+    """view-file'ın okumasına İZİN VERİLEN kökler: proje kökü (raporlar burada)
+    + kayıtlı koleksiyon kaynak klasörleri. Bunların dışı 403 — eskiden uç
+    HERHANGİ bir mutlak yolu okuyabiliyordu (dış analizde işaretlenen path
+    traversal açığı: ör. tarayıcıdan ?path=C:\\Users\\...\\gizli.txt)."""
+    roots = [ROOT.resolve()]
+    try:
+        if cl.collection_exists(PROFILE_COLL):
+            pts, _ = cl.scroll(PROFILE_COLL, limit=500, with_payload=["path"])
+            for p in pts:
+                src = p.payload.get("path")
+                if src:
+                    try:
+                        roots.append(pathlib.Path(src).resolve())
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+    return roots
+
 @router.get("/api/view-file")
 def view_file(path: str):
     p = pathlib.Path(path)
     ext = p.suffix.lower()
     if ext not in _VIEWABLE_EXT:
         return JSONResponse({"error": f"desteklenmeyen dosya türü: {ext or '(uzantısız)'} — sadece .md/.html/.txt"}, status_code=400)
+    try:
+        rp = p.resolve()
+    except OSError:
+        return JSONResponse({"error": "geçersiz yol"}, status_code=400)
+    if not any(rp.is_relative_to(root) for root in _view_roots()):
+        return JSONResponse({"error": "bu yol izinli kökler dışında — yalnızca proje klasörü ve kayıtlı kaynak klasörler görüntülenebilir"}, status_code=403)
     if not p.exists() or not p.is_file():
         return JSONResponse({"error": f"dosya bulunamadı: {path}"}, status_code=404)
     if p.stat().st_size > 3_000_000:

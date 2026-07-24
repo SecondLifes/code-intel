@@ -13,8 +13,12 @@ Yapı (birleşik analiz kararı — mikroservis DEĞİL, tek süreçte modüler 
 Arama çekirdeği retrieval.py'de (panel + MCP ortak). Davranış sözleşmesi
 tests/test_api.py ile korunur — rota taşınabilir, yol/format değişmez.
 """
+import json
 import os
 import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
 
 import onnxruntime as ort
 ort.preload_dlls()
@@ -45,19 +49,54 @@ cl = common.cl
 
 app = FastAPI(title="Code-Intel Panel")
 
-# ---------------- opsiyonel API-key katmanı ----------------
-# CODEINTEL_API_KEY ortam değişkeni AYARLIYSA, localhost DIŞINDAN gelen tüm /api/*
-# istekleri X-API-Key başlığı ister. Localhost muaf — panelin kendi tarayıcı
-# arayüzü anahtar bilmeden çalışmaya devam eder; katman yalnızca panel ağa
-# açıldığında (örn. LAN'daki başka bir makineden) devreye girer.
+# ---------------- güvenlik sınırı (Sıra 4) ----------------
+# Katmanlar:
+#  1) API-key: CODEINTEL_API_KEY ayarlıysa, localhost dışından TÜM /api/* için zorunlu.
+#  2) Admin kilidi: anahtar ayarlı DEĞİLKEN yıkıcı/yönetim uçları localhost dışına
+#     TAMAMEN kapalı — panel yanlışlıkla 0.0.0.0'a bind edilse bile LAN'daki biri
+#     koleksiyon silemez/değiştiremez (dış analizde işaretlenen boşluk).
+#  3) Rate limit: kaba, bellek-içi kayan pencere (istemci başına 300 istek/10 sn) —
+#     kaçak döngülere/istek fırtınasına fren; normal panel kullanımına görünmez.
+#  4) Audit log: yönetim uçlarına yazma istekleri logs\admin-audit.log'a satır satır.
+# "testclient" starlette TestClient'ın sabit in-process işaretidir — gerçek ağ
+# istemcisi bu değeri taşıyamaz (socket'ten gelir), test paketi yerel sayılır.
 API_KEY = os.environ.get("CODEINTEL_API_KEY", "")
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+ADMIN_PREFIXES = ("/api/collection", "/api/index/start", "/api/backup/run",
+                   "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile")
+RATE_WINDOW_SEC, RATE_MAX = 10, 300
+_rate: dict[str, deque] = {}
+_AUDIT_FILE = common.ROOT / "logs" / "admin-audit.log"
+
+def _audit(host: str, method: str, path: str):
+    try:
+        _AUDIT_FILE.parent.mkdir(exist_ok=True)
+        with open(_AUDIT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "ip": host,
+                                 "method": method, "path": path}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass   # audit hatası isteği asla düşürmez
 
 @app.middleware("http")
-async def api_key_guard(request: Request, call_next):
-    if API_KEY and request.url.path.startswith("/api/"):
-        client_host = request.client.host if request.client else ""
-        if client_host not in ("127.0.0.1", "::1", "localhost") and request.headers.get("x-api-key") != API_KEY:
+async def security_guard(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/"):
+        host = request.client.host if request.client else ""
+        now = time.time()
+        dq = _rate.setdefault(host, deque())
+        while dq and now - dq[0] > RATE_WINDOW_SEC:
+            dq.popleft()
+        if len(dq) >= RATE_MAX:
+            return JSONResponse({"error": "çok fazla istek — kısa bir süre bekleyin"}, status_code=429)
+        dq.append(now)
+        is_local = host in LOCAL_HOSTS
+        if API_KEY and not is_local and request.headers.get("x-api-key") != API_KEY:
             return JSONResponse({"error": "geçersiz veya eksik X-API-Key"}, status_code=401)
+        is_admin = any(path.startswith(p) for p in ADMIN_PREFIXES)
+        if is_admin and not is_local and not API_KEY:
+            return JSONResponse({"error": "yönetim uçları yalnız localhost'tan erişilebilir (uzak erişim için CODEINTEL_API_KEY ayarlayın)"}, status_code=403)
+        if is_admin and request.method in ("POST", "DELETE", "PUT"):
+            _audit(host, request.method, path)
     return await call_next(request)
 
 app.include_router(admin_routes.router)
