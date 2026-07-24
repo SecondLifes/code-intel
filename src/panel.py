@@ -3,7 +3,7 @@
 Özellikler: hibrit arama (dense+BM25/RRF), CPU/GPU seçimi, klasörden yeni
 indeksleme (chunk→embed), Ollama model seçimi, koleksiyon yönetimi.
 """
-import gzip, json, os, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid
+import gzip, json, os, pathlib, re, subprocess, sys, threading, time, urllib.request, uuid, zlib
 from datetime import datetime, timezone
 
 import onnxruntime as ort
@@ -322,40 +322,210 @@ def collection_merge(r: MergeReq):
             "owner_group_note": owner_group_note,
             "note": "Kaynak koleksiyonlar SİLİNMEDİ — istemiyorsanız Ayarlar'dan elle silin." + collision_note}
 
-# ---------------- koleksiyon dışa/içe aktarma (gzip, max sıkıştırma) ----------------
+# ---------------- koleksiyon dışa/içe aktarma (gzip, akışlı) ----------------
 def _vector_to_json(val):
     if hasattr(val, "indices"):   # models.SparseVector
         return {"_sparse": True, "indices": list(val.indices), "values": list(val.values)}
     return val
 
-@app.get("/api/collection/export")
-def collection_export(collection: str):
-    if collection in INTERNAL_COLLS or not cl.collection_exists(collection):
-        return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
+def _export_line_iter(collection: str, with_vectors: bool = True):
+    """Export satırlarını ÜRETEÇ olarak verir — eski sürüm tüm satırları listede
+    biriktirip sonra gzip'liyordu (375K'lık koleksiyonlarda GB'larca RAM; dış
+    analizde işaret edilen bellek baskısı). İç koleksiyonların adsız (default)
+    vektörü '_default' anahtarıyla taşınır."""
     info = cl.get_collection(collection)
     v, sv = info.config.params.vectors, info.config.params.sparse_vectors
     manifest = {
         "_manifest": True, "collection": collection,
         "dense_vectors": {k: {"size": vp.size, "distance": vp.distance.value} for k, vp in v.items()} if isinstance(v, dict) else {},
+        "default_vector": ({"size": v.size, "distance": v.distance.value} if not isinstance(v, dict) and v else None),
         "sparse_vectors": list(sv.keys()) if isinstance(sv, dict) else [],
+        "with_vectors": with_vectors,
         "points_count": info.points_count,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "profile": get_profile(collection),
     }
-    lines = [json.dumps(manifest, ensure_ascii=False)]
+    yield json.dumps(manifest, ensure_ascii=False)
     next_page = None
     while True:
-        batch, next_page = cl.scroll(collection, limit=1000, offset=next_page, with_payload=True, with_vectors=True)
+        batch, next_page = cl.scroll(collection, limit=1000, offset=next_page,
+                                      with_payload=True, with_vectors=with_vectors)
         for p in batch:
-            vec_out = {k: _vector_to_json(val) for k, val in (p.vector or {}).items()}
-            lines.append(json.dumps({"id": p.id, "payload": p.payload, "vector": vec_out}, ensure_ascii=False))
+            if not with_vectors:
+                vec_out = {}
+            elif isinstance(p.vector, dict):
+                vec_out = {k: _vector_to_json(val) for k, val in (p.vector or {}).items()}
+            else:
+                vec_out = {"_default": p.vector}   # iç koleksiyonlar (size-1 adsız vektör)
+            yield json.dumps({"id": p.id, "payload": p.payload, "vector": vec_out}, ensure_ascii=False)
         if next_page is None:
             break
-    raw = ("\n".join(lines) + "\n").encode("utf-8")
-    compressed = gzip.compress(raw, compresslevel=9)   # max sıkıştırma seviyesi
-    return Response(content=compressed, media_type="application/gzip",
-        headers={"Content-Disposition": f'attachment; filename="{collection}.jsonl.gz"',
-                 "X-Raw-Bytes": str(len(raw)), "X-Compressed-Bytes": str(len(compressed))})
+
+def _gzip_iter(lines):
+    """Satır üretecini akışlı gzip'e çevirir (bellekte tam kopya tutulmaz)."""
+    co = zlib.compressobj(9, zlib.DEFLATED, 16 + zlib.MAX_WBITS)   # 16+: gzip başlığı
+    for line in lines:
+        chunk = co.compress((line + "\n").encode("utf-8"))
+        if chunk:
+            yield chunk
+    tail = co.flush()
+    if tail:
+        yield tail
+
+@app.get("/api/collection/export")
+def collection_export(collection: str):
+    if collection in INTERNAL_COLLS or not cl.collection_exists(collection):
+        return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
+    return StreamingResponse(_gzip_iter(_export_line_iter(collection)), media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{collection}.jsonl.gz"'})
+
+# ---------------- otomatik/elle yedekleme (rotasyonlu) ----------------
+BACKUP_DIR = ROOT / "backups"
+BACKUP_KEEP = 3                 # koleksiyon başına saklanan yedek sayısı
+BACKUP_INTERVAL_SEC = 24 * 3600
+BACKUP_AUTO_MAX_POINTS = 50_000  # otomatik TAM yedek üst sınırı — daha büyük koleksiyonlar
+                                 # (örn. 375K'lık Jedi, vektörlerle GB'larca dosya) sessizce
+                                 # diski doldurmasın diye yalnız ELLE yedeklenir
+
+def _run_backup(full_all: bool = False):
+    """Tüm koleksiyonları backups\\ altına <ad>-<zaman>.jsonl.gz olarak yazar,
+    koleksiyon başına en yeni BACKUP_KEEP kopya kalır. İç koleksiyonlar (profil,
+    geçmiş, telemetri — küçük ve yeri doldurulamaz) HER ZAMAN dahil. Kullanıcı
+    koleksiyonlarında otomatik modda BACKUP_AUTO_MAX_POINTS üstü atlanır
+    (full_all=True — elle tetikleme — hepsini alır). Önce .tmp'ye yazılır,
+    başarıyla bitince adlandırılır — yarım dosya asla yedek sanılmaz."""
+    st = STATE.get("backup_job") or {}
+    try:
+        BACKUP_DIR.mkdir(exist_ok=True)
+        names = [c.name for c in cl.get_collections().collections]
+        skipped = []
+        st.update(phase="running", total=len(names), done=0)
+        for i, name in enumerate(names):
+            st.update(collection=name, done=i)
+            if name not in INTERNAL_COLLS and not full_all:
+                if cl.get_collection(name).points_count > BACKUP_AUTO_MAX_POINTS:
+                    skipped.append(name)
+                    continue
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            tmp = BACKUP_DIR / f".tmp-{name}.gz"
+            final = BACKUP_DIR / f"{name}-{ts}.jsonl.gz"
+            with open(tmp, "wb") as f:
+                for chunk in _gzip_iter(_export_line_iter(name)):
+                    f.write(chunk)
+            tmp.rename(final)
+            for old in sorted(BACKUP_DIR.glob(f"{name}-*.jsonl.gz"))[:-BACKUP_KEEP]:
+                old.unlink()
+        st.update(phase="done", done=len(names), skipped=skipped,
+                  finished=datetime.now(timezone.utc).isoformat())
+    except Exception as e:
+        st.update(phase="error", error=str(e)[:300])
+
+@app.post("/api/backup/run")
+def backup_run(full: bool = True):
+    if STATE.get("backup_job") and STATE["backup_job"].get("phase") == "running":
+        return JSONResponse({"error": "zaten çalışan yedekleme var"}, status_code=409)
+    STATE["backup_job"] = {"phase": "starting"}
+    threading.Thread(target=_run_backup, args=(full,), daemon=True).start()
+    return {"ok": True}
+
+# ---------------- kopya/benzer kod taraması ----------------
+# find_similar altyapısının koleksiyon-geneli ürünleştirilmesi (birleşik analizde
+# "en hızlı teslim edilebilir yüksek görünürlüklü özellik"): her method chunk'ının
+# kayıtlı dense vektörüyle eşik-üstü komşuları bulunur, çiftler tekilleştirilip
+# skora göre raporlanır. Embedding HESAPLANMAZ — yalnız mevcut vektörlerle sorgu.
+class DupScanReq(BaseModel):
+    collection: str
+    threshold: float = 0.93   # kosinüs eşiği — 0.93+ pratikte "neredeyse aynı mantık"
+    min_chars: int = 300      # kısacık gövdeler (getter vb.) gürültü üretir, atlanır
+    max_pairs: int = 300
+    max_scan: int = 20000     # taranacak en fazla chunk (çok büyük koleksiyonlarda süre sınırı)
+
+def _run_dup_scan(r: DupScanReq):
+    st = STATE["dup_job"]
+    try:
+        flt = models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value="method"))])
+        meta: dict[int, dict] = {}
+        next_page = None
+        while len(meta) < r.max_scan:
+            batch, next_page = cl.scroll(r.collection, limit=2000, offset=next_page,
+                with_payload=["name", "unit", "line_start", "code"], scroll_filter=flt)
+            for p in batch:
+                if len(p.payload.get("code", "")) >= r.min_chars and len(meta) < r.max_scan:
+                    meta[p.id] = {"name": p.payload.get("name"), "unit": p.payload.get("unit"),
+                                  "line_start": p.payload.get("line_start"),
+                                  "chars": len(p.payload.get("code", ""))}
+            if next_page is None:
+                break
+        ids = list(meta)
+        st.update(phase="scanning", total=len(ids), done=0)
+        pairs: dict[tuple, float] = {}
+        for i, pid in enumerate(ids):
+            try:
+                res = cl.query_points(r.collection, query=pid, using="dense", limit=4,
+                                       query_filter=flt, score_threshold=r.threshold,
+                                       with_payload=False).points
+            except Exception:
+                continue
+            for p in res:
+                if p.id == pid:
+                    continue
+                key = (min(pid, p.id), max(pid, p.id))
+                if key not in pairs or p.score > pairs[key]:
+                    pairs[key] = p.score
+            if i % 200 == 0:
+                st.update(done=i)
+        ranked = sorted(pairs.items(), key=lambda kv: -kv[1])[:r.max_pairs]
+        # eşleşen taraf tarama kümesinde olmayabilir (min_chars altında ya da
+        # max_scan dışında) — meta'da yoksa o an tek tek getirilir
+        missing = [pid for k, _s in ranked for pid in k if pid not in meta]
+        if missing:
+            for p in cl.retrieve(r.collection, ids=list(set(missing)), with_payload=["name", "unit", "line_start", "code"]):
+                meta[p.id] = {"name": p.payload.get("name"), "unit": p.payload.get("unit"),
+                              "line_start": p.payload.get("line_start"), "chars": len(p.payload.get("code", ""))}
+        report = {
+            "collection": r.collection, "threshold": r.threshold, "min_chars": r.min_chars,
+            "scanned": len(ids), "generated_at": datetime.now(timezone.utc).isoformat(),
+            "pairs": [{"score": round(s, 4),
+                        "a": {"id": a, **meta.get(a, {})},
+                        "b": {"id": b, **meta.get(b, {})},
+                        "same_unit": meta.get(a, {}).get("unit") == meta.get(b, {}).get("unit")}
+                       for (a, b), s in ranked]}
+        out = ROOT / f"data/dup-report-{r.collection}.json"
+        out.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+        st.update(phase="done", done=len(ids), pairs=len(ranked), report=str(out.name))
+    except Exception as e:
+        st.update(phase="error", error=str(e)[:300])
+
+@app.post("/api/duplicates/start")
+def duplicates_start(r: DupScanReq):
+    if STATE.get("dup_job") and STATE["dup_job"].get("phase") == "scanning":
+        return JSONResponse({"error": "zaten çalışan tarama var"}, status_code=409)
+    if r.collection in INTERNAL_COLLS or not cl.collection_exists(r.collection):
+        return JSONResponse({"error": f"koleksiyon yok: {r.collection}"}, status_code=404)
+    STATE["dup_job"] = {"phase": "starting", "collection": r.collection}
+    threading.Thread(target=_run_dup_scan, args=(r,), daemon=True).start()
+    return {"ok": True}
+
+@app.get("/api/duplicates/status")
+def duplicates_status():
+    return STATE.get("dup_job") or {"phase": "idle"}
+
+@app.get("/api/duplicates/report")
+def duplicates_report(collection: str):
+    f = ROOT / f"data/dup-report-{collection}.json"
+    if not f.exists():
+        return JSONResponse({"error": "bu koleksiyon için rapor yok — önce tarama başlatın"}, status_code=404)
+    return json.loads(f.read_text(encoding="utf-8"))
+
+@app.get("/api/backup/status")
+def backup_status():
+    files = []
+    if BACKUP_DIR.exists():
+        for f in sorted(BACKUP_DIR.glob("*.jsonl.gz"), key=lambda f: f.stat().st_mtime, reverse=True):
+            files.append({"name": f.name, "mb": round(f.stat().st_size / 1e6, 1),
+                          "date": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")})
+    return {"job": STATE.get("backup_job") or {"phase": "idle"}, "files": files[:30],
+            "keep": BACKUP_KEEP, "auto_max_points": BACKUP_AUTO_MAX_POINTS}
 
 @app.post("/api/collection/import")
 async def collection_import(file: UploadFile = File(...), overwrite: bool = False):
@@ -380,19 +550,27 @@ async def collection_import(file: UploadFile = File(...), overwrite: bool = Fals
             return JSONResponse({"error": f'"{collection}" zaten var — üzerine yazmak için overwrite=true gönderin'}, status_code=409)
         cl.delete_collection(collection)
 
-    dense_cfg = {k: models.VectorParams(size=vc["size"], distance=models.Distance(vc["distance"]))
-                 for k, vc in manifest.get("dense_vectors", {}).items()}
+    if manifest.get("default_vector") and not manifest.get("dense_vectors"):
+        # iç koleksiyon yedeği (adsız/size-1 vektör) — export '_default' anahtarıyla yazar
+        dv = manifest["default_vector"]
+        vectors_cfg = models.VectorParams(size=dv["size"], distance=models.Distance(dv["distance"]))
+    else:
+        vectors_cfg = {k: models.VectorParams(size=vc["size"], distance=models.Distance(vc["distance"]))
+                       for k, vc in manifest.get("dense_vectors", {}).items()}
     sparse_names = manifest.get("sparse_vectors", [])
     sparse_cfg = {k: models.SparseVectorParams(modifier=models.Modifier.IDF) for k in sparse_names} if sparse_names else None
-    cl.create_collection(collection, vectors_config=dense_cfg, sparse_vectors_config=sparse_cfg)
+    cl.create_collection(collection, vectors_config=vectors_cfg, sparse_vectors_config=sparse_cfg)
     retrieval.ensure_payload_indexes(collection)
 
     B = 200; pts = []; count = 0
     for line in lines[1:]:
         row = json.loads(line)
-        vec = {}
-        for k, val in row["vector"].items():
-            vec[k] = models.SparseVector(indices=val["indices"], values=val["values"]) if isinstance(val, dict) and val.get("_sparse") else val
+        if "_default" in row["vector"]:
+            vec = row["vector"]["_default"]   # adsız vektör: düz liste olarak geri yazılır
+        else:
+            vec = {}
+            for k, val in row["vector"].items():
+                vec[k] = models.SparseVector(indices=val["indices"], values=val["values"]) if isinstance(val, dict) and val.get("_sparse") else val
         pts.append(models.PointStruct(id=row["id"], vector=vec, payload=row["payload"]))
         if len(pts) >= B:
             cl.upsert(collection, points=pts); count += len(pts); pts = []
@@ -1009,6 +1187,17 @@ def _watch_loop():
                                       "device": req.device, "total": 0, "done": 0, "rate": 0, "phase": "starting"}
                 _run_index(req)   # watcher zaten arka plan thread'i — senkron çalıştırmak doğru
                 break             # tur başına tek koleksiyon: GPU'yu uzun süre kilitlemeyelim
+
+            # günlük otomatik yedek: en yeni yedek dosyası BACKUP_INTERVAL_SEC'ten
+            # eskiyse (veya hiç yoksa) çalışır — küçük koleksiyonlar + iç kayıtlar
+            # (ayrıntı: _run_backup docstring)
+            bjob = STATE.get("backup_job")
+            if not (bjob and bjob.get("phase") == "running"):
+                newest = max((f.stat().st_mtime for f in BACKUP_DIR.glob("*.jsonl.gz")), default=0.0) \
+                         if BACKUP_DIR.exists() else 0.0
+                if time.time() - newest > BACKUP_INTERVAL_SEC:
+                    STATE["backup_job"] = {"phase": "starting", "trigger": "auto"}
+                    _run_backup(full_all=False)
         except Exception:
             pass                  # watcher asla ölmemeli — bir sonraki turda yeniden dener
 

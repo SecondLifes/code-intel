@@ -227,6 +227,29 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       </div>
     </div>
   </div>
+
+  <!-- KOPYA KOD RAPORU -->
+  <div class="panelcard">
+    <h3 id="t-dup">Kopya / Benzer Kod Raporu</h3>
+    <div class="note" id="t-dupnote" style="margin-bottom:10px">Seçilen koleksiyondaki method'ların kayıtlı vektörleriyle eşik-üstü benzerlik taraması yapar — kopyalanmış/tekrarlanan mantığı bulur. Embedding hesaplanmaz, mevcut indeks kullanılır.</div>
+    <div class="row" style="align-items:flex-end">
+      <div class="field"><label id="l-dupcoll">Koleksiyon</label><select id="dup-coll" style="min-width:200px"></select></div>
+      <div class="field" style="max-width:120px"><label id="l-dupthr">Eşik (0-1)</label><input id="dup-thr" value="0.93"></div>
+      <button type="button" onclick="startDupScan()" id="btn-dupstart">🔎 <span id="t-dupstart">Taramayı Başlat</span></button>
+    </div>
+    <div class="note" id="dup-status"></div>
+    <div id="dup-result" style="margin-top:10px"></div>
+  </div>
+
+  <!-- YEDEKLER -->
+  <div class="panelcard">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 id="t-backup" style="margin:0">Yedekler</h3>
+      <button type="button" onclick="runBackup()" id="btn-backup" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:6px 13px;font-size:12.5px">💾 <span id="t-backuprun">Şimdi Yedekle (tümü)</span></button>
+    </div>
+    <div class="note" id="t-backupnote" style="margin-bottom:8px">Günlük otomatik yedek: küçük koleksiyonlar (≤50K nokta) + tüm iç kayıtlar (profil/geçmiş/telemetri) backups\ altına alınır, koleksiyon başına son 3 kopya tutulur. Büyük koleksiyonlar yalnızca bu düğmeyle (elle) yedeklenir.</div>
+    <div id="backup-list" class="note">…</div>
+  </div>
 </main>
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr';
@@ -263,7 +286,13 @@ function applyLang(){
   $('t-detauto').textContent=T('Kaynak değişince otomatik indeksle','Reindex automatically when source changes');
   $('t-analytics').textContent=T('Arama Analitiği','Search Analytics');$('t-anrefresh').textContent=T('Yenile','Refresh');
   $('t-anzero').textContent=T('Sıfır-Sonuç Sorgular','Zero-Result Queries');$('t-antop').textContent=T('En Sık Sorgular','Top Queries');
-  loadAnalytics();
+  $('t-dup').textContent=T('Kopya / Benzer Kod Raporu','Duplicate / Similar Code Report');
+  $('t-dupnote').textContent=T('Seçilen koleksiyondaki method\'ların kayıtlı vektörleriyle eşik-üstü benzerlik taraması yapar — kopyalanmış/tekrarlanan mantığı bulur. Embedding hesaplanmaz, mevcut indeks kullanılır.','Scans methods in the selected collection with their stored vectors for above-threshold similarity — finds copied/repeated logic. No embedding is computed; the existing index is used.');
+  $('l-dupcoll').textContent=T('Koleksiyon','Collection');$('l-dupthr').textContent=T('Eşik (0-1)','Threshold (0-1)');
+  $('t-dupstart').textContent=T('Taramayı Başlat','Start Scan');
+  $('t-backup').textContent=T('Yedekler','Backups');$('t-backuprun').textContent=T('Şimdi Yedekle (tümü)','Back Up Now (all)');
+  $('t-backupnote').textContent=T('Günlük otomatik yedek: küçük koleksiyonlar (≤50K nokta) + tüm iç kayıtlar (profil/geçmiş/telemetri) backups\\ altına alınır, koleksiyon başına son 3 kopya tutulur. Büyük koleksiyonlar yalnızca bu düğmeyle (elle) yedeklenir.','Daily auto-backup: small collections (≤50K points) + all internal records (profiles/history/telemetry) go under backups\\, last 3 copies kept per collection. Large collections are backed up only via this button (manually).');
+  loadAnalytics();loadBackups();
   refreshHistory();
   loadIndexes();
   if(SELECTED)renderDetail(SELECTED);
@@ -554,7 +583,79 @@ async function loadAnalytics(){
     $('an-top').innerHTML=li(d.top_queries,T('Henüz arama kaydı yok.','No searches logged yet.'),false);
   }catch(e){$('an-summary').textContent='⚠️ '+e;}
 }
-health();loadModels();loadIndexes();loadAnalytics();setInterval(health,10000);setInterval(()=>loadIndexes(false),10000);
+// ---- kopya kod taraması ----
+let dupTimer=null;
+function fillDupColls(){
+  const sel=$('dup-coll'), cur=sel.value;
+  sel.innerHTML=Object.keys(INDEXES).map(n=>`<option>${esc(n)}</option>`).join('');
+  if(cur&&INDEXES[cur])sel.value=cur;
+}
+async function startDupScan(){
+  const collection=$('dup-coll').value;
+  if(!collection)return;
+  $('btn-dupstart').disabled=true;
+  try{
+    const r=await(await fetch('/api/duplicates/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({collection,threshold:parseFloat($('dup-thr').value)||0.93})})).json();
+    if(r.error){alert(r.error);$('btn-dupstart').disabled=false;return;}
+    if(dupTimer)clearInterval(dupTimer);
+    dupTimer=setInterval(pollDup,1500);pollDup();
+  }catch(e){alert(e);$('btn-dupstart').disabled=false;}
+}
+async function pollDup(){
+  try{
+    const s=await(await fetch('/api/duplicates/status')).json();
+    if(s.phase==='scanning'||s.phase==='starting'){
+      $('dup-status').innerHTML=`<span class="spin"></span>${T('taranıyor','scanning')} — ${(s.done||0).toLocaleString('tr')} / ${(s.total||0).toLocaleString('tr')}`;
+    }else if(s.phase==='done'){
+      clearInterval(dupTimer);dupTimer=null;$('btn-dupstart').disabled=false;
+      $('dup-status').textContent=`✅ ${T('bitti','done')} — ${s.pairs} ${T('çift bulundu','pairs found')} (${(s.done||0).toLocaleString('tr')} ${T('chunk tarandı','chunks scanned')})`;
+      showDupReport(s.collection||$('dup-coll').value);
+    }else if(s.phase==='error'){
+      clearInterval(dupTimer);dupTimer=null;$('btn-dupstart').disabled=false;
+      $('dup-status').textContent='❌ '+(s.error||'');
+    }
+  }catch(e){}
+}
+async function showDupReport(collection){
+  try{
+    const d=await(await fetch('/api/duplicates/report?collection='+encodeURIComponent(collection))).json();
+    if(d.error){$('dup-result').innerHTML='';return;}
+    const rows=(d.pairs||[]).slice(0,50).map(p=>
+      `<tr><td>${p.score}</td>`+
+      `<td class="mono" style="font-size:12px">${esc(p.a.name||'')}<br><span style="color:var(--faint)">${esc(p.a.unit||'')}:${p.a.line_start||''}</span></td>`+
+      `<td class="mono" style="font-size:12px">${esc(p.b.name||'')}<br><span style="color:var(--faint)">${esc(p.b.unit||'')}:${p.b.line_start||''}</span></td>`+
+      `<td>${p.same_unit?T('aynı dosya','same file'):''}</td></tr>`).join('');
+    $('dup-result').innerHTML=rows?
+      `<div class="note" style="margin-bottom:6px">${T('en benzer','top')} ${Math.min(50,(d.pairs||[]).length)} / ${(d.pairs||[]).length} ${T('çift (eşik','pairs (threshold')} ${d.threshold})</div>`+
+      `<table><thead><tr><th>${T('benzerlik','score')}</th><th>A</th><th>B</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      :`<div class="note">${T('Eşik üstünde çift bulunamadı 🎉','No pairs above threshold 🎉')}</div>`;
+  }catch(e){}
+}
+// ---- yedekler ----
+async function loadBackups(){
+  try{
+    const d=await(await fetch('/api/backup/status')).json();
+    const j=d.job||{};
+    let head='';
+    if(j.phase==='running')head=`<span class="spin"></span>${T('yedekleniyor','backing up')} — ${esc(j.collection||'')}<br>`;
+    else if(j.phase==='error')head=`❌ ${esc(j.error||'')}<br>`;
+    else if(j.phase==='done'&&(j.skipped||[]).length)head=`${T('Otomatik yedekte atlanan (büyük) koleksiyonlar','Skipped (large) collections in auto-backup')}: ${j.skipped.join(', ')}<br>`;
+    $('backup-list').innerHTML=head+((d.files||[]).length?
+      d.files.map(f=>`<div style="padding:2px 0"><span class="mono" style="color:var(--amber);font-size:12px">${esc(f.name)}</span> <span style="color:var(--faint)">${f.mb} MB · ${esc(f.date.replace('T',' '))}</span></div>`).join('')
+      :T('Henüz yedek yok — ilk otomatik yedek panel açıldıktan ~10 dk sonra alınır.','No backups yet — the first auto-backup runs ~10 min after the panel starts.'));
+  }catch(e){$('backup-list').textContent='⚠️ '+e;}
+}
+async function runBackup(){
+  $('btn-backup').disabled=true;
+  try{
+    const r=await(await fetch('/api/backup/run?full=true',{method:'POST'})).json();
+    if(r.error)alert(r.error);
+    setTimeout(loadBackups,800);
+    const t=setInterval(async()=>{const d=await(await fetch('/api/backup/status')).json();loadBackups();if((d.job||{}).phase!=='running'&&(d.job||{}).phase!=='starting'){clearInterval(t);$('btn-backup').disabled=false;}},2500);
+  }catch(e){alert(e);$('btn-backup').disabled=false;}
+}
+health();loadModels();loadIndexes().then(fillDupColls);loadAnalytics();loadBackups();setInterval(health,10000);setInterval(()=>{loadIndexes(false).then(fillDupColls);},10000);
 
 let jobTimer=null;
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
