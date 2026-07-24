@@ -65,7 +65,7 @@ pre.out.err{color:var(--err)}
 
   <div class="panelcard">
     <h3 id="t-mcp">MCP Tool'ları<span class="badge">canlı test</span></h3>
-    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 15 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
+    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 16 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
   </div>
 
   <div class="panelcard">
@@ -192,6 +192,17 @@ pre.out.err{color:var(--err)}
     <pre class="out" id="out-analyze_impact"></pre>
   </div>
 
+  <div class="panelcard" id="tool-get_context_pack">
+    <h3>get_context_pack</h3>
+    <div class="row">
+      <div class="field" style="min-width:280px"><label>task</label><input id="cp-task" placeholder="transaction yönetimi nasıl kurgulanmış?"></div>
+      <div class="field" style="max-width:200px"><label>collections (virgülle)</label><input id="cp-colls" list="coll-list" placeholder="boş = varsayılan"></div>
+      <div class="field" style="max-width:130px"><label>token_budget</label><input id="cp-budget" value="8000" type="number"></div>
+    </div>
+    <button onclick="runTool('get_context_pack')">▶ Çalıştır</button>
+    <pre class="out" id="out-get_context_pack"></pre>
+  </div>
+
   <div class="panelcard" id="tool-get_unit_deps">
     <h3>get_unit_deps</h3>
     <div class="row">
@@ -250,7 +261,7 @@ function applyLang(){
   $('t-rest').textContent=T('REST API','REST API');
   $('t-restdesc').textContent=T('Panelin kullandığı tüm /api/* uçları — canlı, interaktif dokümantasyon ve deneme burada.','Every /api/* endpoint the panel itself uses — live, interactive docs and try-it-out here.');
   $('t-mcp').innerHTML=T('MCP Tool\'ları','MCP Tools')+'<span class="badge">'+T('canlı test','live test')+'</span>';
-  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 15 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 15 tools — just triggered from here instead of stdio.');
+  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 16 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 16 tools — just triggered from here instead of stdio.');
   $('t-viewer').textContent=T('Dosya Görüntüleyici','File Viewer');
   $('t-viewerdesc').textContent=T('Diskteki bir .md/.html/.txt dosyasını panelde (karanlık temayla) görüntüler.','Renders a .md/.html/.txt file from disk inside the panel (dark theme).');
   $('t-vwopen').textContent=T('Görüntüle','View');
@@ -277,6 +288,7 @@ const TOOLS={
   read_unit:{method:'POST',url:'/api/mcp/read_unit',body:()=>({collection:$('ru-coll').value,unit:$('ru-unit').value.trim()})},
   get_type_hierarchy:{method:'POST',url:'/api/mcp/get_type_hierarchy',body:()=>({collection:$('th-coll').value,type_name:$('th-type').value.trim()})},
   analyze_impact:{method:'POST',url:'/api/mcp/analyze_impact',body:()=>({collection:$('ai-coll').value,base:$('ai-base').value.trim(),head:$('ai-head').value.trim()||'HEAD'})},
+  get_context_pack:{method:'POST',url:'/api/mcp/get_context_pack',body:()=>({task:$('cp-task').value,collections:$('cp-colls').value.trim()?$('cp-colls').value.split(',').map(s=>s.trim()):null,token_budget:parseInt($('cp-budget').value)||8000})},
   get_unit_deps:{method:'POST',url:'/api/mcp/get_unit_deps',body:()=>({collection:$('udp-coll').value,unit:$('udp-unit').value.trim()})},
   document_unit:{method:'POST',url:'/api/mcp/document_unit',body:()=>({collection:$('du-coll').value,unit:$('du-unit').value.trim(),force:$('du-force').value==='true'})},
   find_references:{method:'POST',url:'/api/mcp/find_references',body:()=>({collection:$('fr-coll').value,name:$('fr-name').value.trim(),top_k:parseInt($('fr-topk').value)||30})},

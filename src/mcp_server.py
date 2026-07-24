@@ -1,7 +1,7 @@
 """Code-Intel MCP sunucusu — stdio üzerinden Claude Code, Codex CLI, Gemini CLI
 gibi MCP-uyumlu ajanlara Delphi kod tabanı arama/açıklama/inceleme araçları sunar.
-15 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
-get_type_hierarchy, find_references, get_unit_deps, analyze_impact, document_unit, explain_chunk, review_code,
+16 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
+get_type_hierarchy, find_references, get_unit_deps, get_context_pack, analyze_impact, document_unit, explain_chunk, review_code,
 ask_domain_model, list_domain_models, list_collections.
 
 Çalıştır:  .venv/Scripts/python.exe -m src.mcp_server
@@ -184,6 +184,17 @@ def get_unit_deps(collection: str, unit: str) -> dict:
     ("Core/Utils.pas") ya da unit adı ("Utils") olabilir. Kenarlar indeksleme
     sırasında kaynak dosyaların uses bildirimlerinden çıkarılır."""
     return retrieval.get_unit_deps(collection, unit)
+
+@tool
+def get_context_pack(task: str, collections: list[str] | None = None, token_budget: int = 8000,
+                      include_relations: bool = True) -> dict:
+    """Bir görev/soru için TOKEN BÜTÇELİ hazır bağlam paketi — tek çağrıda: ana
+    sembolün TAM kodu, çağıranlar/çağrılanlar, tip hiyerarşisi, unit bağımlılıkları
+    ve ikincil eşleşmeler; bütçeye önem sırasıyla doldurulur. Bir ajanın "önce ara,
+    sonra tek tek derinleş" döngüsünü tek araca indirger. omitted listesi bütçeye
+    sığmayanları gösterir; section id'leriyle get_chunk/get_relations üzerinden
+    derinleşilebilir. rerank dahildir (en isabetli sıra)."""
+    return retrieval.get_context_pack(task, collections or DEFAULT_COLLECTIONS, token_budget, include_relations)
 
 @tool
 def document_unit(collection: str, unit: str, force: bool = False) -> dict:

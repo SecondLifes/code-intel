@@ -165,6 +165,7 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
   <div class="controls">
     <div class="seg" id="seg-act">
       <span data-a="ask" class="on">💬 <span id="a-ask">Cevapla</span></span>
+      <span data-a="research">🔬 <span id="a-res">Derin</span></span>
       <span data-a="find">🔍 <span id="a-find">Bul</span></span>
     </div>
     <div class="divider"></div>
@@ -228,7 +229,7 @@ const SUGG={tr:['String split fonksiyonu var mı?','REST isteği nasıl gönderi
 function applyLang(){
   $('ln').textContent=LANG.toUpperCase();$('la').textContent=LANG==='tr'?'EN':'TR';
   $('q').placeholder=T('Kod tabanına sor…  (💬 yanıtlar · 🔍 bulur)','Ask the codebase…  (💬 answers · 🔍 finds)');
-  $('a-ask').textContent=T('Cevapla','Answer');$('a-find').textContent=T('Bul','Find');
+  $('a-ask').textContent=T('Cevapla','Answer');$('a-find').textContent=T('Bul','Find');$('a-res').textContent=T('Derin','Deep');
   $('m-hy').textContent=T('Hibrit','Hybrid');$('m-de').textContent=T('Anlamsal','Semantic');$('m-sp').textContent=T('Kelime','Keyword');
   $('h-t1').textContent=T('Kod tabanına sor','Ask the codebase');
   $('h-t2').textContent=T('Türkçe ya da İngilizce — kodu bulur, kaynak göstererek yanıtlar.','Turkish or English — it finds the code and answers with citations.');
@@ -476,15 +477,21 @@ async function run(){
           (r.has_more?`<button class="loadmore" id="loadmore" onclick="loadMore()">${T('Daha Fazla Göster','Show More')} ▾</button>`:'')
         :none());
     }else{
-      await runAskStream(q);
+      await runAskStream(q, ACT==='research');
     }
   }catch(e){$('out').innerHTML=err(e);}
   $('go').disabled=false;$('q').focus();
 }
-async function runAskStream(q){
-  const model=localStorage.getItem('ci-mfast')||'gemma4:12b';
-  const resp=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY})});
+async function runAskStream(q, research){
+  // research=true: derin araştırma modu — context pack (tam kod + çağrı/tip/unit
+  // bağlamı) + derin model; adımlar SSE 'step' olaylarıyla ekranda görünür
+  const model=research?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
+  const url=research?'/api/research/stream':'/api/ask/stream';
+  const bodyObj=research
+    ?{q,collections:SELECTED_COLLS,lang:LANG,model}
+    :{q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY};
+  const resp=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(bodyObj)});
   if(!resp.ok||!resp.body){$('out').innerHTML=err('HTTP '+resp.status);return;}
   $('out').innerHTML=`<div class="answer" id="ans"><span class="spin"></span></div><div class="metaline" id="ansmeta"></div><div id="anssrc"></div>`;
   let meta=null,text='',sec='?';
@@ -512,6 +519,7 @@ async function runAskStream(q){
             d.hits.slice(0,5).map(srcCard).join('');
         }
       }else if(ev==='error'){$('ans').innerHTML='⚠️ '+esc(d.error||JSON.stringify(d));}
+      else if(ev==='step'){if(!text)$('ans').innerHTML=`<span class="spin"></span>${esc(d.step||'')}…`;}
       else if(ev==='done'){sec=d.sec??'?';}
       else if(d.t){text+=d.t;$('ans').innerHTML=citeFmt(text)+'<span class="spin"></span>';}
     }

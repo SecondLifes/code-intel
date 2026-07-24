@@ -241,6 +241,76 @@ def ask_stream(r: AskReq):
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+# ---------------- derin araştırma modu (Sıra 8) ----------------
+# Tek atımlık RAG'in üstü: get_context_pack ile ana sembolün TAM kodu + çağrı/tip/
+# unit bağlamı toplanır, derin modelle sentezlenir; adımlar SSE ile UI'da görünür.
+class ResearchReq(BaseModel):
+    q: str; collections: list[str] = ["unidac"]; model: str = ""; lang: str = "tr"
+    token_budget: int = 6000
+
+@router.post("/api/research/stream")
+def research_stream(r: ResearchReq):
+    mdl = r.model or retrieval._CFG.get("deep_model", "qwen3.6")
+
+    def gen():
+        yield f"event: step\ndata: {json.dumps({'step': 'arama + bağlam paketi hazırlanıyor'}, ensure_ascii=False)}\n\n"
+        pack = retrieval.get_context_pack(r.q, r.collections, r.token_budget)
+        if "error" in pack:
+            yield f"event: error\ndata: {json.dumps(pack, ensure_ascii=False)}\n\n"
+            return
+        secs = pack.get("sections", [])
+        meta_hits = [{"collection": s.get("collection"), "id": s.get("id"), "name": s.get("title"),
+                       "unit": s.get("unit", ""), "kind": s["kind"], "line_start": s.get("line_start", 0),
+                       "line_end": s.get("line_start", 0), "score": s.get("score", ""),
+                       "code": s["text"][:1200], "why": {}}
+                      for s in secs if s["kind"] in ("primary", "related")]
+        yield ("event: meta\ndata: " + json.dumps({
+            "hits": meta_hits, "total": len(secs), "model": mdl,
+            "pack": {"sections": len(secs), "used_tokens_est": pack.get("used_tokens_est"),
+                      "omitted": len(pack.get("omitted", []))}}, ensure_ascii=False) + "\n\n")
+        if not secs:
+            yield f"data: {json.dumps({'t': 'Bu soruyla eşleşen kod bulamadım.'}, ensure_ascii=False)}\n\n"
+            yield "event: done\ndata: {}\n\n"
+            return
+        ctx = "\n\n".join(f"[S{i+1} — {s['kind']}: {s['title']}]\n{s['text']}" for i, s in enumerate(secs))
+        if r.lang == "tr":
+            prompt = ("Sen kidemli bir Delphi mimarisin. Asagidaki soruyu YALNIZCA verilen baglam "
+                      "bolumlerine dayanarak derinlemesine yanitla: mimari akisi, ilgili siniflar/"
+                      "cagri iliskileri ve dikkat edilmesi gerekenleri acikla. Dayandigin bolumleri "
+                      "[S1] [S2] gibi isaretle; baglam yetmiyorsa hangi ek bilginin gerektigini soyle, "
+                      f"uydurma.\n\nSORU: {r.q}\n\nBAGLAM:\n{ctx}")
+        else:
+            prompt = ("You are a senior Delphi architect. Answer ONLY from the context sections below, "
+                      "covering architecture flow, related types/call relations and caveats; cite as "
+                      f"[S1] [S2]. If context is insufficient, say what else is needed.\n\nQUESTION: {r.q}\n\nCONTEXT:\n{ctx}")
+        yield f"event: step\ndata: {json.dumps({'step': f'{mdl} ile sentezleniyor'}, ensure_ascii=False)}\n\n"
+        body = json.dumps({"model": mdl, "prompt": prompt, "stream": True,
+                           "options": {"num_predict": 900}, "think": False}).encode()
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(
+                    urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
+                    timeout=600) as resp:
+                for line in resp:
+                    if not line.strip():
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    tok = d.get("response", "")
+                    if tok:
+                        yield f"data: {json.dumps({'t': tok}, ensure_ascii=False)}\n\n"
+                    if d.get("done"):
+                        break
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)[:200]}, ensure_ascii=False)}\n\n"
+            return
+        yield f"event: done\ndata: {json.dumps({'sec': round(time.time() - t0, 1)})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 # ---------------- arama sonucu geri bildirimi (👍/👎) ----------------
 class FeedbackReq(BaseModel):
     collection: str; id: int; q: str = ""; verdict: str; name: str = ""

@@ -869,6 +869,76 @@ def analyze_impact(collection: str, base: str = "", head: str = "HEAD", max_item
             "impacted_subtypes": list(subtypes.values())[:max_items],
             "note": "etki listesi isim-sezgili çağrı grafiği + tip kenarlarına dayanır (dosya-düzeyi diff)"}
 
+# ---------------- agent bağlam paketi (get_context_pack) ----------------
+def get_context_pack(task: str, collections: list[str] | None = None, token_budget: int = 8000,
+                     include_relations: bool = True) -> dict:
+    """Bir görev/soru için TOKEN BÜTÇELİ bağlam paketi — CodeIntel'i "arama
+    aracı"ndan "ajan bağlam motoruna" çeviren çağrı (üç bağımsız analizin ortak
+    #1-2 önerisi). Tek çağrıda: ana sembolün TAM kodu + ikincil eşleşmeler +
+    çağıranlar/çağrılanlar + tip hiyerarşisi + unit bağımlılıkları, bütçeye
+    sığacak şekilde önem sırasıyla seçilir (bütçe ~4 karakter/token varsayımıyla
+    uygulanır). `sections` sırası önem sırasıdır; `omitted` bütçeye sığmayanları
+    listeler — ajan gerekirse onları ayrı çağrılarla derinleştirir."""
+    colls = collections or [c["name"] for c in list_collections()][:4]
+    sr = search(task, colls, "hybrid", top_k=10, rerank=True, log=False)
+    if "error" in sr:
+        return sr
+    hits = sr["hits"]
+    if not hits:
+        return {"task": task, "sections": [], "note": "eşleşme yok"}
+    budget_chars = token_budget * 4
+    sections, omitted, used = [], [], 0
+
+    def add(kind: str, title: str, text: str, meta: dict | None = None):
+        nonlocal used
+        if not text:
+            return
+        if used + len(text) > budget_chars:
+            omitted.append({"kind": kind, "title": title, "chars": len(text)})
+            return
+        sections.append({"kind": kind, "title": title, **(meta or {}), "text": text})
+        used += len(text)
+
+    primary = hits[0]
+    full = get_chunk(primary["collection"], primary["id"], full_code=True) or {}
+    add("primary", f"{primary['name']} ({primary['unit']})",
+        full.get("code", primary["code"]),
+        {"collection": primary["collection"], "id": primary["id"], "unit": primary["unit"],
+         "line_start": primary["line_start"], "truncated": full.get("truncated", False)})
+
+    if include_relations:
+        rel = get_relations(primary["collection"], primary["id"])
+        if "error" not in rel:
+            callers = rel.get("called_by") or []
+            if callers:
+                add("callers", f"{primary['name']} çağıranlar",
+                    "\n".join(f"- {c['name']} ({c['unit']}:{c.get('line_start')}) id={c['id']}" for c in callers[:12]))
+            callees = rel.get("calls") or []
+            if callees:
+                add("callees", f"{primary['name']} çağırdıkları",
+                    "\n".join(f"- {c['name']} ({c['unit']}:{c.get('line_start')}) id={c['id']}" for c in callees[:12]))
+        # tip bağlamı: ana sembol bir metotsa sınıfının hiyerarşisi de değerli
+        cls = (primary["name"] or "").split(".")[0].strip()
+        if cls and cls[:1].upper() == cls[:1]:
+            h = get_type_hierarchy(primary["collection"], cls)
+            if h.get("ancestors") or h.get("descendants"):
+                add("hierarchy", f"{cls} hiyerarşisi",
+                    "atalar: " + (" <- ".join(a["name"] for a in h.get("ancestors", [])) or "(yok)") +
+                    "\nalt sınıflar: " + (", ".join(d["name"] for d in h.get("descendants", [])[:15]) or "(yok)"))
+        ud = get_unit_deps(primary["collection"], primary["unit"])
+        if "error" not in ud and (ud.get("uses") or ud.get("used_by")):
+            add("unit_deps", f"{primary['unit']} bağımlılıkları",
+                "uses: " + (", ".join(ud["uses"][:20]) or "(yok)") +
+                f"\nused_by ({len(ud.get('used_by', []))}): " + ", ".join(ud.get("used_by", [])[:15]))
+
+    for h in hits[1:6]:
+        add("related", f"{h['name']} ({h['unit']})", h["code"][:1500],
+            {"collection": h["collection"], "id": h["id"], "unit": h["unit"], "score": h["score"]})
+
+    return {"task": task, "collections": colls, "token_budget": token_budget,
+            "used_tokens_est": used // 4, "sections": sections, "omitted": omitted,
+            "guidance": "sections önem sıralıdır; id'lerle get_chunk/get_relations üzerinden derinleşilebilir"}
+
 # ---------------- otomatik unit dokümantasyonu (önbellekli) ----------------
 def document_unit(collection: str, unit: str, model: str = "", force: bool = False) -> dict:
     """Bir dosyanın (unit) teknik dokümantasyonunu Markdown olarak üretir ve
