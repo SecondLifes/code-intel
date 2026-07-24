@@ -171,6 +171,52 @@ def test_internal_collections_protected(client):
     assert r.status_code == 400
 
 
+# ---------------- 1b) SSE AKIŞ ZARFI (Ollama'sız) ----------------
+# /api/ask/stream ve /api/research/stream'in gövdesi LLM token akışı ürettiği
+# için burada koşulmaz (yavaş/kararsız). Ama HER İKİSİ de var-olmayan bir
+# koleksiyonda retrieval.search()'ün {"error": ...} döndürdüğü yolu paylaşır —
+# bu, Ollama'ya hiç dokunmadan SSE zarfının (event: .../data: .../\n\n) uçtan
+# uca doğru üretildiğini kanıtlamaya yeter.
+@needs_qdrant
+def test_ask_stream_sse_envelope_on_search_error(client):
+    r = client.post("/api/ask/stream", json={"q": "test", "collections": ["__kesinlikle_yok_boyle_bir_koleksiyon"]})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert "event: error\ndata: " in r.text
+    assert "Hiçbir seçili koleksiyonda" in r.text
+
+
+@needs_qdrant
+def test_ask_stream_sse_envelope_cached_answer(client):
+    """Önbellekli yol (cached=true) Ollama'ya hiç gitmez — meta/data/done üçlüsü tek seferde akar."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    from api import search_routes
+    import retrieval
+    fake_req = search_routes.AskReq(q="__sse_cache_test_query__", collections=["unidac"], model="test-model")
+    search_routes._ans_put(fake_req, "önbellekten test yanıtı", [], 0)
+    key = search_routes._ans_key(fake_req)
+    try:
+        r = client.post("/api/ask/stream", json={"q": "__sse_cache_test_query__", "collections": ["unidac"], "model": "test-model"})
+        assert r.status_code == 200
+        assert "event: meta\ndata: " in r.text
+        assert '"cached": true' in r.text
+        assert "önbellekten test yanıtı" in r.text
+        assert "event: done\ndata: " in r.text
+    finally:
+        from qdrant_client import models as _m
+        retrieval.cl.delete(retrieval.ANSWER_COLL, points_selector=_m.PointIdsList(points=[key]))
+
+
+@needs_qdrant
+def test_research_stream_sse_envelope_on_search_error(client):
+    r = client.post("/api/research/stream", json={"q": "test", "collections": ["__kesinlikle_yok_boyle_bir_koleksiyon"]})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert "event: step\ndata: " in r.text
+    assert "event: error\ndata: " in r.text
+
+
 # ---------------- 2) SÖZLEŞME: MCP <-> REST paritesi ----------------
 def test_mcp_rest_parity():
     """Her MCP tool'unun /api/mcp/<ad> REST test ucu olmalı (ve tersi) — tool
