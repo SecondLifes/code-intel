@@ -131,8 +131,17 @@ def test_mcp_rest_parity():
     import asyncio
     from src import mcp_server, panel
     tools = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
-    rest = {route.path.removeprefix("/api/mcp/") for route in panel.app.routes
-            if route.path.startswith("/api/mcp/")}
+    def all_paths(routes):
+        # FastAPI 0.139+ include_router'ı _IncludedRouter olarak sarar — içine in
+        for r in routes:
+            p = getattr(r, "path", None)
+            if p:
+                yield p
+            inner = getattr(r, "original_router", None)
+            if inner is not None:
+                yield from all_paths(inner.routes)
+    rest = {p.removeprefix("/api/mcp/") for p in all_paths(panel.app.routes)
+            if p.startswith("/api/mcp/")}
     missing_rest = tools - rest
     missing_tool = rest - tools
     assert not missing_rest, f"REST test ucu olmayan MCP tool'ları: {missing_rest}"
