@@ -1,0 +1,436 @@
+"""Yardım/manual sistemi — bir koleksiyon için çapraz-bağlantılı, çok bölümlü
+teknik dokümantasyon üretir (HTML görüntüleme + PDF/DOCX dışa aktarma).
+
+Tasarım: TEK bir belge modeli (düz dict — projenin geri kalanıyla aynı
+sözleşme, retrieval.py'nin her yerde dict döndürmesiyle tutarlı) inşa edilip
+kalıcı JSON olarak saklanır; HTML/PDF/DOCX bu TEK modelin üç ayrı
+render'ıdır — mantık üçe katlanmaz. Zaten var olan yapı taşları üstüne kurulu:
+  - document_unit(): dosya başına LLM özeti (ZATEN önbellekli — build_manual
+    onu tekrar tekrar çağırsa bile ilk üretimden sonra bedava)
+  - build_symbol_graph()/get_type_hierarchy(): tip adı -> hangi dosyada
+    tanımlı bilgisi, HTML'deki çapraz-linkleme buradan gelir
+  - get_profile_payload(): başlık sayfası (owner/group/kaynak/version)
+
+Bölümleme: unit yolunun İLK klasör segmenti (örn. "jvcl/tests/..." ->
+"jvcl") — büyük koleksiyonlarda (Jedi) tek düz sayfa yerine gezilebilir
+kitap yapısı. `scope` verilirse yalnız o önekle başlayan dosyalar dahil
+edilir (17K+ sembollü Jedi gibi bir koleksiyonun TAMAMI yerine bir alt-ağaç
+için manual üretilebilsin diye).
+"""
+import json
+import pathlib
+import re
+from datetime import datetime, timezone
+
+from qdrant_client import models
+
+try:
+    from . import retrieval
+except ImportError:
+    import retrieval
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+MANUAL_DIR = ROOT / "data" / "manuals"
+
+
+def _chapter_key(unit: str) -> str:
+    parts = unit.replace("\\", "/").split("/")
+    return parts[0] if len(parts) > 1 else "Genel"
+
+
+def _slug(*parts: str) -> str:
+    s = "-".join(parts).lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s or "bolum"
+
+
+def build_manual(collection: str, scope: str = "", force: bool = False, st: dict | None = None) -> dict:
+    """Koleksiyon için manual modelini kurar ve `data/manuals/<collection>.json`
+    olarak kalıcı yazar. `force=True` document_unit önbelleğini de atlayıp
+    tüm dosya özetlerini yeniden ürettirir (pahalı — normalde gerekmez, çünkü
+    document_unit zaten kendi başına önbellekli)."""
+    cl = retrieval.cl
+    prof = retrieval.get_profile_payload(collection)
+
+    # ---- kapsamdaki dosyalar (unithead chunk'ları — hafif, tam kod gerekmiyor) ----
+    units: list[dict] = []
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=2000, offset=next_page,
+            with_payload=["unit", "lang"],
+            scroll_filter=models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value="unithead"))]))
+        for p in batch:
+            u = p.payload.get("unit") or ""
+            if not scope or u.replace("\\", "/").startswith(scope):
+                units.append({"unit": u, "lang": p.payload.get("lang") or "pascal"})
+        if next_page is None:
+            break
+    units.sort(key=lambda x: x["unit"])
+    if not units:
+        return {"error": f"kapsamda dosya bulunamadı (scope={scope!r}) — koleksiyon unithead içermiyor olabilir (v1 chunker ile indekslenmiş olabilir, yeniden indeksleyin)"}
+
+    if st is not None:
+        st.update(phase="building", total=len(units), done=0)
+
+    # ---- tip adı -> ev sahibi bölüm slug'ı (HTML çapraz-linkleme için) ----
+    type_home: dict[str, str] = {}   # bare-lower isim -> "chapter-slug#section-slug"
+    for u in units:
+        ch = _chapter_key(u["unit"])
+        sec = _slug(u["unit"])
+        pts, _ = cl.scroll(collection, limit=200, with_payload=["name", "kind"],
+            scroll_filter=models.Filter(must=[
+                models.FieldCondition(key="unit", match=models.MatchValue(value=u["unit"])),
+                models.FieldCondition(key="kind", match=models.MatchValue(value="type"))]))
+        for p in pts:
+            nm = (p.payload.get("name") or "").split("=")[0].strip()
+            if nm:
+                type_home[nm.lower()] = f"{_slug(ch)}.html#{sec}"
+
+    # ---- bölüm içeriği: document_unit'in ÖNBELLEKLİ özeti ----
+    chapters: dict[str, dict] = {}
+    lang_counts: dict[str, int] = {}
+    for i, u in enumerate(units):
+        if st is not None:
+            st.update(done=i, current=u["unit"])
+        lang_counts[u["lang"]] = lang_counts.get(u["lang"], 0) + 1
+        doc = retrieval.document_unit(collection, u["unit"], force=force)
+        if "error" in doc:
+            continue
+        ch_key = _chapter_key(u["unit"])
+        chapters.setdefault(ch_key, {"title": ch_key, "slug": _slug(ch_key), "sections": []})
+        chapters[ch_key]["sections"].append({
+            "title": pathlib.Path(u["unit"]).name, "slug": _slug(u["unit"]),
+            "unit": u["unit"], "lang": u["lang"], "body_md": doc["md"],
+        })
+
+    model = {
+        "collection": collection, "scope": scope,
+        "title": f"{collection} — Kullanım Kılavuzu",
+        "owner": prof.get("owner", ""), "group": prof.get("group", ""),
+        "version": prof.get("version", ""), "kaynak": prof.get("kaynak", ""), "url": prof.get("url", ""),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stats": {"units": len(units), "chapters": len(chapters), "languages": lang_counts},
+        "chapters": sorted(chapters.values(), key=lambda c: c["title"].lower()),
+        "type_home": type_home,
+    }
+    MANUAL_DIR.mkdir(parents=True, exist_ok=True)
+    (MANUAL_DIR / f"{collection}.json").write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
+    if st is not None:
+        st.update(done=len(units))
+    return model
+
+
+def load_manual(collection: str) -> dict | None:
+    f = MANUAL_DIR / f"{collection}.json"
+    if not f.exists():
+        return None
+    return json.loads(f.read_text(encoding="utf-8"))
+
+
+# ---------------- HTML render (tek paylaşılan CSS, "hepsi aynı türden") ----------------
+_LINK_SKIP_RE = re.compile(r"```.*?```|`[^`]*`", re.S)   # kod bloklarına/satır-içi koda dokunma
+
+def _cross_link(body_md: str, type_home: dict[str, str], self_href: str) -> str:
+    """Bilinen tip adlarını [Ad](hedef) markdown linkine çevirir — kod
+    bloklarını ve satır-içi kodu atlar, kendi sayfasına link vermez."""
+    if not type_home:
+        return body_md
+    names = sorted(type_home, key=len, reverse=True)   # uzun adlar önce (alt-string çakışmasını önler)
+    pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b", re.I)
+
+    def repl_outside_code(segment: str) -> str:
+        def repl(m):
+            href = type_home.get(m.group(1).lower())
+            if not href or href == self_href:
+                return m.group(1)
+            return f"[{m.group(1)}]({href})"
+        return pattern.sub(repl, segment)
+
+    out, last = [], 0
+    for m in _LINK_SKIP_RE.finditer(body_md):
+        out.append(repl_outside_code(body_md[last:m.start()]))
+        out.append(m.group(0))   # kod bloğu/satır-içi kod OLDUĞU GİBİ
+        last = m.end()
+    out.append(repl_outside_code(body_md[last:]))
+    return "".join(out)
+
+
+def _md_to_html_fragment(md: str) -> str:
+    """viewer.html'deki mdToHtml'in Python karşılığı — aynı minimal alt küme
+    (başlık/kalın/italik/kod/link/liste), tam CommonMark değil, bilinçli."""
+    def esc(s): return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    blocks = []
+    code_blocks = []
+    def stash_code(m):
+        code_blocks.append(m.group(1))
+        return f"\x00CODE{len(code_blocks) - 1}\x00"
+    md = re.sub(r"```\w*\n?(.*?)```", stash_code, md, flags=re.S)
+
+    def inline(t):
+        t = re.sub(r"`([^`]+)`", lambda m: f"<code>{esc(m.group(1))}</code>", t)
+        t = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", t)
+        t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', t)
+        return t
+
+    html, in_list = [], False
+    for line in md.split("\n"):
+        m = re.match(r"^(#{1,3})\s+(.*)", line)
+        if m:
+            if in_list: html.append("</ul>"); in_list = False
+            lvl = len(m.group(1))
+            html.append(f"<h{lvl}>{inline(esc(m.group(2)))}</h{lvl}>")
+            continue
+        m = re.match(r"^[-*]\s+(.*)", line)
+        if m:
+            if not in_list: html.append("<ul>"); in_list = True
+            html.append(f"<li>{inline(esc(m.group(1)))}</li>")
+            continue
+        if in_list: html.append("</ul>"); in_list = False
+        if line.strip():
+            html.append(f"<p>{inline(esc(line))}</p>")
+    if in_list: html.append("</ul>")
+    out = "\n".join(html)
+    for i, code in enumerate(code_blocks):
+        out = out.replace(f"\x00CODE{i}\x00", f"<pre><code>{esc(code)}</code></pre>")
+    return out
+
+
+MANUAL_CSS = """
+:root{
+  --bg:#14110c;--panel:#1b1710;--card:#211c14;--code:#0f0d09;
+  --line:#332b1f;--line2:#463b2a;--txt:#f1ebdd;--dim:#a99a83;--faint:#6f6555;
+  --amber:#e0a24a;--amber-d:#c58a37;--teal:#49b39c;--teal-d:#2f7e6c;
+  --serif:Georgia,'Iowan Old Style','Palatino Linotype',serif;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--txt);font:15px/1.7 'Segoe UI',system-ui,sans-serif;display:flex;min-height:100vh}
+nav{width:280px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:22px 18px;overflow-y:auto;position:sticky;top:0;height:100vh}
+nav h1{font-family:var(--serif);font-size:18px;color:var(--amber);margin-bottom:4px;line-height:1.3}
+nav .meta{font-size:11.5px;color:var(--faint);margin-bottom:16px;font-family:var(--mono)}
+nav input{width:100%;background:var(--card);border:1px solid var(--line2);border-radius:8px;color:var(--txt);padding:8px 10px;font-size:13px;margin-bottom:14px}
+nav .chapter{margin-bottom:4px}
+nav .chapter>a{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);padding:6px 4px;text-decoration:none;font-weight:600}
+nav .chapter a.sec{display:block;font-size:13px;color:var(--txt);padding:4px 4px 4px 14px;text-decoration:none;border-left:2px solid transparent}
+nav .chapter a.sec:hover{color:var(--amber);border-left-color:var(--amber-d)}
+nav a.active{color:var(--amber)!important;border-left-color:var(--amber)!important}
+main{flex:1;max-width:840px;margin:0 auto;padding:48px 40px 100px}
+main h1,main h2,main h3{font-family:var(--serif);color:var(--amber);text-wrap:balance;margin:28px 0 12px;line-height:1.3}
+main h1{font-size:30px;border-bottom:1px solid var(--line);padding-bottom:14px}
+main h2{font-size:21px}
+main h3{font-size:16px;color:var(--teal)}
+main p{margin:0 0 14px;max-width:70ch}
+main ul{margin:0 0 14px 22px}
+main li{margin-bottom:4px}
+main a{color:var(--teal)}
+main code{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-family:var(--mono);font-size:13px}
+main pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:0 0 16px;font:12.5px/1.6 var(--mono)}
+main pre code{background:none;border:0;padding:0}
+.section{padding-top:8px;border-top:1px solid var(--line);margin-top:32px}
+.section:first-of-type{border-top:0;margin-top:0}
+.badge{display:inline-block;font-size:10.5px;color:var(--teal);background:rgba(73,179,156,.1);padding:2px 8px;border-radius:6px;font-family:var(--mono);margin-left:8px;vertical-align:middle}
+.overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:20px 0 28px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.stat b{display:block;font-size:22px;color:var(--amber);font-family:var(--serif)}
+.stat span{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+"""
+
+
+def render_manual_html(model: dict, page: str = "index") -> str:
+    """page: "index" (kapak+TOC) veya bir chapter slug'ı."""
+    nav_html = [f'<h1>{_esc(model["title"])}</h1>',
+                f'<div class="meta">{_esc(model.get("version",""))} '
+                f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
+                '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
+    for ch in model["chapters"]:
+        active_ch = " active" if page == ch["slug"] else ""
+        nav_html.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
+        for sec in ch["sections"]:
+            nav_html.append(f'<a class="sec" href="{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
+        nav_html.append("</div>")
+    nav = "\n".join(nav_html)
+
+    if page == "index":
+        langs = ", ".join(f"{k} ({v})" for k, v in sorted(model["stats"]["languages"].items(), key=lambda kv: -kv[1]))
+        body = f"""<h1>{_esc(model["title"])}</h1>
+<p>{_esc(model.get("group","") or "")}</p>
+<div class="overview-grid">
+  <div class="stat"><b>{model["stats"]["units"]}</b><span>Dosya</span></div>
+  <div class="stat"><b>{model["stats"]["chapters"]}</b><span>Bölüm</span></div>
+</div>
+<p><b>Diller:</b> {_esc(langs)}</p>
+{"<p><b>Kaynak:</b> " + _esc(model.get("kaynak","")) + (" — <a href=\"" + _esc(model.get("url","")) + "\">" + _esc(model.get("url","")) + "</a>" if model.get("url") else "") + "</p>" if model.get("kaynak") else ""}
+<h2>İçindekiler</h2>
+<ul>{"".join(f'<li><a href="{c["slug"]}.html">{_esc(c["title"])}</a> ({len(c["sections"])})</li>' for c in model["chapters"])}</ul>"""
+    else:
+        ch = next((c for c in model["chapters"] if c["slug"] == page), None)
+        if ch is None:
+            return "<h1>404</h1>"
+        parts = [f'<h1>{_esc(ch["title"])}</h1>']
+        for sec in ch["sections"]:
+            linked = _cross_link(sec["body_md"], model.get("type_home", {}), f'{ch["slug"]}.html#{sec["slug"]}')
+            parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
+                         f'<span class="badge">{_esc(sec["lang"])}</span></h2>{_md_to_html_fragment(linked)}</div>')
+        body = "\n".join(parts)
+
+    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style></head>
+<body><nav>{nav}</nav><main>{body}</main>
+<script>
+function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
+  var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
+  ch.style.display=(!q||any)?'':'none';}});}}
+</script></body></html>"""
+
+
+def _esc(s):
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ---------------- DOCX / PDF (aynı model, farklı render — HTML'in aksine
+# çapraz-link YOK; sade akış metni, kod blokları anlaşılır biçimde ayrılmış) ----------------
+def _plain_blocks(body_md: str) -> list[tuple[str, str]]:
+    """(tür, metin) çiftleri: tür = "h2"|"h3"|"p"|"li"|"code". Basit satır bazlı
+    ayrıştırma — hem DOCX hem PDF render'ı bunu ortak kullanır."""
+    out = []
+    in_code = False
+    code_buf = []
+    for line in body_md.split("\n"):
+        if line.strip().startswith("```"):
+            if in_code:
+                out.append(("code", "\n".join(code_buf))); code_buf = []
+            in_code = not in_code
+            continue
+        if in_code:
+            code_buf.append(line); continue
+        m = re.match(r"^(#{1,3})\s+(.*)", line)
+        if m:
+            out.append((f"h{len(m.group(1))}", m.group(2).strip())); continue
+        m = re.match(r"^[-*]\s+(.*)", line)
+        if m:
+            out.append(("li", m.group(1).strip())); continue
+        if line.strip():
+            out.append(("p", re.sub(r"[*`]", "", line.strip())))
+    return out
+
+
+def render_manual_docx(model: dict) -> bytes:
+    """python-docx ile — bkz. skill notları: sayfa/tablo/liste tuzakları
+    burada yok (yalnız başlık+paragraf+kod-paragrafı kullanılıyor, düz akış)."""
+    import io
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+    doc.add_heading(model["title"], level=0)
+    meta = f'{model.get("version","")}  {model.get("owner","")}  {model.get("group","")}'.strip()
+    if meta:
+        p = doc.add_paragraph(meta); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(f'{model["stats"]["units"]} dosya · {model["stats"]["chapters"]} bölüm — '
+                      f'{datetime.now(timezone.utc).strftime("%Y-%m-%d")}')
+
+    for ch in model["chapters"]:
+        doc.add_heading(ch["title"], level=1)
+        for sec in ch["sections"]:
+            doc.add_heading(f'{sec["title"]}  [{sec["lang"]}]', level=2)
+            for kind, text in _plain_blocks(sec["body_md"]):
+                if kind in ("h2", "h3"):
+                    doc.add_heading(text, level=3)
+                elif kind == "li":
+                    doc.add_paragraph(text, style="List Bullet")
+                elif kind == "code":
+                    p = doc.add_paragraph()
+                    r = p.add_run(text); r.font.name = "Consolas"; r.font.size = Pt(9)
+                    p.paragraph_format.left_indent = Pt(18)
+                else:
+                    doc.add_paragraph(text)
+    buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
+
+
+# reportlab'ın yerleşik Helvetica/Times fontları Latin-1/WinAnsi ile sınırlı —
+# Türkçe'ye özgü ı/ş/ğ glifleri YOK (canlı testte "Kullanım" -> "Kullan■m" olarak
+# bozulduğu doğrulandı). Windows'ta zaten kurulu gerçek Unicode TTF'ler
+# (Georgia/Calibri/Consolas — HTML tasarımıyla aynı aile) kaydedilip kullanılır.
+_FONTS_REGISTERED = False
+_FONT_DIR = pathlib.Path(r"C:\Windows\Fonts")
+_FONT_FILES = {"Georgia": "georgia.ttf", "Georgia-Bold": "georgiab.ttf",
+               "Calibri": "calibri.ttf", "Calibri-Bold": "calibrib.ttf",
+               "Consolas": "consola.ttf"}
+
+def _ensure_pdf_fonts():
+    """Idempotent — Windows dışı bir ortamda TTF bulunamazsa yerleşik fontlara
+    sessizce düşülür (Türkçe glif eksik kalır ama üretim çökmez)."""
+    global _FONTS_REGISTERED
+    if _FONTS_REGISTERED:
+        return True
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    try:
+        for name, fname in _FONT_FILES.items():
+            pdfmetrics.registerFont(TTFont(name, str(_FONT_DIR / fname)))
+        _FONTS_REGISTERED = True
+    except Exception:
+        pass
+    return _FONTS_REGISTERED
+
+
+def render_manual_pdf(model: dict) -> bytes:
+    """reportlab Platypus ile — pypdf/weasyprint/playwright DEĞİL: saf Python,
+    yeni sistem bağımlılığı yok (Windows'ta Cairo/Pango riski, Chromium indirmesi
+    yok) — pdf skill'inin önerdiği CREATE yolu."""
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, ListFlowable, ListItem
+
+    have_unicode_fonts = _ensure_pdf_fonts()
+    f_head = "Georgia" if have_unicode_fonts else "Helvetica-Bold"
+    f_body = "Calibri" if have_unicode_fonts else "Helvetica"
+    f_code = "Consolas" if have_unicode_fonts else "Courier"
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=2.2 * cm, bottomMargin=2 * cm,
+                            leftMargin=2.2 * cm, rightMargin=2.2 * cm)
+    styles = getSampleStyleSheet()
+    amber, teal, dim = colors.HexColor("#c58a37"), colors.HexColor("#2f7e6c"), colors.HexColor("#6f6555")
+    h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontName=f_head, textColor=amber, spaceAfter=10)
+    h2 = ParagraphStyle("H2", parent=styles["Heading2"], fontName=f_head, textColor=amber, spaceBefore=14, spaceAfter=6)
+    h3 = ParagraphStyle("H3", parent=styles["Heading3"], fontName=f_head, textColor=teal, spaceBefore=8, spaceAfter=4)
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontName=f_body, fontSize=10, leading=14, spaceAfter=6)
+    codep = ParagraphStyle("Code", parent=styles["Code"], fontName=f_code, fontSize=8, leading=11,
+                           backColor=colors.HexColor("#f2f0ea"), leftIndent=10, spaceAfter=8)
+    metap = ParagraphStyle("Meta", parent=styles["Normal"], fontName=f_body, fontSize=9, textColor=dim, spaceAfter=16)
+
+    def esc(s): return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    story = [Paragraph(esc(model["title"]), h1)]
+    meta = " · ".join(x for x in (model.get("version"), model.get("owner"), model.get("group")) if x)
+    if meta:
+        story.append(Paragraph(esc(meta), metap))
+    story.append(Paragraph(f'{model["stats"]["units"]} dosya · {model["stats"]["chapters"]} bölüm', metap))
+    story.append(PageBreak())
+
+    for ch in model["chapters"]:
+        story.append(Paragraph(esc(ch["title"]), h1))
+        for sec in ch["sections"]:
+            story.append(Paragraph(f'{esc(sec["title"])} <font color="#{teal.hexval()[2:]}" size="8">[{esc(sec["lang"])}]</font>', h2))
+            items = []
+            for kind, text in _plain_blocks(sec["body_md"]):
+                if kind in ("h2", "h3"):
+                    story.append(Paragraph(esc(text), h3))
+                elif kind == "li":
+                    items.append(ListItem(Paragraph(esc(text), body)))
+                elif kind == "code":
+                    story.append(Paragraph(esc(text).replace("\n", "<br/>"), codep))
+                else:
+                    if items:
+                        story.append(ListFlowable(items, bulletType="bullet")); items = []
+                    story.append(Paragraph(esc(text), body))
+            if items:
+                story.append(ListFlowable(items, bulletType="bullet"))
+        story.append(PageBreak())
+    doc.build(story)
+    return buf.getvalue()

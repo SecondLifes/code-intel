@@ -30,13 +30,13 @@ try:
     from . import retrieval
     from .services import common
     from .services.indexing_svc import _watch_loop
-    from .api import admin_routes, index_routes, mcp_routes, search_routes
+    from .api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
 except ImportError:
     # `uvicorn src.panel:app` paket-göreli çalışır; `python src/panel.py` (paketsiz) düşülür.
     import retrieval
     from services import common
     from services.indexing_svc import _watch_loop
-    from api import admin_routes, index_routes, mcp_routes, search_routes
+    from api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
 
 # Geriye dönük takma adlar — testler ve dış kullanıcılar panel.X olarak erişebilir.
 ROOT = common.ROOT
@@ -64,7 +64,8 @@ API_KEY = os.environ.get("CODEINTEL_API_KEY", "")
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 ADMIN_PREFIXES = ("/api/collection", "/api/index/start", "/api/backup/run",
                    "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile",
-                   "/api/owners", "/api/groups", "/api/git-update-all", "/api/index/migrate-ids")
+                   "/api/owners", "/api/groups", "/api/git-update-all", "/api/index/migrate-ids",
+                   "/api/manual/build")
 RATE_WINDOW_SEC, RATE_MAX = 10, 300
 _rate: dict[str, deque] = {}
 _AUDIT_FILE = common.ROOT / "logs" / "admin-audit.log"
@@ -104,6 +105,7 @@ app.include_router(admin_routes.router)
 app.include_router(search_routes.router)
 app.include_router(index_routes.router)
 app.include_router(mcp_routes.router)
+app.include_router(manual_routes.router)
 
 LOG_ROTATE_BYTES = 20_000_000   # log dosyası bu boyutu aşınca .1'e devredilir (1 eski kopya tutulur)
 
