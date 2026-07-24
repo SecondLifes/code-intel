@@ -45,8 +45,9 @@ ANSWER_COLL = "_answer_cache"   # RAG sohbet yanıt önbelleği
 OWNER_COLL = "_owners"          # owner kayıt defteri (Owner→Collection modeli)
 GROUP_COLL = "_groups"          # group kayıt defteri (fonksiyonel/konu etiketi)
 APIKEY_COLL = "_api_keys"       # API anahtarı kayıt defteri (Sıra 11a — rol ayrımlı: read|admin)
+JOB_COLL = "_index_jobs"        # kalıcı iş kaydı (Sıra 26) — panel çökerse/yeniden başlarsa devam edebilsin
 INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL, SYMBOL_COLL,
-                  WORKSPACE_COLL, UNITDOC_COLL, ANSWER_COLL, OWNER_COLL, GROUP_COLL, APIKEY_COLL}
+                  WORKSPACE_COLL, UNITDOC_COLL, ANSWER_COLL, OWNER_COLL, GROUP_COLL, APIKEY_COLL, JOB_COLL}
 
 # Cross-encoder reranker: çok dilli (Türkçe sorgu + İngilizce kod çalışır).
 # İlk kullanımda (~1.1GB) indirilir, sonra kalıcı önbellekten yüklenir.

@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel
 from qdrant_client import models
@@ -14,7 +14,7 @@ try:
     from ..chunker import extract_calls
     from ..retrieval import dense_model, sparse_model, gpu_available
     from .common import (cl, ROOT, INTERNAL_COLLS, STATE, WATCH_INTERVAL_SEC,
-                          BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language)
+                          BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language, JOB_COLL)
     from .profiles import get_profile, set_profile, get_history, record_history
     from .collections_svc import _run_backup
 except ImportError:
@@ -22,7 +22,7 @@ except ImportError:
     from chunker import extract_calls
     from retrieval import dense_model, sparse_model, gpu_available
     from services.common import (cl, ROOT, INTERNAL_COLLS, STATE, WATCH_INTERVAL_SEC,
-                                  BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language)
+                                  BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language, JOB_COLL)
     from services.profiles import get_profile, set_profile, get_history, record_history
     from services.collections_svc import _run_backup
 
@@ -155,8 +155,48 @@ def _link_call_graph(collection: str, st: dict | None = None):
     if st is not None:
         st["link_written"] = written   # kaçının ilişkisi gerçekten değişti (gözlemlenebilirlik)
 
+# ---------------- kalıcı iş kaydı (Sıra 26 — checkpoint/resume) ----------------
+# Model BASİT tutuldu: STATE["index_job"] zaten TEK seferde tek iş çalıştırıyor
+# (index_start 409 ile kilitliyor) — "kuyruk" değil TEK slot yeter. Aşamalı
+# ilerleme (hangi batch'te kalındığı) KAYDEDİLMİYOR — indeksleme zaten hash
+# bazlı DIFF'li (yukarıdaki plan/old_hash mantığı): aynı IndexReq'i baştan
+# yeniden çalıştırmak, değişmeyen noktaları otomatik atlayıp yalnız eksik
+# kalanı işler — bu yüzden "devam etmek" = "aynı isteği yeniden tetiklemek".
+# Checkpoint YALNIZCA başta yazılır, iş NORMAL bittiğinde (başarı VEYA
+# yakalanmış hata) silinir — panel süreci sert şekilde kesilirse (kill/çökme,
+# except bloğuna hiç girilmeden) kayıt SİLİNMEDEN kalır; bir sonraki panel
+# açılışında bu, "yarıda kalmış iş" olarak algılanıp otomatik yeniden başlatılır.
+_JOB_ID = "00000000-0000-0000-0000-000000000001"
+
+def _save_job_checkpoint(r: "IndexReq"):
+    try:
+        if not cl.collection_exists(JOB_COLL):
+            cl.create_collection(JOB_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+        cl.upsert(JOB_COLL, points=[models.PointStruct(id=_JOB_ID, vector=[0.0],
+            payload={"req": r.model_dump(), "started_at": datetime.now(timezone.utc).isoformat()})])
+    except Exception:
+        pass   # checkpoint yazımı asla asıl işi düşürmemeli
+
+def _clear_job_checkpoint():
+    try:
+        if cl.collection_exists(JOB_COLL):
+            cl.delete(JOB_COLL, points_selector=models.PointIdsList(points=[_JOB_ID]))
+    except Exception:
+        pass
+
+def load_pending_job() -> "IndexReq | None":
+    """Panel açılışında çağrılır: bir önceki çalıştırma yarıda mı kesilmiş?"""
+    try:
+        if not cl.collection_exists(JOB_COLL):
+            return None
+        pts = cl.retrieve(JOB_COLL, ids=[_JOB_ID], with_payload=True)
+        return IndexReq(**pts[0].payload["req"]) if pts else None
+    except Exception:
+        return None
+
 def _run_index(r: IndexReq):
     st = STATE["index_job"]
+    _save_job_checkpoint(r)
     try:
         lib = r.lib or r.collection
         jsonl = ROOT / f"data/chunks-{r.collection}.jsonl"
@@ -295,6 +335,7 @@ def _run_index(r: IndexReq):
                 retrieval.build_symbol_graph(r.collection, st)
             record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
             st.update(phase="done", sec=0.0)
+            _clear_job_checkpoint()
             return
 
         dm = dense_model(r.device) if any(pl[2] for pl in plan) else None
@@ -343,8 +384,10 @@ def _run_index(r: IndexReq):
             retrieval.build_symbol_graph(r.collection, st)
         record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
         st.update(phase="done", sec=round(time.time() - t0, 1))
+        _clear_job_checkpoint()
     except Exception as e:
         st.update(phase="error", error=str(e)[:300])
+        _clear_job_checkpoint()   # işlenmiş/kayda geçmiş hata — bir sonraki panel açılışında SESSİZCE yeniden denenmesin
         # KALICI iş kaydı: hatalar da tarihçeye yazılır — eskiden yalnız başarılı
         # koşular kaydediliyordu, panel yeniden başlayınca hata bağlamı kayboluyordu
         # (dış analizde işaret edilen "iş geçmişi bellekte" sorununun ucuz yarısı).

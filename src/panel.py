@@ -29,14 +29,14 @@ from fastapi.responses import JSONResponse
 try:
     from . import retrieval
     from .services import common
-    from .services.indexing_svc import _watch_loop
+    from .services.indexing_svc import _watch_loop, _run_index, load_pending_job
     from .services.apikeys import validate_api_key
     from .api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
 except ImportError:
     # `uvicorn src.panel:app` paket-göreli çalışır; `python src/panel.py` (paketsiz) düşülür.
     import retrieval
     from services import common
-    from services.indexing_svc import _watch_loop
+    from services.indexing_svc import _watch_loop, _run_index, load_pending_job
     from services.apikeys import validate_api_key
     from api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
 
@@ -147,3 +147,19 @@ def _startup():
     except Exception:
         pass
     threading.Thread(target=_watch_loop, daemon=True).start()
+    # Sıra 26: kalıcı iş kaydı — panel bir önceki çalıştırmada indeksleme
+    # ORTASINDA sert şekilde kesildiyse (kill/çökme, normal bitiş/hata YOLU hiç
+    # işlemediyse) _index_jobs'ta bir kayıt kalmış olur. Aynı isteği burada
+    # yeniden tetiklemek "devam etmek" anlamına gelir — indeksleme zaten hash
+    # bazlı diff'li, değişmeyen noktalar otomatik atlanır (bkz. indexing_svc
+    # docstring'i). Normal (başarı/hata) bitişlerde kayıt zaten silinmiş olur.
+    try:
+        pending = load_pending_job()
+        if pending and not (STATE.get("index_job") and STATE["index_job"].get("phase") in
+                             ("starting", "chunking", "diffing", "embedding", "linking")):
+            STATE["index_job"] = {"collection": pending.collection, "mode": "+".join(pending.vectors),
+                                  "device": pending.device, "total": 0, "done": 0, "rate": 0,
+                                  "phase": "starting", "resumed": True}
+            threading.Thread(target=_run_index, args=(pending,), daemon=True).start()
+    except Exception:
+        pass

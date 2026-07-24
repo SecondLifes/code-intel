@@ -22,6 +22,7 @@ ANSWER_COLL = retrieval.ANSWER_COLL
 OWNER_COLL = retrieval.OWNER_COLL
 GROUP_COLL = retrieval.GROUP_COLL
 APIKEY_COLL = retrieval.APIKEY_COLL
+JOB_COLL = retrieval.JOB_COLL
 INTERNAL_COLLS = retrieval.INTERNAL_COLLS   # TEK kaynak: retrieval.py (kopya liste kaymasın)
 STATE = {"index_job": None}   # TEK paylaşılan iş durumu — tüm modüller aynı dict'i günceller
 WATCH_INTERVAL_SEC = 600      # auto_refresh kaynak tarama aralığı

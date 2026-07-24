@@ -157,6 +157,41 @@ def test_apikeys_crud_and_role_validation(client):
     assert not any(k["id"] == created["id"] for k in listed2)
 
 
+@needs_qdrant
+def test_job_checkpoint_persists_and_clears(client):
+    """Sıra 26: _save_job_checkpoint/_clear_job_checkpoint/load_pending_job —
+    saf kalıcılık katmanı, gerçek bir indeksleme çalıştırmadan doğrulanır."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    from services import indexing_svc as _isvc
+    req = _isvc.IndexReq(collection="__test_job_ckpt", path="C:/nowhere", vectors=["sparse"], device="cpu")
+    _isvc._clear_job_checkpoint()   # önceki koşudan artık kalmasın
+    assert _isvc.load_pending_job() is None
+    _isvc._save_job_checkpoint(req)
+    loaded = _isvc.load_pending_job()
+    assert loaded is not None and loaded.collection == "__test_job_ckpt" and loaded.path == "C:/nowhere"
+    _isvc._clear_job_checkpoint()
+    assert _isvc.load_pending_job() is None
+
+
+@needs_qdrant
+def test_run_index_clears_checkpoint_on_handled_error(client):
+    """Yakalanmış bir hata (ör. var olmayan kaynak) sonrası checkpoint SİLİNMELİ
+    — aksi halde bir sonraki panel açılışında aynı bozuk iş sessizce sonsuza
+    dek yeniden denenirdi. Yalnız SERT kesilme (kill/çökme, except'e hiç
+    girilmeden) kaydı ayakta bırakmalı — bu senaryo burada test edilmiyor
+    (süreç öldürmeyi gerektirir), yalnız normal hata yolu doğrulanıyor."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    from services import indexing_svc as _isvc
+    from services.common import STATE
+    req = _isvc.IndexReq(collection="__test_job_errpath", path="", vectors=["sparse"], device="cpu")
+    STATE["index_job"] = {"collection": req.collection, "phase": "starting"}
+    _isvc._run_index(req)   # path="" ve geçmiş/profil de yok -> RuntimeError("kaynak klasör yok")
+    assert STATE["index_job"]["phase"] == "error"
+    assert _isvc.load_pending_job() is None
+
+
 def test_middleware_role_gate_pure():
     """Middleware'in host-farkında rol kapısını (_presented_key_role + admin-yolu
     kısıtı) gerçek HTTP olmadan doğrular — TestClient host'u hep 'testclient' (yerel
