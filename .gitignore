@@ -2,7 +2,11 @@
 data/
 qdrant-bin/*.zip
 qdrant.log
+qdrant-error.log
 panel.log
 *.onnx
 __pycache__/
 *.pyc
+logs/
+panel-restart.log
+backups/

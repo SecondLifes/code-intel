@@ -19,6 +19,38 @@ Q = Query(LANG, "(declProc) @decl\n(defProc) @impl\n(declType) @type")
 NAME_RE = re.compile(r"(?:procedure|function|constructor|destructor)\s+([\w.]+)", re.I)
 SUMMARY_TAG_RE = re.compile(r"</?summary>", re.I)
 
+CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+# Pascal/Delphi ayrılmış sözcükleri — bunlar "(" ile takip edilse bile ÇAĞRI değildir
+# (örn. "if (x > 0) then"). Gerçek dil kelime listesi eksiksiz değil, bilinen en
+# yaygın olanları kapsar — eksik kalan biri en kötü ihtimalle gerçek olmayan bir
+# "calls" adayı üretir, çözümleme aşamasında zaten hiçbir chunk adına denk gelmez.
+PASCAL_KEYWORDS = frozenset("""
+begin end if then else while do for to downto case of repeat until try except
+finally var const type class record procedure function constructor destructor
+property array set packed object interface implementation uses unit program
+library inherited nil result true false and or not xor div mod shl shr in is
+as with goto label exports threadvar resourcestring out override virtual
+overload reintroduce message dynamic abstract sealed final published private
+protected public strict deprecated experimental platform unsafe
+""".split())
+
+def extract_calls(code: str, own_name: str) -> list[str]:
+    """Bir chunk'ın gövdesinde geçen olası çağrı hedeflerinin (bare, küçük harf)
+    adlarını çıkarır — `Foo(` veya `Bar.Foo(` kalıplarından `foo` yakalanır (nokta
+    öncesi niteleyici -örn. hangi nesne- YOK SAYILIR, çünkü statik tip çözümlemesi
+    yapmıyoruz). Bu YALNIZCA bir sezgi (heuristic): gerçek overload/tip çözümlemesi
+    YAPILMAZ, sonuç index-time'da isim eşleşmesiyle çözülür (bkz. panel.py
+    _link_call_graph) ve birden fazla aday çıkabilir. Anahtar kelimeler ve chunk'ın
+    kendi adı hariç tutulur; sıra korunarak tekrarsızlaştırılır, üst sınır 50."""
+    own_bare = own_name.split(".")[-1].lower()
+    names = []
+    for m in CALL_RE.finditer(code):
+        low = m.group(1).lower()
+        if low in PASCAL_KEYWORDS or low == own_bare:
+            continue
+        names.append(low)
+    return list(dict.fromkeys(names))[:50]
+
 def extract_doc(node, code: bytes) -> str:
     """Düğümün hemen önceki kardeşi '///' ile başlayan bir yorumsa, XML
     <summary> etiketlerinden arındırılmış düz metnini döndürür; yoksa ''."""
@@ -60,20 +92,29 @@ def chunk_file(path: pathlib.Path, lib: str, unit: str | None = None):
             # kendisi (full_text önek) kullanılıyor — parametre listesi farklı olduğu
             # sürece bu zaten benzersiz kalır.
             cid = xxhash.xxh3_64(f"{unit}:{kind_key}:{full_text[:160]}".encode()).hexdigest()
+            # calls_raw: sadece "method" (defProc/gövde) chunk'ları için anlamlı —
+            # decl/type'ların gövdesi yok, boş liste çıkar (beklenen, sorun değil).
+            calls_raw = extract_calls(text, name) if kind_key == "impl" else []
             yield {"id": cid, "lib": lib, "unit": unit, "kind": kind, "name": name,
                    "line_start": n.start_point[0]+1, "line_end": n.end_point[0]+1,
                    "hash": xxhash.xxh3_64(full_text.encode()).hexdigest()[:12],
-                   "code": full_text, "doc": doc}
+                   "code": full_text, "doc": doc, "calls_raw": calls_raw}
 
-def main(root: str, lib: str, out: str):
-    rootp = pathlib.Path(root); t0 = time.time(); total = 0; files = 0
+def main(root: str, lib: str, out: str, patterns: str = "*.pas"):
+    """patterns: virgülle ayrılmış bir veya birden fazla glob deseni (örn.
+    "*.pas" veya "*.pas,*.dpr" veya "Src/**/*.pas") — rootp.rglob() ile eşleşen
+    her desen taranır, aynı dosya birden fazla desene uysa bile TEK sayılır."""
+    rootp = pathlib.Path(root); t0 = time.time(); total = 0
+    pats = [p.strip() for p in patterns.split(",") if p.strip()] or ["*.pas"]
+    seen_files = set()
+    for pat in pats:
+        seen_files.update(rootp.rglob(pat))
     with open(out, "w", encoding="utf-8") as f:
-        for p in sorted(rootp.rglob("*.pas")):
-            files += 1
+        for p in sorted(seen_files):
             unit = p.relative_to(rootp).as_posix()   # forward-slash: platformdan bağımsız, kararlı
             for ch in chunk_file(p, lib, unit):
                 f.write(json.dumps(ch, ensure_ascii=False) + "\n"); total += 1
-    print(f"{files} dosya -> {total} chunk, {time.time()-t0:.1f} sn -> {out}")
+    print(f"{len(seen_files)} dosya -> {total} chunk, {time.time()-t0:.1f} sn -> {out}")
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "*.pas")

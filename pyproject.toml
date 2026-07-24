@@ -1,0 +1,38 @@
+# Code-Intel — Delphi kod tabanları için hibrit arama + RAG + MCP sunucusu.
+#
+# Kesin (pinli) sürümler requirements.txt'te (uv pip freeze çıktısı, GPU
+# pinleri dahil — onnxruntime-gpu 1.22.0 notunu ORADAN okuyun). Bu dosya
+# projenin kimliği ve GEVŞEK bağımlılık aralıklarıdır; temiz kurulumda önce
+# requirements.txt tercih edilmelidir.
+#
+# Kurulum (geliştirme):
+#   uv pip install -r requirements.txt --python .venv/Scripts/python.exe
+# veya paket olarak:
+#   pip install -e .
+
+[project]
+name = "code-intel"
+version = "1.0.0"
+description = "Delphi/Pascal kod tabanları için hibrit (anlamsal+kelime) arama, Türkçe RAG sohbet ve MCP sunucusu — Qdrant + fastembed + Ollama."
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Emrah BAŞPINAR" }]
+dependencies = [
+    "fastapi>=0.130",
+    "uvicorn>=0.40",
+    "qdrant-client>=1.16",
+    "fastembed>=0.8",
+    "onnxruntime-gpu==1.22.0",   # KRİTİK PİN — gerekçe requirements.txt başındaki not
+    "xxhash>=3.5",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.10",
+    "mcp>=1.20",
+    "pydantic>=2.10",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9"]
+
+[tool.setuptools]
+packages = ["src"]

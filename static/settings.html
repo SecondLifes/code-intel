@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Code-Intel — Ayarlar</title>
+<title>CodeIntel — Ayarlar</title>
 <style>
 /* Aynı "ink workshop" paleti — index.html ile tutarlı: kehribar (amber) = birincil eylem/kod,
    çay yeşili (teal) = anlamsal/başarı sinyali. */
@@ -19,6 +19,7 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
 header h1{font-size:16px;font-weight:700;letter-spacing:-.2px}
 header h1 b{color:var(--amber)}
+header h1 .brand-co{color:var(--err)}
 .sp{flex:1}
 a.back{color:var(--faint);text-decoration:none;font-size:13.5px;transition:.15s}
 a.back:hover{color:var(--amber)}
@@ -69,6 +70,10 @@ table tr.collrow.sel td{background:rgba(224,162,74,.11)}
 .histentry button:hover{border-color:var(--amber-d);color:var(--amber)}
 td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .verinput{background:transparent;border:1px solid transparent;border-radius:6px;padding:4px 6px;font-size:12.5px;color:var(--txt);width:80px;font-family:var(--mono)}
+.stars{display:flex;gap:2px;padding:10px 0}
+.stars span{cursor:pointer;font-size:19px;color:var(--line2);transition:.1s}
+.stars span.on{color:var(--amber)}
+.stars span:hover{color:var(--amber-d)}
 .verinput:hover{border-color:var(--line2)}
 .verinput:focus{border-color:var(--amber-d);background:var(--card)}
 .vecstate{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
@@ -78,9 +83,10 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
 </head>
 <body>
 <header>
-  <h1>⚙️ Code-<b>Intel</b> <span id="t-settings" style="color:var(--dim);font-weight:400">Ayarlar</span></h1>
+  <h1>⚙️ <span class="brand-co">Code</span><b>Intel</b> <span id="t-settings" style="color:var(--dim);font-weight:400">Ayarlar</span></h1>
   <div class="sp"></div>
   <span class="lang" onclick="toggleLang()"><b id="lang-now">TR</b> / <span id="lang-alt">EN</span></span>
+  <a class="back" href="/api" id="t-apilink">API</a>
   <a class="back" href="/" id="t-back">← Sohbete dön</a>
 </header>
 <main>
@@ -96,7 +102,7 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
   <div class="panelcard">
     <h3 id="t-index">Yeni İndeksleme</h3>
     <div class="field">
-      <label id="l-name">İndeks adı</label><input id="idx-coll" value="unidac" style="width:220px">
+      <label id="l-name">İndeks adı</label><input id="idx-coll" placeholder="ör. unidac" style="width:220px">
     </div>
     <div class="field">
       <label id="l-path">Kaynak klasör (boş = kayıtlı yol veya mevcut chunk dosyası kullanılır)</label>
@@ -109,6 +115,8 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
     <div class="row">
       <div class="field"><label id="l-dev">Donanım (Türkçe/anlamsal için)</label>
         <select id="idx-dev"><option value="gpu">GPU (RTX 5080)</option><option value="cpu">CPU</option></select></div>
+      <div class="field" style="flex:1;min-width:220px"><label id="l-pattern">Dosya deseni (virgülle birden fazla)</label>
+        <input id="idx-pattern" value="*.pas" placeholder="*.pas, *.dpr"></div>
     </div>
     <div class="actions">
       <button onclick="startIndex(['sparse'])" id="btn-sparse">🔤 Kelime İndeksini Başlat</button>
@@ -140,11 +148,17 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       <h3 id="t-colls" style="margin:0">İndeksler</h3>
       <div>
         <input type="file" id="import-file" accept=".gz" style="display:none" onchange="importCollection(this.files[0])">
+        <button type="button" onclick="toggleMergeMode()" id="btn-mergemode" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:7px 14px;font-size:12.5px">🔀 <span id="t-mergemode">Birleştir</span></button>
         <button type="button" onclick="document.getElementById('import-file').click()" id="btn-import" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:7px 14px;font-size:12.5px">📥 <span id="t-import">İçe Aktar</span></button>
       </div>
     </div>
     <div class="note" id="t-collhint" style="margin:0 0 10px">Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.</div>
+    <div class="row" id="mergebar" style="display:none;align-items:center;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--line2);border-radius:10px">
+      <div class="field" style="margin:0;flex:1"><label id="l-mergetarget" style="margin:0 0 3px 1px">Hedef ad (yeni veya mevcut)</label><input id="merge-target" placeholder="ör. birlesik-kutuphane"></div>
+      <button type="button" onclick="doMerge()" id="btn-domerge" style="align-self:flex-end">🔀 <span id="t-domerge">Seçilenleri Birleştir</span></button>
+    </div>
     <table><thead><tr>
+      <th class="mergecol" id="th-merge" style="display:none;width:26px"></th>
       <th id="th-name">Ad</th><th id="th-sparse">Kelime İndex</th><th id="th-dense">Anlamsal İndex</th><th id="th-pts">Nokta</th>
     </tr></thead><tbody id="coll-rows"></tbody></table>
     <datalist id="lang-datalist">
@@ -153,10 +167,24 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       <option value="Go"><option value="Rust"><option value="SQL"><option value="Karışık">
     </datalist>
     <div id="detailbox" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
-      <h3 style="margin-bottom:12px" id="t-detailfor">Ayrıntılar —</h3>
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0" id="t-detailfor">Ayrıntılar —</h3>
+        <button type="button" onclick="renameCollection()" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:5px 12px;font-size:12px">✏️ <span id="t-rename">Yeniden Adlandır</span></button>
+      </div>
       <div class="row">
         <div class="field"><label id="l-detver">Versiyon</label><input id="det-ver" style="width:140px" placeholder="—"></div>
         <div class="field"><label id="l-detlang">Dil</label><input id="det-lang" list="lang-datalist" style="width:180px" placeholder="—"></div>
+        <div class="field"><label id="l-detprio">Öncelik</label><div id="det-stars" class="stars"></div></div>
+      </div>
+      <div class="row">
+        <div class="field"><label id="l-detowner">Sahip</label><input id="det-owner" style="width:180px" placeholder="ör. viniciussanchez"></div>
+        <div class="field"><label id="l-detgroup">Grup</label><input id="det-group" style="width:220px" placeholder="ör. REST İstemcileri"></div>
+        <div class="field"><label id="l-detauto">Oto-yenile</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 2px;font-size:13px;color:var(--txt)">
+            <input type="checkbox" id="det-auto" style="accent-color:var(--amber)">
+            <span id="t-detauto">Kaynak değişince otomatik indeksle</span>
+          </label>
+        </div>
       </div>
       <div class="field">
         <label id="l-detpath">Kaynak klasör</label>
@@ -180,6 +208,25 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       </div>
     </div>
   </div>
+
+  <!-- ARAMA ANALİTİĞİ -->
+  <div class="panelcard">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 id="t-analytics" style="margin:0">Arama Analitiği</h3>
+      <button type="button" onclick="loadAnalytics()" id="btn-anrefresh" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:6px 13px;font-size:12.5px">⟳ <span id="t-anrefresh">Yenile</span></button>
+    </div>
+    <div id="an-summary" class="note" style="margin-bottom:10px">…</div>
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:1;min-width:260px">
+        <h3 id="t-anzero" style="margin-bottom:8px">Sıfır-Sonuç Sorgular</h3>
+        <div id="an-zero" class="note"></div>
+      </div>
+      <div style="flex:1;min-width:260px">
+        <h3 id="t-antop" style="margin-bottom:8px">En Sık Sorgular</h3>
+        <div id="an-top" class="note"></div>
+      </div>
+    </div>
+  </div>
 </main>
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr';
@@ -191,6 +238,9 @@ function applyLang(){
   $('t-health').textContent=T('Sistem Durumu','System Health');$('t-index').textContent=T('Yeni İndeksleme','New Indexing');
   $('l-path').textContent=T('Kaynak klasör (boş = kayıtlı yol veya mevcut chunk dosyası kullanılır)','Source folder (empty = saved path or existing chunks are reused)');
   $('l-name').textContent=T('İndeks adı','Index name');$('l-dev').textContent=T('Donanım (Türkçe/anlamsal için)','Device (for Turkish/semantic)');
+  $('l-pattern').textContent=T('Dosya deseni (virgülle birden fazla)','File pattern (comma for multiple)');
+  $('t-mergemode').textContent=T('Birleştir','Merge');$('l-mergetarget').textContent=T('Hedef ad (yeni veya mevcut)','Target name (new or existing)');
+  $('t-domerge').textContent=T('Seçilenleri Birleştir','Merge Selected');$('t-rename').textContent=T('Yeniden Adlandır','Rename');
   $('btn-pick').textContent=T('📁 Klasör Seç','📁 Choose Folder');
   $('btn-sparse').textContent=T('🔤 Kelime İndeksini Başlat','🔤 Start Keyword Index');
   $('btn-dense').textContent=T('🇹🇷 Türkçe (Anlamsal) İndeksini Başlat','🇹🇷 Start Semantic Index');
@@ -202,12 +252,18 @@ function applyLang(){
   $('t-colls').textContent=T('İndeksler','Indexes');$('th-name').textContent=T('Ad','Name');$('th-pts').textContent=T('Nokta','Points');
   $('th-sparse').textContent=T('Kelime İndex','Keyword Index');$('th-dense').textContent=T('Anlamsal İndex','Semantic Index');
   $('t-collhint').textContent=T('Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.','Click an index to see its details and history.');
-  $('l-detver').textContent=T('Versiyon','Version');$('l-detlang').textContent=T('Dil','Language');$('l-detpath').textContent=T('Kaynak klasör','Source folder');
+  $('l-detver').textContent=T('Versiyon','Version');$('l-detlang').textContent=T('Dil','Language');$('l-detpath').textContent=T('Kaynak klasör','Source folder');$('l-detprio').textContent=T('Öncelik','Priority');
+  $('l-detowner').textContent=T('Sahip','Owner');$('l-detgroup').textContent=T('Grup','Group');
   $('t-detsave').textContent=T('Kaydet','Save');$('t-detdelete').textContent=T('Sil','Delete');
   $('t-import').textContent=T('İçe Aktar','Import');$('t-detexport').textContent=T('Dışa Aktar','Export');
   $('t-detpathnote').textContent=T('Klasörü buradan düzeltmek (örn. disk/klasör taşındıysa) yeniden indekslemez — sadece kayıtlı yolu günceller.','Correcting the folder here (e.g. after moving disks/folders) does not reindex — it only updates the saved path.');
   $('t-detrsparse').textContent=T('Kelime İndeksini Yenile','Refresh Keyword Index');$('t-detrdense').textContent=T('Anlamsal İndeksi Yenile','Refresh Semantic Index');
   $('t-histfor').textContent=T('Geçmiş','History');
+  $('l-detauto').textContent=T('Oto-yenile','Auto-refresh');
+  $('t-detauto').textContent=T('Kaynak değişince otomatik indeksle','Reindex automatically when source changes');
+  $('t-analytics').textContent=T('Arama Analitiği','Search Analytics');$('t-anrefresh').textContent=T('Yenile','Refresh');
+  $('t-anzero').textContent=T('Sıfır-Sonuç Sorgular','Zero-Result Queries');$('t-antop').textContent=T('En Sık Sorgular','Top Queries');
+  loadAnalytics();
   refreshHistory();
   loadIndexes();
   if(SELECTED)renderDetail(SELECTED);
@@ -225,26 +281,87 @@ function vecCell(v){
   return `<span class="vecstate" title="${v.count} ${T('nokta','points')}">${icon}</span>`;
 }
 let INDEXES={};
-async function loadIndexes(){try{
+async function loadIndexes(refreshDetail){
+  // refreshDetail varsayılan TRUE (kullanıcı eylemi sonrası — seçim, kaydetme,
+  // silme) — periyodik 10sn'lik arka plan yenilemesi (setInterval) YALNIZCA
+  // tabloyu günceller, açık detay panelini YENİDEN ÇİZMEZ. Aksi halde kullanıcı
+  // yıldız/versiyon/dil gibi bir alanı düzenlerken (henüz "Kaydet"e basmadan)
+  // arka plandaki periyodik yenileme paneli eski (kaydedilmemiş) değerlerle
+  // sıfırlıyordu — canlı testte yakalanan gerçek bir bug.
+  // varsayılan FALSE — sadece açık bir kaydetme/yeniden adlandırma sonrası
+  // çağrıldığında true verilir (bkz. saveDetail/renameCollection). selectCollection
+  // zaten kendi renderDetail() çağrısını yapıyor, tekrar tetiklemeye gerek yok.
+  try{
   const d=await(await fetch('/api/indexes')).json();
   INDEXES={};(d.indexes||[]).forEach(ix=>INDEXES[ix.name]=ix);
   $('coll-rows').innerHTML=(d.indexes||[]).map(ix=>`
     <tr class="collrow${ix.name===SELECTED?' sel':''}" onclick="selectCollection('${ix.name}')">
-      <td class="mono">${esc(ix.name)}</td>
+      <td class="mergecol" style="display:${MERGE_MODE?'table-cell':'none'}" onclick="event.stopPropagation()"><input type="checkbox" value="${esc(ix.name)}" onchange="toggleMergeSel('${esc(ix.name)}',this.checked)"></td>
+      <td class="mono">${esc(ix.name)}${ix.priority?' '+'★'.repeat(ix.priority):''}${ix.owner?` <span style="color:var(--teal);font-size:11px">(${esc(ix.owner)}${ix.group?' · '+esc(ix.group):''})</span>`:''}</td>
       <td>${vecCell(ix.sparse)}</td>
       <td>${vecCell(ix.dense)}</td>
       <td>${ix.points.toLocaleString('tr')}</td>
     </tr>`).join('');
-  if(SELECTED)renderDetail(SELECTED);
-}catch(e){}}
+  if(SELECTED&&refreshDetail)renderDetail(SELECTED);
+  }catch(e){}
+}
 function pickFolderFor(inputId){window._pickTarget=inputId;pickFolder();}
+let MERGE_MODE=false, MERGE_SEL=new Set();
+function toggleMergeMode(){
+  MERGE_MODE=!MERGE_MODE; MERGE_SEL.clear();
+  $('th-merge').style.display=MERGE_MODE?'table-cell':'none';
+  $('mergebar').style.display=MERGE_MODE?'flex':'none';
+  $('btn-mergemode').style.background=MERGE_MODE?'var(--amber)':'var(--card)';
+  $('btn-mergemode').style.color=MERGE_MODE?'#1a1305':'var(--dim)';
+  loadIndexes();
+}
+function toggleMergeSel(name,checked){checked?MERGE_SEL.add(name):MERGE_SEL.delete(name);}
+async function doMerge(){
+  const target=$('merge-target').value.trim();
+  if(!target){alert(T('Hedef ad gerekli.','Target name required.'));return;}
+  if(MERGE_SEL.size<1){alert(T('En az bir koleksiyon seçin.','Select at least one collection.'));return;}
+  const srcList=[...MERGE_SEL].join(', ');
+  const msg=T(`"${srcList}" içindeki TÜM noktalar "${target}" hedefine kopyalanacak (kaynaklar silinmez, sadece kopyalanır). Devam edilsin mi?`,
+              `ALL points from "${srcList}" will be copied into "${target}" (sources are not deleted, only copied). Continue?`);
+  if(!confirm(msg))return;
+  $('btn-domerge').disabled=true;
+  try{
+    const r=await(await fetch('/api/collection/merge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sources:[...MERGE_SEL],target})})).json();
+    if(r.error){alert(r.error);}
+    else{alert(T(`Birleştirildi: ${r.points_copied} nokta "${target}" içine kopyalandı.${r.owner_group_note||''} ${r.note||''}`,`Merged: ${r.points_copied} points copied into "${target}".${r.owner_group_note||''} ${r.note||''}`));toggleMergeMode();}
+  }catch(e){alert(e);}
+  $('btn-domerge').disabled=false;
+}
+async function renameCollection(){
+  if(!SELECTED)return;
+  const newName=prompt(T('Yeni ad:','New name:'),SELECTED);
+  if(!newName||newName===SELECTED)return;
+  const ix=INDEXES[SELECTED]||{};
+  const msg=T(`"${SELECTED}" (${ix.points||0} nokta) "${newName}" olarak yeniden adlandırılacak — tüm noktalar kopyalanıp eski koleksiyon silinecek. Büyük koleksiyonlarda zaman alabilir. Devam edilsin mi?`,
+              `"${SELECTED}" (${ix.points||0} points) will be renamed to "${newName}" — all points are copied then the old collection is deleted. May take a while for large collections. Continue?`);
+  if(!confirm(msg))return;
+  try{
+    const r=await(await fetch('/api/collection/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_name:SELECTED,new_name:newName})})).json();
+    if(r.error){alert(r.error);return;}
+    SELECTED=newName;
+    await loadIndexes(true);
+  }catch(e){alert(e);}
+}
+let DET_PRIORITY=0;
+function renderStars(n){
+  DET_PRIORITY=n;
+  $('det-stars').innerHTML=[1,2,3,4,5].map(i=>
+    `<span class="${i<=n?'on':''}" onclick="setStars(${i})">${i<=n?'★':'☆'}</span>`).join('');
+}
+function setStars(n){renderStars(n===DET_PRIORITY?0:n);}   // aynı yıldıza tekrar tıklamak sıfırlar
 async function saveDetail(){
   if(!SELECTED)return;
   $('btn-detsave').disabled=true;
   try{
     await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      collection:SELECTED, version:$('det-ver').value, language:$('det-lang').value, path:$('det-path').value})});
-    await loadIndexes();
+      collection:SELECTED, version:$('det-ver').value, language:$('det-lang').value, path:$('det-path').value, priority:DET_PRIORITY,
+      owner:$('det-owner').value, group:$('det-group').value, auto_refresh:$('det-auto').checked})});
+    await loadIndexes(true);
   }catch(e){}
   $('btn-detsave').disabled=false;
 }
@@ -319,10 +436,16 @@ async function refreshHistory(){try{
   if(entries.length && !$('idx-path').value.trim())$('idx-path').placeholder=entries[0].path;
 }catch(e){}}
 function fmtDate(iso){try{return new Date(iso).toLocaleString(LANG==='tr'?'tr-TR':'en-US',{dateStyle:'medium',timeStyle:'short'});}catch(e){return iso;}}
-function selectCollection(name){
+async function selectCollection(name){
   SELECTED=name;
   $('idx-coll').value=name;
   refreshHistory();
+  // Sayfa daha yeni açıldıysa ilk loadIndexes() fetch'i henüz bitmemiş olabilir —
+  // bu durumda INDEXES[name] boş çıkar, renderDetail tüm alanları '' ile doldurur
+  // ve kullanıcı hemen "Kaydet"e basarsa GERÇEK version/path/language verisi boş
+  // string ile ezilir (canlı testte yakalanan gerçek bir veri kaybı). Veri henüz
+  // yoksa önce taze bir fetch bekleniyor.
+  if(!INDEXES[name])await loadIndexes(false);
   renderDetail(name);
   health();
   loadIndexes();
@@ -334,6 +457,10 @@ function renderDetail(name){
   $('det-ver').value=ix.version||'';
   $('det-lang').value=ix.language||'';
   $('det-path').value=ix.path||'';
+  $('det-owner').value=ix.owner||'';
+  $('det-group').value=ix.group||'';
+  $('det-auto').checked=!!ix.auto_refresh;
+  renderStars(ix.priority||0);
   const warnEl=$('det-pathwarn');
   if(ix.path_missing){
     warnEl.style.display='block';
@@ -361,13 +488,22 @@ async function pickFolder(){
   btn.disabled=true;btn.textContent=T('Seçiliyor…','Choosing…');
   try{
     const r=await(await fetch('/api/pick-folder')).json();
-    if(r.path)$(target).value=r.path;
+    if(r.path){
+      $(target).value=r.path;
+      if(target==='idx-path'&&!$('idx-coll').value.trim()){
+        const base=r.path.replace(/[\\\/]+$/,'').split(/[\\\/]/).pop()||'';
+        $('idx-coll').value=base.toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'');
+        localStorage.setItem('ci-lastcoll',$('idx-coll').value);
+      }
+    }
   }catch(e){}
   btn.disabled=false;btn.innerHTML=orig;
   window._pickTarget=null;
 }
+{const savedColl=localStorage.getItem('ci-lastcoll');if(savedColl)$('idx-coll').value=savedColl;}
 $('idx-coll').addEventListener('change',refreshHistory);
 $('idx-coll').addEventListener('blur',refreshHistory);
+$('idx-coll').addEventListener('input',()=>localStorage.setItem('ci-lastcoll',$('idx-coll').value));
 async function loadModels(){try{
   const d=await(await fetch('/api/ollama/models')).json();
   for(const [sel,def,key] of [['m-fast','gemma4','ci-mfast'],['m-deep','qwen3.6','ci-mdeep']]){
@@ -396,7 +532,22 @@ function applySuggestion(fast,deep){
   if([...$('m-fast').options].some(o=>o.value===fast)){$('m-fast').value=fast;localStorage.setItem('ci-mfast',fast);}
   if([...$('m-deep').options].some(o=>o.value===deep)){$('m-deep').value=deep;localStorage.setItem('ci-mdeep',deep);}
 }
-health();loadModels();loadIndexes();setInterval(health,10000);setInterval(loadIndexes,10000);
+async function loadAnalytics(){
+  try{
+    const d=await(await fetch('/api/analytics')).json();
+    const modes=Object.entries(d.modes||{}).map(([m,n])=>`${m}: ${n}`).join(' · ');
+    $('an-summary').innerHTML=
+      `<b style="color:var(--txt)">${(d.searches||0).toLocaleString('tr')}</b> ${T('toplam arama','total searches')} · `+
+      `<b style="color:var(--txt)">${(d.last24h||0).toLocaleString('tr')}</b> ${T('son 24 saat','last 24h')} · `+
+      `${T('ortalama','avg')} <b style="color:var(--txt)">${d.avg_ms||0} ms</b>`+(modes?` · ${modes}`:'');
+    const li=(arr,emptyMsg,warn)=>arr&&arr.length
+      ?arr.map(x=>`<div style="padding:3px 0;border-bottom:1px solid var(--line)">${warn?'∅ ':''}<span style="color:var(--txt)">${esc(x.q)}</span> <span style="color:var(--faint)">×${x.n}</span></div>`).join('')
+      :`<div>${emptyMsg}</div>`;
+    $('an-zero').innerHTML=li(d.zero_queries,T('Hiç sıfır-sonuç sorgu yok 🎉','No zero-result queries 🎉'),true);
+    $('an-top').innerHTML=li(d.top_queries,T('Henüz arama kaydı yok.','No searches logged yet.'),false);
+  }catch(e){$('an-summary').textContent='⚠️ '+e;}
+}
+health();loadModels();loadIndexes();loadAnalytics();setInterval(health,10000);setInterval(()=>loadIndexes(false),10000);
 
 let jobTimer=null;
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
@@ -407,7 +558,7 @@ async function startIndex(vectors){
     alert(T('Bu indeks için kayıtlı bir kaynak klasör yok — önce klasör seçin.','No saved source folder for this index yet — choose a folder first.'));
     return;
   }
-  const body={path,collection,vectors,device:$('idx-dev').value};
+  const body={path,collection,vectors,device:$('idx-dev').value,patterns:$('idx-pattern').value.trim()||'*.pas'};
   const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(r.error){alert(r.error);return;}
   SELECTED=collection;

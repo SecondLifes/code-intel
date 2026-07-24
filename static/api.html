@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeIntel — API</title>
+<style>
+:root{
+  --bg:#14110c; --panel:#1b1710; --card:#211c14;
+  --line:#332b1f; --line2:#463b2a;
+  --txt:#f1ebdd; --dim:#a99a83; --faint:#6f6555;
+  --amber:#e0a24a; --amber-d:#c58a37; --teal:#49b39c; --teal-d:#2f7e6c; --err:#e0704a;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sans-serif;min-height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;font-weight:700;letter-spacing:-.2px}
+header h1 b{color:var(--amber)}
+header h1 .brand-co{color:var(--err)}
+.sp{flex:1}
+a.back{color:var(--faint);text-decoration:none;font-size:13.5px;transition:.15s;margin-left:14px}
+a.back:hover{color:var(--amber)}
+.lang{cursor:pointer;user-select:none;font-size:12.5px;color:var(--faint)}
+.lang b{color:var(--txt)}
+main{max-width:920px;margin:0 auto;padding:26px 20px 80px}
+.panelcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:18px}
+.panelcard h3{font-size:12.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.panelcard p.desc{font-size:13px;color:var(--faint);margin-bottom:14px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+label{font-size:12px;color:var(--dim);display:block;margin:0 0 4px 3px}
+.field{display:flex;flex-direction:column;margin-bottom:10px;flex:1;min-width:160px}
+input,select,textarea{background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:9px 12px;color:var(--txt);font-size:13.5px;outline:none;transition:.15s;font-family:inherit}
+textarea{font-family:var(--mono);font-size:12.5px;min-height:60px;resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:var(--amber-d);box-shadow:0 0 0 3px rgba(224,162,74,.08)}
+button{background:var(--amber);border:0;border-radius:10px;color:#1a1305;padding:9px 18px;font-size:13.5px;cursor:pointer;font-weight:700;transition:.15s}
+button:hover{background:var(--amber-d)}
+button:disabled{opacity:.5;cursor:wait}
+.toollink{display:inline-flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:10px 16px;color:var(--amber);text-decoration:none;font-size:13.5px;font-weight:600;margin-right:10px}
+.toollink:hover{border-color:var(--amber-d)}
+pre.out{background:#0f0d09;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px;color:var(--dim);white-space:pre-wrap;word-break:break-all;max-height:340px;overflow:auto;margin-top:10px;display:none}
+pre.out.show{display:block}
+pre.out.err{color:var(--err)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--dim);border-top-color:var(--amber);border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+.badge{font-size:11px;color:var(--teal);background:rgba(73,179,156,.1);padding:2px 8px;border-radius:99px;margin-left:8px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔌 <span class="brand-co">Code</span><b>Intel</b> <span id="t-api" style="color:var(--dim);font-weight:400">API</span></h1>
+  <div class="sp"></div>
+  <span class="lang" onclick="toggleLang()"><b id="lang-now">TR</b> / <span id="lang-alt">EN</span></span>
+  <a class="back" href="/" id="t-back">← Sohbete dön</a>
+  <a class="back" href="/settings" id="t-settings">Ayarlar</a>
+</header>
+<main>
+
+  <div class="panelcard">
+    <h3 id="t-rest">REST API</h3>
+    <p class="desc" id="t-restdesc">Panelin kullandığı tüm /api/* uçları — canlı, interaktif dokümantasyon ve deneme burada.</p>
+    <a class="toollink" href="/docs" target="_blank">📘 Swagger UI (/docs)</a>
+    <a class="toollink" href="/redoc" target="_blank">📗 ReDoc (/redoc)</a>
+  </div>
+
+  <div class="panelcard">
+    <h3 id="t-mcp">MCP Tool'ları<span class="badge">canlı test</span></h3>
+    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 10 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
+  </div>
+
+  <div class="panelcard">
+    <h3 id="t-viewer">Dosya Görüntüleyici</h3>
+    <p class="desc" id="t-viewerdesc">Diskteki bir .md/.html/.txt dosyasını panelde (karanlık temayla) görüntüler.</p>
+    <div class="row">
+      <div class="field" style="min-width:400px"><label>path</label><input id="vw-path" placeholder="E:\...\rapor.md"></div>
+    </div>
+    <button onclick="openViewer()">👁️ <span id="t-vwopen">Görüntüle</span></button>
+  </div>
+
+  <div class="panelcard" id="tool-search_code">
+    <h3>search_code</h3>
+    <div class="row">
+      <div class="field"><label>query</label><input id="sc-query" placeholder="veritabanı bağlantısı açma"></div>
+      <div class="field" style="max-width:180px"><label>mode</label>
+        <select id="sc-mode"><option value="hybrid">hybrid</option><option value="dense">dense</option><option value="sparse">sparse</option></select></div>
+      <div class="field" style="max-width:100px"><label>top_k</label><input id="sc-topk" value="8" type="number"></div>
+      <div class="field" style="max-width:200px"><label>collections (virgülle)</label><input id="sc-colls" list="coll-list" placeholder="boş = varsayılan"></div>
+      <div class="field" style="max-width:130px"><label>kind</label>
+        <select id="sc-kind"><option value="">(hepsi)</option><option value="method">method</option><option value="decl">decl</option><option value="type">type</option></select></div>
+      <div class="field" style="max-width:180px"><label>unit (alt-dize)</label><input id="sc-unit" placeholder="Providers/"></div>
+      <div class="field" style="max-width:110px"><label>rerank</label>
+        <select id="sc-rerank"><option value="false">false</option><option value="true">true</option></select></div>
+    </div>
+    <button onclick="runTool('search_code')">▶ Çalıştır</button>
+    <pre class="out" id="out-search_code"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-get_chunk">
+    <h3>get_chunk</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="gc-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field"><label>id</label><input id="gc-id" type="number" placeholder="189443050544171"></div>
+    </div>
+    <button onclick="runTool('get_chunk')">▶ Çalıştır</button>
+    <pre class="out" id="out-get_chunk"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-explain_chunk">
+    <h3>explain_chunk</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="ec-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field"><label>id</label><input id="ec-id" type="number"></div>
+      <div class="field" style="max-width:140px"><label>depth</label>
+        <select id="ec-depth"><option value="fast">fast</option><option value="deep">deep</option></select></div>
+    </div>
+    <button onclick="runTool('explain_chunk')">▶ Çalıştır</button>
+    <pre class="out" id="out-explain_chunk"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-review_code">
+    <h3>review_code</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="rc-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field"><label>id</label><input id="rc-id" type="number"></div>
+    </div>
+    <button onclick="runTool('review_code')">▶ Çalıştır</button>
+    <pre class="out" id="out-review_code"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-get_relations">
+    <h3>get_relations</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="gr-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field"><label>id</label><input id="gr-id" type="number"></div>
+    </div>
+    <button onclick="runTool('get_relations')">▶ Çalıştır</button>
+    <pre class="out" id="out-get_relations"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-find_similar">
+    <h3>find_similar</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="fs-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field"><label>id</label><input id="fs-id" type="number"></div>
+      <div class="field" style="max-width:100px"><label>top_k</label><input id="fs-topk" value="8" type="number"></div>
+    </div>
+    <button onclick="runTool('find_similar')">▶ Çalıştır</button>
+    <pre class="out" id="out-find_similar"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-read_unit">
+    <h3>read_unit</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="ru-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field" style="min-width:280px"><label>unit (tam göreli yol)</label><input id="ru-unit" placeholder="Source/Utils.pas"></div>
+    </div>
+    <button onclick="runTool('read_unit')">▶ Çalıştır</button>
+    <pre class="out" id="out-read_unit"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-ask_domain_model">
+    <h3>ask_domain_model</h3>
+    <div class="row">
+      <div class="field"><label>domain</label><input id="ad-domain" placeholder="sql"></div>
+      <div class="field" style="min-width:300px"><label>question</label><input id="ad-question" placeholder="bu sorgu neden yavaş?"></div>
+    </div>
+    <div class="field"><label>code_context (opsiyonel)</label><textarea id="ad-ctx"></textarea></div>
+    <button onclick="runTool('ask_domain_model')">▶ Çalıştır</button>
+    <pre class="out" id="out-ask_domain_model"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-list_domain_models">
+    <h3>list_domain_models</h3>
+    <button onclick="runTool('list_domain_models')">▶ Çalıştır</button>
+    <pre class="out" id="out-list_domain_models"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-list_collections">
+    <h3>list_collections</h3>
+    <button onclick="runTool('list_collections')">▶ Çalıştır</button>
+    <pre class="out" id="out-list_collections"></pre>
+  </div>
+
+  <datalist id="coll-list"></datalist>
+</main>
+<script>
+let LANG=localStorage.getItem('ci-lang')||'tr';
+const T=(tr,en)=>LANG==='tr'?tr:en, $=id=>document.getElementById(id);
+function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
+function applyLang(){
+  $('lang-now').textContent=LANG.toUpperCase();$('lang-alt').textContent=LANG==='tr'?'EN':'TR';
+  $('t-api').textContent=T('API','API');$('t-back').textContent=T('← Sohbete dön','← Back to chat');
+  $('t-settings').textContent=T('Ayarlar','Settings');
+  $('t-rest').textContent=T('REST API','REST API');
+  $('t-restdesc').textContent=T('Panelin kullandığı tüm /api/* uçları — canlı, interaktif dokümantasyon ve deneme burada.','Every /api/* endpoint the panel itself uses — live, interactive docs and try-it-out here.');
+  $('t-mcp').innerHTML=T('MCP Tool\'ları','MCP Tools')+'<span class="badge">'+T('canlı test','live test')+'</span>';
+  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 10 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 10 tools — just triggered from here instead of stdio.');
+  $('t-viewer').textContent=T('Dosya Görüntüleyici','File Viewer');
+  $('t-viewerdesc').textContent=T('Diskteki bir .md/.html/.txt dosyasını panelde (karanlık temayla) görüntüler.','Renders a .md/.html/.txt file from disk inside the panel (dark theme).');
+  $('t-vwopen').textContent=T('Görüntüle','View');
+}
+applyLang();
+
+async function loadCollections(){
+  try{
+    const d=await(await fetch('/api/mcp/list_collections')).json();
+    $('coll-list').innerHTML=(d.collections||[]).map(c=>`<option value="${c.name}">`).join('');
+  }catch(e){}
+}
+loadCollections();
+
+const TOOLS={
+  search_code:{method:'POST',url:'/api/mcp/search_code',body:()=>({
+    query:$('sc-query').value,
+    collections:$('sc-colls').value.trim()?$('sc-colls').value.split(',').map(s=>s.trim()):null,
+    mode:$('sc-mode').value, top_k:parseInt($('sc-topk').value)||8,
+    kind:$('sc-kind').value, unit:$('sc-unit').value.trim(), rerank:$('sc-rerank').value==='true'
+  })},
+  find_similar:{method:'POST',url:'/api/mcp/find_similar',body:()=>({collection:$('fs-coll').value,id:parseInt($('fs-id').value),top_k:parseInt($('fs-topk').value)||8})},
+  read_unit:{method:'POST',url:'/api/mcp/read_unit',body:()=>({collection:$('ru-coll').value,unit:$('ru-unit').value.trim()})},
+  get_chunk:{method:'POST',url:'/api/mcp/get_chunk',body:()=>({collection:$('gc-coll').value,id:parseInt($('gc-id').value)})},
+  explain_chunk:{method:'POST',url:'/api/mcp/explain_chunk',body:()=>({collection:$('ec-coll').value,id:parseInt($('ec-id').value),depth:$('ec-depth').value})},
+  review_code:{method:'POST',url:'/api/mcp/review_code',body:()=>({collection:$('rc-coll').value,id:parseInt($('rc-id').value)})},
+  get_relations:{method:'POST',url:'/api/mcp/get_relations',body:()=>({collection:$('gr-coll').value,id:parseInt($('gr-id').value)})},
+  ask_domain_model:{method:'POST',url:'/api/mcp/ask_domain_model',body:()=>({domain:$('ad-domain').value,question:$('ad-question').value,code_context:$('ad-ctx').value})},
+  list_domain_models:{method:'GET',url:'/api/mcp/list_domain_models'},
+  list_collections:{method:'GET',url:'/api/mcp/list_collections'}
+};
+
+function openViewer(){
+  const path=$('vw-path').value.trim();
+  if(!path)return;
+  window.open('/viewer?path='+encodeURIComponent(path),'_blank');
+}
+async function runTool(name){
+  const card=$('tool-'+name), btn=card.querySelector('button'), out=$('out-'+name);
+  const orig=btn.textContent;
+  btn.disabled=true; btn.innerHTML='<span class="spin"></span>'+T('çalışıyor…','running…');
+  out.classList.remove('err'); out.classList.add('show'); out.textContent=T('çalışıyor…','running…');
+  try{
+    const t=TOOLS[name];
+    const opts=t.method==='POST'?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(t.body())}:{};
+    const t0=performance.now();
+    const r=await fetch(t.url,opts);
+    const d=await r.json();
+    out.textContent=JSON.stringify(d,null,2)+`\n\n// ${Math.round(performance.now()-t0)}ms`;
+  }catch(e){
+    out.classList.add('err'); out.textContent='Error: '+e;
+  }
+  btn.disabled=false; btn.textContent=orig;
+}
+</script>
+</body>
+</html>

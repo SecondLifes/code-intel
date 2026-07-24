@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Code-Intel</title>
+<title>CodeIntel</title>
 <style>
 /* Palette: warm ink workshop — amber for code (the hero), teal for signal.
    Deliberately NOT the near-black + electric-blue AI default. */
@@ -11,7 +11,7 @@
   --bg:#14110c; --panel:#1b1710; --card:#211c14; --code:#0f0d09;
   --line:#332b1f; --line2:#463b2a;
   --txt:#f1ebdd; --dim:#a99a83; --faint:#6f6555;
-  --amber:#e0a24a; --amber-d:#c58a37; --teal:#49b39c; --teal-d:#2f7e6c;
+  --amber:#e0a24a; --amber-d:#c58a37; --teal:#49b39c; --teal-d:#2f7e6c; --err:#e0704a;
   --mono:'Cascadia Code','JetBrains Mono',Consolas,monospace;
 }
 *{box-sizing:border-box;margin:0}
@@ -24,6 +24,7 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 .brand{font-size:15.5px;font-weight:700;letter-spacing:-.2px;display:flex;align-items:center;gap:7px}
 .brand .bolt{color:var(--amber)}
 .brand b{color:var(--amber);font-weight:700}
+.brand .brand-co{color:var(--err)}
 .dot{font-size:11.5px;color:var(--dim);font-family:var(--mono)}
 .sp{flex:1}
 .lang{cursor:pointer;user-select:none;font-size:12.5px;color:var(--faint)}
@@ -53,11 +54,12 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 .collpicker{position:relative}
 #coll-btn{cursor:pointer;font-family:inherit}
 #coll-btn:hover{border-color:var(--amber-d);color:var(--amber)}
-.collpop{display:none;position:absolute;bottom:calc(100% + 8px);right:0;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:8px;min-width:180px;max-height:240px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:20}
+.collpop{display:none;position:absolute;top:calc(100% + 8px);right:0;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:8px;min-width:180px;max-height:240px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:20}
 .collpop.show{display:block}
 .collpop label{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;border-radius:7px;cursor:pointer;color:var(--txt)}
 .collpop label:hover{background:var(--card)}
 .collpop input{accent-color:var(--amber)}
+.colldiv{height:1px;background:var(--line);margin:4px 2px 6px}
 
 /* ── results (scrolls) ── */
 .scroll{flex:1;overflow-y:auto;padding:22px 24px 40px}
@@ -72,20 +74,61 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 .src .idx{font-family:var(--mono);color:var(--amber);font-weight:700;font-size:13px}
 .src .n{font-family:var(--mono);color:var(--txt);font-weight:600;font-size:13.5px}
 .src .m{color:var(--dim);font-size:12px;font-family:var(--mono)}
+.collbadge{font-size:10.5px;color:var(--teal);background:rgba(73,179,156,.1);padding:2px 7px;border-radius:6px;font-family:var(--mono);white-space:nowrap}
 .src .sc{margin-left:auto;color:var(--teal);font-size:11.5px;font-family:var(--mono);background:rgba(73,179,156,.1);padding:2px 8px;border-radius:6px}
 /* code preview ALWAYS visible, capped; expands on click */
 .src .codewrap{position:relative;max-height:132px;overflow:hidden;transition:max-height .25s ease}
 .src.open .codewrap{max-height:520px;overflow:auto}
 .src .codewrap::after{content:'';position:absolute;left:0;right:0;bottom:0;height:34px;background:linear-gradient(transparent,var(--code));pointer-events:none;transition:opacity .2s}
 .src.open .codewrap::after{opacity:0}
+/* Kompakt görünüm: başlık satırı HER ZAMAN görünür kalır (tek gerçek zorunluluk) —
+   sadece kod önizlemesi ve boşluklar daraltılır, ekrana daha çok sonuç sığar. */
+#out.compact .src{margin-bottom:6px}
+#out.compact .src .head{padding:7px 12px}
+#out.compact .src .codewrap{max-height:0}
+#out.compact .src.open .codewrap{max-height:400px}
+#out.compact .src .codewrap::after{display:none}
+#out.compact .tools{padding:5px 12px}
+#compact-btn.on{background:var(--amber);color:#1a1305;border-color:var(--amber)}
 pre{background:var(--code);margin:0;padding:12px 16px;font:12.5px/1.55 var(--mono);color:#d8cbb0;overflow-x:auto}
 pre .kw{color:var(--amber)}
 .exp{display:none;padding:11px 16px;background:rgba(73,179,156,.06);border-top:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;color:#dfe8e3}
 .exp.has{display:block}
+.rel{display:none;padding:11px 16px;background:rgba(224,162,74,.05);border-top:1px solid var(--line);font-size:12.5px}
+.rel.has{display:block}
+.rel-group{margin-bottom:10px}
+.rel-group:last-child{margin-bottom:0}
+.rel-group h4{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;font-weight:600}
+.rel-empty{color:var(--faint);font-style:italic}
+.rel-item{display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--line2);border-radius:7px;padding:4px 10px;margin:0 6px 6px 0;cursor:pointer;font-family:var(--mono);color:var(--txt);font-size:12px;transition:.15s}
+.rel-item:hover{border-color:var(--amber-d);color:var(--amber)}
+.rel-item .u{color:var(--faint);font-size:10.5px}
 .tools{display:flex;gap:8px;padding:9px 15px;border-top:1px solid var(--line)}
 .tools button{font-size:12px;padding:5px 13px;border-radius:8px;background:var(--panel);border:1px solid var(--line2);color:var(--dim);cursor:pointer;transition:.15s}
 .tools button:hover{border-color:var(--amber-d);color:var(--amber)}
 .tools .more{margin-left:auto;color:var(--faint);border:0;background:none;font-size:12px}
+.loadmore{display:block;margin:16px auto 4px;background:var(--card);border:1px solid var(--line2);border-radius:10px;color:var(--dim);font-size:13px;padding:9px 22px;cursor:pointer;transition:.15s}
+.loadmore:hover{border-color:var(--amber-d);color:var(--amber)}
+.loadmore:disabled{opacity:.5;cursor:wait}
+.loadmore .spin{margin-right:6px}
+.hitgroup{margin-bottom:20px}
+.hitgroup-head{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.6px;margin:0 2px 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.hg-owner{color:var(--dim)}
+.hg-coll{color:var(--amber)}
+.hg-count{color:var(--faint);text-transform:none;letter-spacing:0}
+#sidepanel{position:fixed;top:0;right:0;width:min(640px,92vw);height:100%;background:var(--panel);border-left:1px solid var(--line2);box-shadow:-12px 0 32px rgba(0,0,0,.4);z-index:30;transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column}
+#sidepanel.show{transform:translateX(0)}
+#sidepanel.dragging{transition:none}
+#sp-resize{position:absolute;left:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:31}
+#sp-resize:hover,#sp-resize.dragging{background:rgba(224,162,74,.18)}
+.sp-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--card)}
+.sp-fname{font-family:var(--mono);font-size:13px;color:var(--amber);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.sp-close{background:none;border:0;color:var(--faint);font-size:16px;cursor:pointer;padding:2px 8px}
+.sp-close:hover{color:var(--amber)}
+.sp-body{flex:1;overflow:auto;padding:0}
+.sp-body pre{margin:0;padding:16px 20px;font:12.5px/1.6 var(--mono);color:#d8cbb0;white-space:pre;overflow-x:auto}
+.sp-body pre .kw{color:var(--amber)}
+.sp-err{padding:20px;color:#e0704a}
 
 .hero{text-align:center;padding-top:9vh;color:var(--dim)}
 .hero .mark{font-size:46px;color:var(--amber);opacity:.85;margin-bottom:16px;font-family:var(--mono)}
@@ -103,11 +146,12 @@ pre .kw{color:var(--amber)}
 </head>
 <body>
 <div class="top">
-  <div class="brand"><span class="bolt">⚡</span>Code-<b>Intel</b></div>
+  <div class="brand"><span class="bolt">⚡</span><span class="brand-co">Code</span><b>Intel</b></div>
   <span class="dot" id="pts"></span>
   <span class="jobchip" id="jobchip"></span>
   <div class="sp"></div>
   <span class="lang" onclick="toggleLang()"><b id="ln">TR</b> / <span id="la">EN</span></span>
+  <a class="gear" href="/api" title="API">🔌</a>
   <a class="gear" href="/settings" title="Ayarlar">⚙</a>
 </div>
 
@@ -128,7 +172,24 @@ pre .kw{color:var(--amber)}
       <span data-m="dense" id="m-de">Anlamsal</span>
       <span data-m="sparse" id="m-sp">Kelime</span>
     </div>
+    <div class="divider"></div>
+    <select class="mini" id="f-kind" title="Parça türü">
+      <option value="">Tümü</option>
+      <option value="method">method</option>
+      <option value="decl">decl</option>
+      <option value="type">type</option>
+    </select>
+    <input class="mini" id="f-unit" placeholder="dosya süzgeci" style="width:110px" title="unit yolu alt-dizesi, örn. Providers/">
+    <label class="mini" id="rr-label" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Cross-encoder ile yeniden sıralama — daha isabetli, biraz daha yavaş">
+      <input type="checkbox" id="rr-toggle" style="accent-color:var(--amber)">
+      <span id="t-rr">🎯 Hassas sıra</span>
+    </label>
     <div class="sp"></div>
+    <label class="mini" id="group-toggle-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="group-toggle" onchange="toggleGrouping(this.checked)" style="accent-color:var(--amber)">
+      <span id="t-grouptoggle">Sahibe/Koleksiyona göre grupla</span>
+    </label>
+    <button class="mini" id="compact-btn" onclick="toggleCompact()" type="button" title="Kompakt görünüm">▤</button>
     <div class="collpicker" id="collpicker">
       <button class="mini" id="coll-btn" onclick="toggleCollPicker(event)" type="button">unidac ▾</button>
       <div class="collpop" id="collpop"></div>
@@ -145,11 +206,21 @@ pre .kw{color:var(--amber)}
   </div>
 </div></div>
 
+<div id="sidepanel">
+  <div id="sp-resize"></div>
+  <div class="sp-head">
+    <span class="sp-fname" id="sp-fname">…</span>
+    <button class="sp-close" onclick="copySidePanel()" id="sp-copy" title="Kopyala">📋</button>
+    <button class="sp-close" onclick="closeSidePanel()">✕</button>
+  </div>
+  <div class="sp-body" id="sp-body"></div>
+</div>
+
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr', MODE='hybrid', ACT=localStorage.getItem('ci-act')||'ask';
 const T=(t,e)=>LANG==='tr'?t:e, $=id=>document.getElementById(id);
-const SUGG={tr:['Bağlantı nasıl açılıp kapatılıyor?','Transaction commit / rollback','ApplyUpdates','Yeniden bağlanma mantığı var mı?'],
-           en:['How is a connection opened & closed?','Transaction commit / rollback','ApplyUpdates','Is there reconnect logic?']};
+const SUGG={tr:['String split fonksiyonu var mı?','REST isteği nasıl gönderilir?','JSON nasıl serileştirilir?','Bağlantı havuzu (connection pool) var mı?'],
+           en:['Is there a string split function?','How is a REST request sent?','How is JSON serialized?','Is there a connection pool?']};
 function applyLang(){
   $('ln').textContent=LANG.toUpperCase();$('la').textContent=LANG==='tr'?'EN':'TR';
   $('q').placeholder=T('Kod tabanına sor…  (💬 yanıtlar · 🔍 bulur)','Ask the codebase…  (💬 answers · 🔍 finds)');
@@ -158,37 +229,70 @@ function applyLang(){
   $('h-t1').textContent=T('Kod tabanına sor','Ask the codebase');
   $('h-t2').textContent=T('Türkçe ya da İngilizce — kodu bulur, kaynak göstererek yanıtlar.','Turkish or English — it finds the code and answers with citations.');
   $('sugg').innerHTML=SUGG[LANG].map(s=>`<span onclick="pick(this)">${s}</span>`).join('');
+  $('t-grouptoggle').textContent=T('Sahibe/Koleksiyona göre grupla','Group by owner/collection');
+  $('t-rr').textContent=T('🎯 Hassas sıra','🎯 Precise rank');
+  $('f-kind').options[0].textContent=T('Tümü','All kinds');
+  $('f-unit').placeholder=T('dosya süzgeci','file filter');
 }
 function pick(el){$('q').value=el.textContent;run();}
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
+let COMPACT=localStorage.getItem('ci-compact')==='1';
+function applyCompact(){$('out').classList.toggle('compact',COMPACT);$('compact-btn').classList.toggle('on',COMPACT);}
+function toggleCompact(){COMPACT=!COMPACT;localStorage.setItem('ci-compact',COMPACT?'1':'0');applyCompact();}
+applyCompact();
 $('seg-act').onclick=e=>{const s=e.target.closest('span[data-a]');if(!s)return;[...$('seg-act').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');ACT=s.dataset.a;localStorage.setItem('ci-act',ACT);};
 $('seg-mode').onclick=e=>{const s=e.target.closest('span[data-m]');if(!s)return;[...$('seg-mode').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');MODE=s.dataset.m;};
 [...$('seg-act').children].forEach(x=>x.classList.toggle('on',x.dataset.a===ACT));
 applyLang();
 
-let SELECTED_COLLS=JSON.parse(localStorage.getItem('ci-colls')||'["unidac"]');
+// "Tümünü Seç" bir SNAPSHOT liste değil, dinamik bir MOD olarak saklanır — aksi
+// halde daha sonra eklenen/import edilen yeni bir koleksiyon o donmuş listede
+// hiç yer almaz ve kullanıcıya "hepsi seçiliyken bile eksik" gibi görünür (gerçek
+// bir kullanıcı raporu: "Tümünü Seç"ten sonra yeni bir indeks eklendiğinde bir
+// sonraki açılışta o yeni indeks seçili gelmiyordu).
+let SELECT_ALL_MODE=localStorage.getItem('ci-colls-allmode')==='1';
+let SELECTED_COLLS=SELECT_ALL_MODE?[]:JSON.parse(localStorage.getItem('ci-colls')||'["unidac"]');
 let ALL_COLLS=[];
+let COLL_META={};   // name -> {owner, group} — arama sonuçlarını Sahip→Koleksiyon gruplamak için
 async function health(){try{
   const h=await(await fetch('/api/health')).json();
   const p=(h.collections||[]).filter(c=>c.name!=='pilot').reduce((a,c)=>a+c.points,0);
   $('pts').textContent='◆ '+p.toLocaleString('tr')+' '+T('parça','chunks');
   ALL_COLLS=(h.collections||[]).filter(c=>c.name!=='pilot').map(c=>c.name);
+  COLL_META={};(h.collections||[]).forEach(c=>COLL_META[c.name]={owner:c.owner||'',group:c.group||''});
   if(!ALL_COLLS.length)ALL_COLLS=['unidac'];
-  SELECTED_COLLS=SELECTED_COLLS.filter(n=>ALL_COLLS.includes(n));
-  if(!SELECTED_COLLS.length)SELECTED_COLLS=[ALL_COLLS[0]];
+  if(SELECT_ALL_MODE){
+    SELECTED_COLLS=[...ALL_COLLS];
+  }else{
+    SELECTED_COLLS=SELECTED_COLLS.filter(n=>ALL_COLLS.includes(n));
+    if(!SELECTED_COLLS.length)SELECTED_COLLS=[ALL_COLLS[0]];
+  }
   renderCollPicker();
 }catch(e){$('pts').textContent='⚠';}}
 function renderCollPicker(){
-  $('collpop').innerHTML=ALL_COLLS.map(n=>
+  const allSelected=ALL_COLLS.length>0&&ALL_COLLS.every(n=>SELECTED_COLLS.includes(n));
+  $('collpop').innerHTML=
+    `<label class="collall"><input type="checkbox" ${allSelected?'checked':''} onchange="toggleAllColls(this.checked)"><b>${T('Tümünü Seç','Select All')}</b></label>
+     <div class="colldiv"></div>`+
+    ALL_COLLS.map(n=>
     `<label><input type="checkbox" value="${n}" ${SELECTED_COLLS.includes(n)?'checked':''} onchange="toggleColl('${n}',this.checked)">${esc(n)}</label>`).join('');
-  $('coll-btn').textContent=(SELECTED_COLLS.length===1?SELECTED_COLLS[0]:SELECTED_COLLS.length+' '+T('indeks seçili','indexes selected'))+' ▾';
+  $('coll-btn').textContent=(SELECTED_COLLS.length===1?SELECTED_COLLS[0]:allSelected?T('Tümü','All'):SELECTED_COLLS.length+' '+T('indeks seçili','indexes selected'))+' ▾';
 }
 function toggleColl(name,checked){
+  SELECT_ALL_MODE=false;   // tek tek seçime dönmek "hepsi" dinamik modundan çıkar
+  localStorage.setItem('ci-colls-allmode','0');
   if(checked){if(!SELECTED_COLLS.includes(name))SELECTED_COLLS.push(name);}
   else{
     if(SELECTED_COLLS.length===1){renderCollPicker();return;}   // en az bir tanesi seçili kalmalı
     SELECTED_COLLS=SELECTED_COLLS.filter(n=>n!==name);
   }
+  localStorage.setItem('ci-colls',JSON.stringify(SELECTED_COLLS));
+  renderCollPicker();
+}
+function toggleAllColls(checked){
+  SELECT_ALL_MODE=checked;
+  localStorage.setItem('ci-colls-allmode',checked?'1':'0');
+  SELECTED_COLLS=checked?[...ALL_COLLS]:[ALL_COLLS[0]];
   localStorage.setItem('ci-colls',JSON.stringify(SELECTED_COLLS));
   renderCollPicker();
 }
@@ -210,41 +314,147 @@ function srcCard(h,i){return `
     <div class="head" onclick="tog('${h.id}')">
       <span class="idx">[${i+1}]</span>
       <span class="n">${esc(h.name)}</span>
-      <span class="m">${SELECTED_COLLS.length>1?esc(h.collection)+' · ':''}${esc(h.unit)} · L${h.line_start}-${h.line_end}</span>
+      <span class="collbadge">${esc(h.collection)}</span>
+      <span class="m">${esc(h.unit)} · L${h.line_start}-${h.line_end}</span>
       <span class="sc">${h.score}</span>
     </div>
     <div class="codewrap"><pre>${hl(h.code)}</pre></div>
     <div class="exp ${h.tr?'has':''}" id="e${h.id}">${esc(h.tr||'')}</div>
+    <div class="rel" id="r${h.id}"></div>
     <div class="tools">
       <button onclick="explain('${h.id}','${h.collection}','fast',this)">⚡ ${T('Açıkla','Explain')}</button>
       <button onclick="explain('${h.id}','${h.collection}','deep',this)">🔬 ${T('Derin','Deep')}</button>
+      <button onclick="showRelations('${h.id}','${h.collection}',this)">🔗 ${T('İlişkiler','Relations')}</button>
+      <button onclick="reveal('${h.id}','${h.collection}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
+      <button onclick="reveal('${h.id}','${h.collection}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
+      <button onclick="showInBrowser('${h.id}','${h.collection}',this)">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
       <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
     </div>
   </div>`;}
 function tog(id){$('s'+id).classList.toggle('open');}
 
+let LAST_Q='', LAST_OFFSET=0, ALL_HITS=[];
+const PAGE_SIZE=8;
+// Gruplama İSTEĞE BAĞLI bir görünüm anahtarı (checkbox) — otomatik/zorla
+// açılmaz. Gerçek kullanıcı geri bildirimi: gruplar "ilk görülme sırasına" göre
+// dizildiğinde, en alakalı tekil sonuca sahip olmayan ama toplamda güçlü bir
+// koleksiyon en sona düşüp gözden kaçabiliyordu — bu yüzden gruplamayı açık
+// biçimde kullanıcı seçsin, varsayılan KAPALI (saf alaka sıralaması).
+let GROUP_MODE=localStorage.getItem('ci-groupmode')==='1';
+$('group-toggle').checked=GROUP_MODE;
+function toggleGrouping(checked){
+  GROUP_MODE=checked;
+  localStorage.setItem('ci-groupmode',checked?'1':'0');
+  if(ALL_HITS.length){
+    $('hitlist').innerHTML=renderHitList(ALL_HITS);
+  }
+}
+function renderHitList(hits){
+  if(!GROUP_MODE)return hits.map((h,i)=>srcCard(h,i)).join('');
+  const groups=[], byKey={};
+  hits.forEach(h=>{
+    const meta=COLL_META[h.collection]||{};
+    const key=(meta.owner||'')+' '+h.collection;
+    if(!byKey[key]){byKey[key]={owner:meta.owner||'',collection:h.collection,items:[]};groups.push(byKey[key]);}
+    byKey[key].items.push(h);
+  });
+  let idx=0;
+  if(groups.length<=1)return hits.map(h=>srcCard(h,idx++)).join('');
+  return groups.map(g=>{
+    const label=(g.owner?`<span class="hg-owner">${esc(g.owner)}</span> / `:'')+`<span class="hg-coll">${esc(g.collection)}</span>`;
+    const body=g.items.map(h=>srcCard(h,idx++)).join('');
+    return `<div class="hitgroup"><div class="hitgroup-head">📦 ${label} <span class="hg-count">(${g.items.length})</span></div>${body}</div>`;
+  }).join('');
+}
+function searchBody(offset){
+  return {q:LAST_Q,collections:SELECTED_COLLS,mode:MODE,top_k:PAGE_SIZE,offset,
+          kind:$('f-kind').value,unit:$('f-unit').value.trim(),rerank:$('rr-toggle').checked};
+}
+// Çok turlu sohbet geçmişi — sunucu stateless, geçmişin sahibi bu sekme.
+// Sayfa yenilenince sıfırlanır; "🧹" ile elle de temizlenebilir.
+let CHAT_HISTORY=[];
+function clearChat(){CHAT_HISTORY=[];const el=$('chatchip');if(el)el.remove();}
+function chatChip(){
+  return CHAT_HISTORY.length?` · <span id="chatchip">💬 ${CHAT_HISTORY.length} ${T('tur','turns')} <span style="cursor:pointer" onclick="clearChat()" title="${T('Sohbet geçmişini temizle','Clear chat history')}">🧹</span></span>`:'';
+}
 async function run(){
   const q=$('q').value.trim();if(!q)return;
+  LAST_Q=q;LAST_OFFSET=0;
   $('go').disabled=true;
   $('out').innerHTML=`<div class="answer"><span class="spin"></span>${ACT==='ask'?T('Kod aranıyor, yanıt yazılıyor…','Searching code, writing answer…'):T('Aranıyor…','Searching…')}</div>`;
   try{
     if(ACT==='find'){
-      const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q,collections:SELECTED_COLLS,mode:MODE})})).json();
+      const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(searchBody(0))})).json();
+      ALL_HITS=r.hits||[];
       $('out').innerHTML=r.error?err(r.error):(r.hits.length
-        ?`<div class="reslabel">${r.hits.length} ${T('sonuç','results')} · ${r.ms} ms · ${MODE}</div>`+r.hits.map(srcCard).join('')
+        ?`<div class="reslabel" id="reslabel">${r.hits.length} / ${r.total} ${T('sonuç gösteriliyor','results shown')} · ${r.ms} ms · ${MODE}${r.rerank?' · 🎯':''}</div>`+
+          `<div id="hitlist">${renderHitList(ALL_HITS)}</div>`+
+          (r.has_more?`<button class="loadmore" id="loadmore" onclick="loadMore()">${T('Daha Fazla Göster','Show More')} ▾</button>`:'')
         :none());
     }else{
-      const r=await(await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model:localStorage.getItem('ci-mfast')||'gemma4:12b'})})).json();
-      $('out').innerHTML=r.error?err(r.error):
-        `<div class="answer">${citeFmt(r.answer)}</div>
-         <div class="metaline">${esc(r.model||'')} · ${T('yanıt','answer')} ${r.sec||'?'}s · ${T('arama','search')} ${r.ms_search||'?'}ms · ${MODE}</div>`+
-        (r.hits&&r.hits.length?`<div class="reslabel">${T('kaynaklar','sources')}</div>`+r.hits.slice(0,5).map(srcCard).join(''):'');
+      await runAskStream(q);
     }
   }catch(e){$('out').innerHTML=err(e);}
   $('go').disabled=false;$('q').focus();
 }
+async function runAskStream(q){
+  const model=localStorage.getItem('ci-mfast')||'gemma4:12b';
+  const resp=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY})});
+  if(!resp.ok||!resp.body){$('out').innerHTML=err('HTTP '+resp.status);return;}
+  $('out').innerHTML=`<div class="answer" id="ans"><span class="spin"></span></div><div class="metaline" id="ansmeta"></div><div id="anssrc"></div>`;
+  let meta=null,text='',sec='?';
+  const reader=resp.body.getReader(),dec=new TextDecoder();
+  let buf='';
+  while(true){
+    const {done,value}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n\n'))>=0){
+      const block=buf.slice(0,i);buf=buf.slice(i+2);
+      let ev='message',data='';
+      for(const line of block.split('\n')){
+        if(line.startsWith('event: '))ev=line.slice(7).trim();
+        else if(line.startsWith('data: '))data+=line.slice(6);
+      }
+      if(!data)continue;
+      let d;try{d=JSON.parse(data);}catch(e){continue;}
+      if(ev==='meta'){
+        meta=d;
+        if(d.hits&&d.hits.length){
+          $('anssrc').innerHTML=`<div class="reslabel">${T('kaynaklar','sources')} (${T('en iyi','top')} ${Math.min(5,d.hits.length)} / ${d.total||d.hits.length})</div>`+
+            (d.total>5?`<div class="note" style="margin:-6px 0 10px 2px">${T(`Cevap yalnızca en alakalı 5 kaynağa dayanıyor — toplam ${d.total} eşleşmeden geri kalanı görmek için "Bul" moduna geçin.`,`The answer is based only on the 5 most relevant sources — switch to "Find" mode to see the rest of the ${d.total} matches.`)}</div>`:'')+
+            d.hits.slice(0,5).map(srcCard).join('');
+        }
+      }else if(ev==='error'){$('ans').innerHTML='⚠️ '+esc(d.error||JSON.stringify(d));}
+      else if(ev==='done'){sec=d.sec??'?';}
+      else if(d.t){text+=d.t;$('ans').innerHTML=citeFmt(text)+'<span class="spin"></span>';}
+    }
+  }
+  $('ans').innerHTML=text?citeFmt(text):$('ans').innerHTML.replace('<span class="spin"></span>','');
+  if(text){CHAT_HISTORY.push({q,a:text});if(CHAT_HISTORY.length>8)CHAT_HISTORY.shift();}
+  $('ansmeta').innerHTML=`${esc((meta&&meta.model)||model)} · ${T('yanıt','answer')} ${sec}s · ${T('arama','search')} ${(meta&&meta.ms_search)||'?'}ms · ${MODE}${chatChip()}`;
+}
 function err(m){return `<div class="answer" style="border-left-color:#c65">⚠️ ${esc(m)}</div>`;}
 function none(){return `<div class="hero"><div class="mark">∅</div><p>${T('Sonuç bulunamadı — başka bir ifadeyle dene.','No results — try rephrasing.')}</p></div>`;}
+
+async function loadMore(){
+  const btn=$('loadmore');btn.disabled=true;btn.innerHTML=`<span class="spin"></span>${T('yükleniyor…','loading…')}`;
+  LAST_OFFSET+=PAGE_SIZE;
+  try{
+    const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(searchBody(LAST_OFFSET))})).json();
+    if(r.error){btn.remove();return;}
+    ALL_HITS=ALL_HITS.concat(r.hits);
+    // gruplama tam yeniden çizim gerektirir (yeni gelen sonuçlar var olan bir
+    // gruba ait olabilir) — insertAdjacentHTML ile sona eklemek burada yanlış olurdu
+    $('hitlist').innerHTML=renderHitList(ALL_HITS);
+    const shownNow=ALL_HITS.length;
+    $('reslabel').textContent=`${shownNow} / ${r.total} ${T('sonuç gösteriliyor','results shown')} · ${r.ms} ms · ${MODE}`;
+    if(r.has_more){btn.disabled=false;btn.innerHTML=T('Daha Fazla Göster','Show More')+' ▾';}
+    else btn.remove();
+  }catch(e){btn.disabled=false;btn.innerHTML=T('Daha Fazla Göster','Show More')+' ▾';}
+}
 
 async function explain(id,collection,depth,btn){
   btn.disabled=true;const old=btn.innerHTML;btn.innerHTML='<span class="spin"></span>';
@@ -256,6 +466,97 @@ async function explain(id,collection,depth,btn){
   }catch(x){alert(x);}
   btn.disabled=false;btn.innerHTML=old;
 }
+
+function relItem(it){return `<span class="rel-item" onclick="jumpTo('${esc(it.name)}')">${esc(it.name)} <span class="u">${esc(it.unit||'')}${it.line_start?':'+it.line_start:''}</span></span>`;}
+function relGroup(title,items){
+  if(!items||!items.length)return `<div class="rel-group"><h4>${title}</h4><div class="rel-empty">${T('yok','none')}</div></div>`;
+  return `<div class="rel-group"><h4>${title} (${items.length})</h4>${items.map(relItem).join('')}</div>`;
+}
+function jumpTo(name){$('q').value=name;document.querySelector('[data-a="find"]').click();run();}
+
+async function showRelations(id,collection,btn){
+  const box=$('r'+id);
+  const wasOpen=box.classList.contains('has');
+  if(wasOpen){box.classList.remove('has');return;}
+  $('s'+id).classList.add('open');
+  const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>'+T('yükleniyor…','loading…');
+  try{
+    const r=await(await fetch('/api/relations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id})})).json();
+    if(r.error){box.innerHTML=err(r.error);}
+    else{
+      box.innerHTML=relGroup(T('Bunu çağıranlar','Called by'),r.called_by)+
+                     relGroup(T('Bunun çağırdıkları','Calls'),r.calls)+
+                     relGroup(T('Aynı dosyadaki diğerleri','Same file'),r.same_unit);
+    }
+    box.classList.add('has');
+  }catch(x){box.innerHTML=err(String(x));box.classList.add('has');}
+  btn.disabled=false;btn.innerHTML=old;
+}
+
+async function reveal(id,collection,mode,btn){
+  const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+  try{
+    const r=await(await fetch('/api/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,mode})})).json();
+    if(r.error)alert(r.error);
+  }catch(x){alert(x);}
+  btn.disabled=false;btn.innerHTML=old;
+}
+
+let SP_CONTENT='';
+async function showInBrowser(id,collection,btn){
+  const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+  try{
+    const r=await(await fetch('/api/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,mode:'browser'})})).json();
+    if(r.error){
+      $('sp-fname').textContent=T('Hata','Error');
+      $('sp-body').innerHTML=`<div class="sp-err">⚠️ ${esc(r.error)}</div>`;
+      SP_CONTENT='';
+    }else{
+      $('sp-fname').textContent=r.name||r.path;
+      $('sp-body').innerHTML=`<pre><code>${hl(r.content)}</code></pre>`;
+      SP_CONTENT=r.content;
+    }
+    $('sidepanel').classList.add('show');
+  }catch(x){alert(x);}
+  btn.disabled=false;btn.innerHTML=old;
+}
+function closeSidePanel(){
+  $('sidepanel').classList.remove('show');
+}
+async function copySidePanel(){
+  if(!SP_CONTENT)return;
+  try{
+    await navigator.clipboard.writeText(SP_CONTENT);
+    const btn=$('sp-copy');const old=btn.textContent;btn.textContent='✅';
+    setTimeout(()=>btn.textContent=old,1200);
+  }catch(e){}
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&$('sidepanel').classList.contains('show')){closeSidePanel();return;}
+  if(e.key==='/'&&document.activeElement!==$('q')&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){
+    e.preventDefault();$('q').focus();
+  }
+});
+
+// Sağ panel sola doğru genişletilebilir (sürükle-bırak) — uzun satırlı kodlar
+// varsayılan genişliğe sığmıyordu. Genişlik oturumlar arası hatırlanır.
+(function(){
+  const panel=$('sidepanel'), handle=$('sp-resize');
+  const saved=parseInt(localStorage.getItem('ci-spwidth'));
+  if(saved)panel.style.width=saved+'px';
+  let dragging=false;
+  handle.addEventListener('mousedown',e=>{dragging=true;panel.classList.add('dragging');handle.classList.add('dragging');e.preventDefault();});
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const w=Math.min(window.innerWidth*0.95,Math.max(340,window.innerWidth-e.clientX));
+    panel.style.width=w+'px';
+  });
+  window.addEventListener('mouseup',()=>{
+    if(!dragging)return;
+    dragging=false;panel.classList.remove('dragging');handle.classList.remove('dragging');
+    localStorage.setItem('ci-spwidth',parseInt(panel.style.width));
+  });
+})();
 $('q').focus();
 </script>
 </body>
