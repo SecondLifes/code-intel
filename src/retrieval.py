@@ -5,6 +5,8 @@ yaşar; iki yerde ayrı ayrı yazılmaz.
 """
 import json
 import math
+import os
+import pathlib
 import re
 import time
 import urllib.request
@@ -17,7 +19,20 @@ ort.preload_dlls()
 from fastembed import TextEmbedding, SparseTextEmbedding
 from qdrant_client import QdrantClient, models
 
-QDRANT, OLLAMA = "http://127.0.0.1:6333", "http://127.0.0.1:11434"
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+def _load_cfg() -> dict:
+    try:
+        return json.loads((_ROOT / "mcp-config.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+_CFG = _load_cfg()
+# Tek yapılandırma kaynağı: env > mcp-config.json > varsayılan.
+# (Önceden mcp-config'teki qdrant_url/ollama_url fiilen ETKİSİZDİ — burası sabit
+# 127.0.0.1 kullanıyordu; dış analizde yakalanan gerçek bir kopukluk.)
+QDRANT = os.environ.get("CODEINTEL_QDRANT_URL") or _CFG.get("qdrant_url") or "http://127.0.0.1:6333"
+OLLAMA = os.environ.get("CODEINTEL_OLLAMA_URL") or _CFG.get("ollama_url") or "http://127.0.0.1:11434"
 SEARCH_LOG_COLL = "_search_log"
 INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL}
 
@@ -296,17 +311,54 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
          **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
          "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr")} for fscore, (c, h) in page]}
 
+PAYLOAD_CODE_CAP = 4000   # _run_index'in payload'a yazdığı üst sınır — bununla senkron
+
+def get_profile_payload(collection: str) -> dict:
+    """_index_profiles'taki profil kaydını okur (panel.py get_profile ile aynı
+    veri; retrieval tarafında diskten-tam-kod okuma için gerekir)."""
+    try:
+        if not cl.collection_exists("_index_profiles"):
+            return {}
+        pid = str(uuid.uuid5(uuid.NAMESPACE_DNS, collection))
+        pts = cl.retrieve("_index_profiles", ids=[pid], with_payload=True)
+        return pts[0].payload if pts else {}
+    except Exception:
+        return {}
+
 def get_chunk(collection: str, id: int, full_code: bool = True) -> dict | None:
-    """Tek bir chunk'ın TAM kaydını (kısaltılmamış kod dahil) getirir."""
+    """Tek bir chunk'ın TAM kaydını getirir.
+
+    ÖNEMLİ dürüstlük düzeltmesi: payload'daki kod PAYLOAD_CODE_CAP (4000) ile
+    kesilmiş olabilir — eskiden bu fonksiyon adına rağmen kesik kodu "tam" diye
+    döndürüyordu (dış analizde yakalandı). Artık: (1) kesikse `truncated: true`
+    açıkça işaretlenir; (2) koleksiyonun kayıtlı kaynak klasörü diskte varsa
+    gerçek dosyadan line_start..line_end aralığı okunup TAM kod döndürülür
+    (`source: "disk"`). Disk yoksa kesik kod + bayrakla yetinilir."""
     pts = cl.retrieve(collection, ids=[id], with_payload=True)
     if not pts:
         return None
     p = pts[0]
     out = dict(p.payload)
-    if not full_code:
-        out["code"] = out.get("code", "")[:1800]
     out["id"] = p.id
     out["collection"] = collection
+    code = out.get("code", "")
+    out["truncated"] = len(code) >= PAYLOAD_CODE_CAP
+    out["source"] = "qdrant"
+    if full_code and out["truncated"]:
+        try:
+            src = get_profile_payload(collection).get("path")
+            unit, ls, le = out.get("unit"), out.get("line_start"), out.get("line_end")
+            if src and unit and ls and le:
+                f = pathlib.Path(src) / unit
+                if f.exists():
+                    lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+                    out["code"] = "\n".join(lines[ls - 1:le])
+                    out["truncated"] = False
+                    out["source"] = "disk"
+        except Exception:
+            pass   # disk okunamazsa kesik kod + truncated bayrağı zaten dönüyor
+    if not full_code:
+        out["code"] = out.get("code", "")[:1800]
     return out
 
 def explain_chunk(collection: str, id: int, depth: str = "fast", model: str = "") -> dict:

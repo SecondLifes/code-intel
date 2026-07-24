@@ -199,24 +199,30 @@ def collection_delete(collection: str):
         jsonl.unlink()
     return {"ok": True}
 
-def _copy_all_points(src: str, dst: str, skip_ids: set[int] | None = None) -> int:
+def _copy_all_points(src: str, dst: str, skip_ids: set[int] | None = None) -> tuple[int, int]:
     """src koleksiyonundaki TÜM noktaları (vektör+payload) dst'ye kopyalar. Qdrant'ın
     kendi rename/copy API'si yok — bu yüzden scroll+upsert ile elle yapılıyor.
     skip_ids verilirse o id'ler atlanır (merge'de hedefte zaten var olan id'lerle
-    çakışmayı önlemek için). Kopyalanan nokta sayısını döndürür."""
-    n = 0
+    çakışmayı önlemek için). (kopyalanan, atlanan) sayılarını döndürür — atlananlar
+    merge'de ID ÇAKIŞMASI demektir ve sessizce yutulmamalı (dış analizde bulunan
+    veri kaybı riski: iki kütüphanede aynı göreli yol+imza aynı 48-bit ID'yi üretir)."""
+    n = skipped = 0
     next_page = None
     while True:
         batch, next_page = cl.scroll(src, limit=1000, offset=next_page, with_payload=True, with_vectors=True)
         if batch:
-            pts = [models.PointStruct(id=p.id, vector=p.vector or {}, payload=p.payload)
-                   for p in batch if not (skip_ids and p.id in skip_ids)]
+            pts = []
+            for p in batch:
+                if skip_ids and p.id in skip_ids:
+                    skipped += 1
+                    continue
+                pts.append(models.PointStruct(id=p.id, vector=p.vector or {}, payload=p.payload))
             if pts:
                 cl.upsert(dst, points=pts)
                 n += len(pts)
         if next_page is None:
             break
-    return n
+    return n, skipped
 
 # ---------------- koleksiyon yeniden adlandırma ----------------
 class RenameReq(BaseModel):
@@ -237,7 +243,7 @@ def collection_rename(r: RenameReq):
     cl.create_collection(r.new_name, vectors_config=info.config.params.vectors,
                           sparse_vectors_config=info.config.params.sparse_vectors)
     retrieval.ensure_payload_indexes(r.new_name)
-    n = _copy_all_points(r.old_name, r.new_name)
+    n, _ = _copy_all_points(r.old_name, r.new_name)
     if cl.collection_exists(HISTORY_COLL):
         cl.set_payload(HISTORY_COLL, payload={"collection": r.new_name},
                         points=models.Filter(must=[models.FieldCondition(key="collection", match=models.MatchValue(value=r.old_name))]))
@@ -292,8 +298,12 @@ def collection_merge(r: MergeReq):
                                  f"hedefe yalnızca ilk kaynağınki ({r.sources[0]}) kopyalandı, gerekirse elle düzeltin.")
 
     total_copied = 0
+    collisions: dict[str, int] = {}   # kaynak -> atlanan (ID çakışan) nokta sayısı
     for s in r.sources:
-        total_copied += _copy_all_points(s, r.target, skip_ids=existing_ids)
+        copied, skipped = _copy_all_points(s, r.target, skip_ids=existing_ids)
+        total_copied += copied
+        if skipped:
+            collisions[s] = skipped
         # bir sonraki kaynak için hedefteki id kümesini güncelle — aynı id birden
         # fazla kaynakta varsa yalnızca İLKİ kopyalanır, tekrarlanan atlanır
         next_page = None
@@ -302,8 +312,15 @@ def collection_merge(r: MergeReq):
             existing_ids.update(p.id for p in batch)
             if next_page is None:
                 break
-    return {"ok": True, "target": r.target, "points_copied": total_copied, "owner_group_note": owner_group_note,
-            "note": "Kaynak koleksiyonlar SİLİNMEDİ — istemiyorsanız Ayarlar'dan elle silin."}
+    collision_note = ""
+    if collisions:
+        collision_note = (f" UYARI: ID çakışması nedeniyle atlanan noktalar var: {collisions} — aynı göreli "
+                          f"yol+imzaya sahip chunk'lar aynı ID'yi üretir; atlananlar hedefe KOPYALANMADI "
+                          f"(ilk gelen kazandı). Kaynaklar silinmediği için veri kaybı yok, ama birleşik "
+                          f"koleksiyonda bu parçalar tek kopya olarak temsil ediliyor.")
+    return {"ok": True, "target": r.target, "points_copied": total_copied, "collisions": collisions,
+            "owner_group_note": owner_group_note,
+            "note": "Kaynak koleksiyonlar SİLİNMEDİ — istemiyorsanız Ayarlar'dan elle silin." + collision_note}
 
 # ---------------- koleksiyon dışa/içe aktarma (gzip, max sıkıştırma) ----------------
 def _vector_to_json(val):
@@ -651,84 +668,105 @@ def _link_call_graph(collection: str, st: dict | None = None):
     """Tüm koleksiyonu tarayıp her "method" (impl) chunk'ının halihazırda Qdrant'ta
     duran 'code' payload'ından çağrı adaylarını (extract_calls) YENİDEN hesaplar,
     gerçek chunk kimliklerine çözer ve tersini (called_by) hesaplayıp payload olarak
-    yazar. Kaynak dosyalara ihtiyaç YOKTUR — bu yüzden kaynak diski artık bağlı
-    olmayan eski koleksiyonlarda (örn. unidac) bile geriye dönük çalışır; chunker.py
-    her yeni indekslemede ayrıca 'calls_raw' yazar ama bu fonksiyon ona güvenmez,
-    her seferinde 'code'dan taze hesaplar (idempotent, ucuz bir regex geçişi).
-    İsim-tabanlı bir SEZGİDİR — gerçek tip/overload çözümlemesi yapılmaz; aynı bare
-    isimde birden fazla metot varsa (örn. aşırı yükleme, farklı sınıflarda aynı
-    isim) hepsi aday olarak eklenir (isim başına üst sınır 8). Sadece payload
-    günceller, vektörler olduğu gibi geri yazılır — canlı ölçüldü: 25K noktalık
-    gerçek koleksiyonda ~15-20 sn (tek tek set_payload çağrısı yerine
-    _run_index'in embedding döngüsündeki ile aynı toplu upsert deseni kullanılıyor —
-    ölçülüp doğrulanmadan önce per-point batch_update_points denenmiş,
-    ~2.4ms/nokta çıkmıştı; bu yaklaşım ~0.5ms/nokta)."""
+    yazar. Kaynak dosyalara ihtiyaç YOKTUR; her seferinde 'code'dan taze hesaplar
+    (idempotent). İsim-tabanlı bir SEZGİDİR — tip/overload çözümlemesi yapılmaz.
+
+    BELLEK/YAZMA NOTU (dış analizde işaret edilen ölçek riski üzerine yeniden
+    yazıldı): eski sürüm TÜM koleksiyonu payload+VEKTÖRLERLE RAM'e alıp HER noktayı
+    yeniden upsert ediyordu — 375K'lık Jedi'da GB'larca bellek ve tamamen gereksiz
+    yazma yükü. Yeni akış üç geçişli ve batch-sınırlı:
+      A) hafif scroll (isim/tür) -> aday indeksi;
+      B) batch'li scroll (kod dahil, vektörsüz) -> calls/called_by haritaları
+         (kod RAM'de TUTULMAZ, batch bitince düşer);
+      C) batch'li scroll ile mevcut calls/called_by KARŞILAŞTIRILIR, yalnız
+         DEĞİŞENLER yazılır (vektörleri o an retrieve edilip tam upsert —
+         per-point set_payload değil; o yol daha önce ölçülmüştü, ~5x yavaştı).
+    İlişkisi değişmeyen nokta hiç yazılmaz — artımlı indekslemede tipik olarak
+    noktaların büyük çoğunluğu."""
     MAX_CAND = 8
-    all_points = []
+    total = cl.count(collection).count
+    if st is not None:
+        st.update(phase="linking", total=total, done=0)
+
+    # ---- GEÇİŞ A: aday indeksi (hafif payload; bellek ~isim listesi kadar) ----
+    # (bare_name, unit) -> en iyi aday; aynı (unit, isim) çiftinde method > decl
+    # (canlı testte yakalanmıştı: çağrı hem decl hem impl kopyasına işaret ediyordu).
+    best_by_unit_name: dict[tuple, dict] = {}
     next_page = None
     while True:
         batch, next_page = cl.scroll(collection, limit=10000, offset=next_page,
-                                      with_payload=True, with_vectors=True)
-        all_points.extend(batch)
+            with_payload=["name", "unit", "kind", "line_start"], with_vectors=False)
+        for p in batch:
+            name = p.payload.get("name") or ""
+            bare = name.split(".")[-1].lower()
+            if not bare:
+                continue
+            key = (p.payload.get("unit"), bare)
+            cand = {"id": p.id, "name": name, "unit": p.payload.get("unit"),
+                    "line_start": p.payload.get("line_start"), "kind": p.payload.get("kind")}
+            existing = best_by_unit_name.get(key)
+            if existing is None or (existing["kind"] != "method" and cand["kind"] == "method"):
+                best_by_unit_name[key] = cand
         if next_page is None:
             break
-    if st is not None:
-        st.update(phase="linking", total=len(all_points), done=0)
-
-    # (bare_name, unit) -> en iyi aday. Aynı metodun hem "decl" (bildirim) hem
-    # "method" (gövde) chunk'ı genelde birlikte var olur — ikisini de ayrı bir
-    # "çağrı hedefi" gibi göstermek yanlış/tekrarlı olurdu (canlı testte
-    # yakalandı: bir çağrı hem decl hem impl kopyasına işaret edip listede iki
-    # kez görünüyordu). Aynı (unit, isim) çifti için gövdesi olanı (method) tercih
-    # ediyoruz; sadece decl varsa (örn. gövde farklı bir çalıştırmada henüz
-    # indekslenmemiş) o da kabul edilir.
-    best_by_unit_name: dict[tuple, dict] = {}
-    for p in all_points:
-        name = p.payload.get("name") or ""
-        bare = name.split(".")[-1].lower()
-        if not bare:
-            continue
-        key = (p.payload.get("unit"), bare)
-        cand = {"id": p.id, "name": name, "unit": p.payload.get("unit"),
-                "line_start": p.payload.get("line_start"), "kind": p.payload.get("kind")}
-        existing = best_by_unit_name.get(key)
-        if existing is None or (existing["kind"] != "method" and cand["kind"] == "method"):
-            best_by_unit_name[key] = cand
 
     name_index: dict[str, list[dict]] = {}
     for (_unit, bare), cand in best_by_unit_name.items():
         name_index.setdefault(bare, []).append(cand)
 
+    # ---- GEÇİŞ B: çağrı çözümü (kod batch'le okunur, biriktirilmez) ----
     calls_map: dict[int, list[dict]] = {}
     called_by_map: dict[int, list[dict]] = {}
-    for p in all_points:
-        if p.payload.get("kind") != "method":
-            continue   # decl/type gövde içermez, çağrı adayı yok
-        raw = extract_calls(p.payload.get("code", ""), p.payload.get("name", ""))
-        resolved, seen = [], set()
-        for called_name in raw:
-            if called_name in GENERIC_CALL_NAMES:
-                continue
-            for c in name_index.get(called_name, [])[:MAX_CAND]:
-                if c["id"] == p.id or c["id"] in seen:
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=2000, offset=next_page,
+            with_payload=["name", "unit", "kind", "line_start", "code"], with_vectors=False)
+        for p in batch:
+            if p.payload.get("kind") != "method":
+                continue   # decl/type gövde içermez, çağrı adayı yok
+            raw = extract_calls(p.payload.get("code", ""), p.payload.get("name", ""))
+            resolved, seen = [], set()
+            for called_name in raw:
+                if called_name in GENERIC_CALL_NAMES:
                     continue
-                seen.add(c["id"]); resolved.append(c)
-        calls_map[p.id] = resolved
-        caller_ref = {"id": p.id, "name": p.payload.get("name"), "unit": p.payload.get("unit"),
-                      "line_start": p.payload.get("line_start")}
-        for callee in resolved:
-            called_by_map.setdefault(callee["id"], []).append(caller_ref)
+                for c in name_index.get(called_name, [])[:MAX_CAND]:
+                    if c["id"] == p.id or c["id"] in seen:
+                        continue
+                    seen.add(c["id"]); resolved.append(c)
+            if resolved:
+                calls_map[p.id] = resolved
+            caller_ref = {"id": p.id, "name": p.payload.get("name"), "unit": p.payload.get("unit"),
+                          "line_start": p.payload.get("line_start")}
+            for callee in resolved:
+                called_by_map.setdefault(callee["id"], []).append(caller_ref)
+        if next_page is None:
+            break
 
-    B = 500
-    for i in range(0, len(all_points), B):
-        b = all_points[i:i + B]
-        structs = [models.PointStruct(id=p.id, vector=p.vector or {},
-                    payload={**p.payload, "calls": calls_map.get(p.id, []),
-                             "called_by": called_by_map.get(p.id, [])[:MAX_CAND * 2]})
-                   for p in b]
-        cl.upsert(collection, points=structs)
+    # ---- GEÇİŞ C: yalnız değişen ilişkileri yaz ----
+    done = written = 0
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=1000, offset=next_page,
+                                      with_payload=True, with_vectors=False)
+        changed = [p for p in batch
+                   if (p.payload.get("calls") or []) != calls_map.get(p.id, [])
+                   or (p.payload.get("called_by") or []) != called_by_map.get(p.id, [])[:MAX_CAND * 2]]
+        if changed:
+            vecs = {pp.id: (pp.vector or {}) for pp in
+                    cl.retrieve(collection, ids=[p.id for p in changed], with_payload=False, with_vectors=True)}
+            structs = [models.PointStruct(id=p.id, vector=vecs.get(p.id, {}),
+                        payload={**p.payload, "calls": calls_map.get(p.id, []),
+                                 "called_by": called_by_map.get(p.id, [])[:MAX_CAND * 2]})
+                       for p in changed]
+            cl.upsert(collection, points=structs)
+            written += len(structs)
+        done += len(batch)
         if st is not None:
-            st.update(done=i + len(b))
+            st.update(done=done)
+        if next_page is None:
+            break
+    if st is not None:
+        st["link_written"] = written   # kaçının ilişkisi gerçekten değişti (gözlemlenebilirlik)
 
 def _run_index(r: IndexReq):
     st = STATE["index_job"]
@@ -777,43 +815,53 @@ def _run_index(r: IndexReq):
         # desenle tarama yapabilsin (aksi halde *.pas varsayar, *.inc'i kaçırırdı)
         set_profile(r.collection, patterns=r.patterns or "*.pas")
 
-        # mevcut noktaların hash + hangi vektör türlerine sahip oldukları + VEKTÖRLERİN
-        # KENDİSİ (with_vectors=True) tek toplu scroll ile — değişmeyen chunk'larda eksik
-        # vektör türü eklenirken diğer türü yeniden hesaplamak yerine olduğu gibi geri
-        # yazabilelim (tek tek set_payload/update_vectors çağrısı YAPMIYORUZ; ölçüldü,
-        # ~2 sn/çağrı — 25K nokta için saatler sürerdi. Bunun yerine her değişen/eksik
-        # nokta için TEK bir tam upsert yapılıyor, ihtiyaç duyulmayan vektör türü buradan
-        # olduğu gibi kopyalanıyor).
-        # GERÇEK vektör varlığı Qdrant'ın kendi vektör deposundan okunuyor (with_vectors=True) —
-        # kendi yazacağımız bir "has_dense/has_sparse" bayrağına GÜVENMİYORUZ, çünkü bu özellikten
-        # önce oluşturulmuş koleksiyonlarda (örn. unidac) böyle bir alan hiç yazılmamış olurdu ve
-        # yanlışlıkla "vektör yok" sanılırdı — doğrulandı.
-        old = {}
+        # BELLEK NOTU: eskiden buradaki scroll with_vectors=True ile TÜM vektörleri
+        # RAM'e alıyordu — 375K noktalık Jedi'da GB'larca bellek (dış analizlerde
+        # bağımsız iki kez işaret edilen OOM riski). Artık yalnızca hash + vektör
+        # VARLIĞI (id kümeleri, HasVectorCondition filtreli id-only scroll) çekilir;
+        # korunacak vektörlerin KENDİSİ embed döngüsünde batch başına tam o anda
+        # retrieve edilir (bellek batch boyutuyla sınırlı kalır).
+        # Tek tek set_payload/update_vectors HÂLÂ yapılmıyor (ölçülmüştü, çok yavaş) —
+        # değişen/eksik nokta başına yine TEK tam upsert var, sadece kaynak vektörler
+        # önceden değil tam zamanında okunuyor.
+        # Vektör varlığı Qdrant'ın kendi deposundan okunuyor (kendi bayrağımıza
+        # güvenmiyoruz — eski koleksiyonlarda öyle bir alan hiç yazılmadı, doğrulandı).
+        old_hash: dict[int, str] = {}
+        had_dense_ids: set[int] = set()
+        had_sparse_ids: set[int] = set()
         if exists:
             next_page = None
             while True:
                 batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
-                                              with_payload=["hash"], with_vectors=True)
+                                              with_payload=["hash"], with_vectors=False)
                 for p_ in batch:
-                    old[p_.id] = {"hash": p_.payload.get("hash"), "vector": p_.vector or {}}
+                    old_hash[p_.id] = p_.payload.get("hash")
                 if next_page is None:
                     break
+            for vec_name, target in (("dense", had_dense_ids), ("sparse", had_sparse_ids)):
+                next_page = None
+                while True:
+                    batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
+                        with_payload=False, with_vectors=False,
+                        scroll_filter=models.Filter(must=[models.HasVectorCondition(has_vector=vec_name)]))
+                    target.update(p_.id for p_ in batch)
+                    if next_page is None:
+                        break
 
         # kaynakta artık bulunmayan (silinmiş/yeniden adlandırılmış) eski noktalar —
         # SİLME İŞLEMİ BİLEREK BURADA YAPILMIYOR: embed/upsert bitmeden silinirse ve süreç
         # bu ikisi arasında çökerse (GPU/Ollama/ağ hatası), eskiler zaten gitmiş ama
         # yeni/değişen noktalar henüz yazılmamış olabilir — indeks olduğundan daha eksik
         # kalır. Silme, aşağıdaki embed/upsert döngüsü TAMAMEN bittikten sonra yapılıyor.
-        stale_ids = [pid for pid in old if pid not in row_by_id]
+        stale_ids = [pid for pid in old_hash if pid not in row_by_id]
 
         plan = []          # (row, pid, need_dense, need_sparse, before_dense, before_sparse)
         n_new = n_changed = n_unchanged = 0
         for pid, x in row_by_id.items():
-            o = old.get(pid)
-            is_new = o is None
-            changed = is_new or o["hash"] != x["hash"]
-            had_dense = (not is_new) and ("dense" in o["vector"])
-            had_sparse = (not is_new) and ("sparse" in o["vector"])
+            is_new = pid not in old_hash
+            changed = is_new or old_hash[pid] != x["hash"]
+            had_dense = (not is_new) and (pid in had_dense_ids)
+            had_sparse = (not is_new) and (pid in had_sparse_ids)
             before_dense = had_dense and not changed
             before_sparse = had_sparse and not changed
             if is_new:
@@ -858,17 +906,24 @@ def _run_index(r: IndexReq):
             need_s_any = any(ns for _, _, _, ns, _, _ in b)
             dvs = list(dm.embed(texts)) if (dm and need_d_any) else [None] * len(b)
             svs = list(sm.embed(texts)) if (sm and need_s_any) else [None] * len(b)
+            # korunacak (yeniden hesaplanmayacak) mevcut vektörler TAM O ANDA, yalnız
+            # bu batch için çekilir — bellek batch boyutuyla sınırlı (yukarıdaki not)
+            preserve_ids = [pid for (_x, pid, _nd, _ns, bd, bs) in b if bd or bs]
+            old_vecs: dict[int, dict] = {}
+            if preserve_ids:
+                for p_ in cl.retrieve(r.collection, ids=preserve_ids, with_payload=False, with_vectors=True):
+                    old_vecs[p_.id] = p_.vector or {}
             pts = []
             for (x, pid, need_dense, need_sparse, before_dense, before_sparse), dv, sv in zip(b, dvs, svs):
                 vec = {}
                 if need_dense and dv is not None:
                     vec["dense"] = dv.tolist()
-                elif before_dense:
-                    vec["dense"] = old[pid]["vector"]["dense"]     # değişmedi — olduğu gibi yeniden yaz
+                elif before_dense and "dense" in old_vecs.get(pid, {}):
+                    vec["dense"] = old_vecs[pid]["dense"]     # değişmedi — olduğu gibi yeniden yaz
                 if need_sparse and sv is not None:
                     vec["sparse"] = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
-                elif before_sparse:
-                    vec["sparse"] = old[pid]["vector"]["sparse"]
+                elif before_sparse and "sparse" in old_vecs.get(pid, {}):
+                    vec["sparse"] = old_vecs[pid]["sparse"]
                 pts.append(models.PointStruct(
                     id=pid, vector=vec,
                     payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")}
@@ -887,7 +942,10 @@ def _run_index(r: IndexReq):
 
 @app.post("/api/index/start")
 def index_start(r: IndexReq):
-    if STATE["index_job"] and STATE["index_job"].get("phase") in ("starting", "chunking", "embedding"):
+    # TÜM aktif fazlar sayılmalı — "diffing" ve "linking" eksikti ve o fazlardayken
+    # ikinci bir iş başlatılıp STATE üzerine yazılabiliyordu (dış analizde bulunan,
+    # kodda doğrulanan gerçek yarış durumu).
+    if STATE["index_job"] and STATE["index_job"].get("phase") in ("starting", "chunking", "diffing", "embedding", "linking"):
         return JSONResponse({"error": "zaten çalışan iş var"}, status_code=409)
     STATE["index_job"] = {"collection": r.collection, "mode": "+".join(r.vectors), "device": r.device,
                           "total": 0, "done": 0, "rate": 0, "phase": "starting"}
