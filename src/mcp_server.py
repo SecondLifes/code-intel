@@ -1,7 +1,8 @@
 """Code-Intel MCP sunucusu — stdio üzerinden Claude Code, Codex CLI, Gemini CLI
 gibi MCP-uyumlu ajanlara Delphi kod tabanı arama/açıklama/inceleme araçları sunar.
-10 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
-explain_chunk, review_code, ask_domain_model, list_domain_models, list_collections.
+12 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
+get_type_hierarchy, find_references, explain_chunk, review_code,
+ask_domain_model, list_domain_models, list_collections.
 
 Çalıştır:  .venv/Scripts/python.exe -m src.mcp_server
 (Claude Code / Codex / Gemini CLI'nin kendi MCP client ayarına bu komutu ekleyin.)
@@ -128,6 +129,25 @@ def ask_domain_model(question: str, domain: str, code_context: str = "") -> dict
     prompt = question if not code_context else f"{question}\n\nBAĞLAM (kod):\n{code_context}"
     txt = retrieval.ollama_generate(model, prompt, num_predict=700)
     return {"model": model, "domain": domain, "answer": txt}
+
+@mcp.tool()
+def get_type_hierarchy(collection: str, type_name: str) -> dict:
+    """Bir Delphi tipinin kalıtım hiyerarşisini döndürür: ancestors (üst sınıf
+    zinciri, köke doğru), descendants (alt sınıflar, 2 seviye), implements (bu
+    sınıfın uyguladığı interface'ler), implementers (bu interface'i uygulayan
+    sınıflar). in_corpus=false olan atalar korpus dışıdır (örn. TObject, RTL
+    sınıfları). Kenarlar indeksleme sırasında tip bildirimlerinden çıkarılır —
+    isim tabanlıdır, chunk_id'lerle get_chunk'a derinleşilebilir."""
+    return retrieval.get_type_hierarchy(collection, type_name)
+
+@mcp.tool()
+def find_references(collection: str, name: str, top_k: int = 30) -> dict:
+    """Bir sembol adının korpustaki izlerini üç grupta döndürür: definitions
+    (adı birebir taşıyan chunk'lar), callers (bu tanımları çağıran metodlar,
+    isim-sezgili çağrı grafiğinden), textual (adın kelime aramasında geçtiği
+    diğer chunk'lar — yorum/string içi olabilir). TAM statik analiz değildir;
+    tip hiyerarşisi için ayrıca get_type_hierarchy kullanın."""
+    return retrieval.find_references(collection, name, top_k)
 
 @mcp.tool()
 def list_domain_models() -> dict:

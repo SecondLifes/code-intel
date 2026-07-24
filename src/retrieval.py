@@ -34,7 +34,11 @@ _CFG = _load_cfg()
 QDRANT = os.environ.get("CODEINTEL_QDRANT_URL") or _CFG.get("qdrant_url") or "http://127.0.0.1:6333"
 OLLAMA = os.environ.get("CODEINTEL_OLLAMA_URL") or _CFG.get("ollama_url") or "http://127.0.0.1:11434"
 SEARCH_LOG_COLL = "_search_log"
-INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL}
+SYMBOL_COLL = "_symbol_graph"   # tip kalıtım/interface kenarları — AYRI koleksiyon,
+                                # ana koleksiyon payload'ına liste gömme yaklaşımı
+                                # bilinçli olarak KULLANILMIYOR (375K'lık koleksiyonlarda
+                                # ölçeklenmez; birleşik analiz kararı)
+INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL, SYMBOL_COLL}
 
 # Cross-encoder reranker: çok dilli (Türkçe sorgu + İngilizce kod çalışır).
 # İlk kullanımda (~1.1GB) indirilir, sonra kalıcı önbellekten yüklenir.
@@ -512,6 +516,168 @@ def read_unit(collection: str, unit: str, max_chars: int = 150_000) -> dict:
         used += len(code)
     return {"unit": unit, "collection": collection, "chunks": len(pts), "truncated": truncated,
             "code": "\n\n".join(parts)}
+
+# ---------------- sembol grafiği (kalıtım / interface kenarları) ----------------
+# Delphi tip bildirimi: "TFoo = class(TBar, IBaz)" / "IX = interface(IBase)".
+# "class of TFoo" (metaclass) ve "class helper for ..." bilerek dışlanır.
+_TYPE_DECL_RE = re.compile(
+    r"(\w+)\s*=\s*(?:packed\s+)?(class|interface|object)\b(?!\s*(?:of|helper)\b)"
+    r"\s*(?:sealed\b|abstract\b)?\s*(?:\(([^)]*)\))?", re.I)
+
+def _symbol_edge_id(collection: str, child: str, parent: str, kind: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{collection}|{child}|{parent}|{kind}"))
+
+def _ensure_symbol_coll():
+    if not cl.collection_exists(SYMBOL_COLL):
+        cl.create_collection(SYMBOL_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+    for field in ("src_collection", "child_name", "parent_name", "edge"):
+        try:
+            cl.create_payload_index(SYMBOL_COLL, field_name=field,
+                                     field_schema=models.PayloadSchemaType.KEYWORD)
+        except Exception:
+            pass
+
+def build_symbol_graph(collection: str, st: dict | None = None) -> dict:
+    """Koleksiyondaki 'type' chunk'larının KOD payload'ından kalıtım/interface
+    kenarlarını çıkarır ve _symbol_graph iç koleksiyonuna yazar. _link_call_graph
+    gibi kaynak dosyalara ihtiyaç duymaz, idempotenttir: önce bu koleksiyonun
+    eski kenarları silinir, sonra taze kenarlar yazılır. İsim-tabanlı çözümleme —
+    parent adı koleksiyonda bir type chunk'ına denk gelirse parent_id bağlanır,
+    gelmezse (örn. RTL/harici sınıf: TObject, TComponent) parent_id null kalır
+    ama kenar yine kaydedilir (hiyerarşi harici köke kadar izlenebilir)."""
+    _ensure_symbol_coll()
+    # tip adı -> chunk id çözümleme indeksi + kenar çıkarımı tek taramada
+    type_ids: dict[str, list] = {}
+    edges = []   # (child, parent, edge_kind, unit, child_chunk_id)
+    n_types = 0
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=5000, offset=next_page,
+            with_payload=["code", "unit", "kind"],
+            scroll_filter=models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value="type"))]))
+        for p in batch:
+            code = p.payload.get("code", "")
+            m = _TYPE_DECL_RE.search(code[:400])
+            if not m:
+                continue
+            child, decl_kind, parents = m.group(1), m.group(2).lower(), m.group(3)
+            n_types += 1
+            type_ids.setdefault(child.lower(), []).append(p.id)
+            if parents:
+                plist = [x.strip() for x in parents.split(",") if x.strip()]
+                for i, parent in enumerate(plist):
+                    # class'ta ilk ebeveyn kalıtım, kalanlar interface; interface'te hepsi kalıtım
+                    edge = "inherits" if (decl_kind != "class" or i == 0) else "implements"
+                    edges.append((child, parent, edge, p.payload.get("unit"), p.id))
+        if next_page is None:
+            break
+    if st is not None:
+        st.update(phase="symbols", total=len(edges), done=0)
+    # bu koleksiyonun eski kenarlarını temizle (idempotency)
+    cl.delete(SYMBOL_COLL, points_selector=models.Filter(must=[
+        models.FieldCondition(key="src_collection", match=models.MatchValue(value=collection))]))
+    B = 500
+    pts = []
+    for child, parent, edge, unit, child_id in edges:
+        parent_ids = type_ids.get(parent.lower(), [])
+        pts.append(models.PointStruct(
+            id=_symbol_edge_id(collection, child.lower(), parent.lower(), edge), vector=[0.0],
+            payload={"src_collection": collection, "edge": edge,
+                     "child_name": child.lower(), "child_display": child, "child_id": child_id,
+                     "parent_name": parent.lower(), "parent_display": parent,
+                     "parent_id": parent_ids[0] if parent_ids else None,
+                     "unit": unit}))
+        if len(pts) >= B:
+            cl.upsert(SYMBOL_COLL, points=pts); pts = []
+    if pts:
+        cl.upsert(SYMBOL_COLL, points=pts)
+    if st is not None:
+        st.update(done=len(edges))
+    return {"types_seen": n_types, "edges": len(edges)}
+
+def _edge_scroll(flt_must: list, limit: int = 500) -> list:
+    out, next_page = [], None
+    while True:
+        batch, next_page = cl.scroll(SYMBOL_COLL, limit=min(limit, 1000), offset=next_page,
+                                      with_payload=True, scroll_filter=models.Filter(must=flt_must))
+        out.extend(p.payload for p in batch)
+        if next_page is None or len(out) >= limit:
+            break
+    return out[:limit]
+
+def get_type_hierarchy(collection: str, type_name: str) -> dict:
+    """Bir tipin kalıtım zinciri: ancestors (yukarı, köke doğru), descendants
+    (doğrudan + bir seviye torun), implements (bu tipin uyguladığı interface'ler),
+    implementers (bu interface'i uygulayan sınıflar). Kenarlar build_symbol_graph
+    tarafından indeksleme sırasında yazılır; isim-tabanlıdır (overload/scope
+    çözümlemesi yok). parent_id null ise tip korpus DIŞINDA demektir (örn. TObject)."""
+    if not cl.collection_exists(SYMBOL_COLL):
+        return {"error": "sembol grafiği henüz kurulmamış — bir koleksiyonu yeniden indeksleyin veya /api/symbols/rebuild çağırın"}
+    bare = type_name.split(".")[-1].lower()
+    coll_f = models.FieldCondition(key="src_collection", match=models.MatchValue(value=collection))
+
+    ancestors, cur, seen = [], bare, set()
+    while cur and cur not in seen and len(ancestors) < 12:
+        seen.add(cur)
+        e = _edge_scroll([coll_f, models.FieldCondition(key="child_name", match=models.MatchValue(value=cur)),
+                          models.FieldCondition(key="edge", match=models.MatchValue(value="inherits"))], limit=1)
+        if not e:
+            break
+        ancestors.append({"name": e[0]["parent_display"], "chunk_id": e[0].get("parent_id"),
+                          "in_corpus": e[0].get("parent_id") is not None})
+        cur = e[0]["parent_name"]
+
+    def children_of(name: str, limit: int = 40):
+        return [{"name": e["child_display"], "chunk_id": e.get("child_id"), "unit": e.get("unit")}
+                for e in _edge_scroll([coll_f, models.FieldCondition(key="parent_name", match=models.MatchValue(value=name)),
+                                        models.FieldCondition(key="edge", match=models.MatchValue(value="inherits"))], limit)]
+
+    descendants = children_of(bare)
+    for d in list(descendants)[:15]:
+        d["children"] = children_of(d["name"].lower(), limit=15)
+
+    implements = [{"name": e["parent_display"], "chunk_id": e.get("parent_id")}
+                  for e in _edge_scroll([coll_f, models.FieldCondition(key="child_name", match=models.MatchValue(value=bare)),
+                                          models.FieldCondition(key="edge", match=models.MatchValue(value="implements"))])]
+    implementers = [{"name": e["child_display"], "chunk_id": e.get("child_id"), "unit": e.get("unit")}
+                    for e in _edge_scroll([coll_f, models.FieldCondition(key="parent_name", match=models.MatchValue(value=bare)),
+                                            models.FieldCondition(key="edge", match=models.MatchValue(value="implements"))])]
+    if not (ancestors or descendants or implements or implementers):
+        return {"type": type_name, "collection": collection,
+                "note": "bu ad için kenar bulunamadı — tip korpusta olmayabilir ya da sembol grafiği bu koleksiyon için henüz kurulmamış olabilir",
+                "ancestors": [], "descendants": [], "implements": [], "implementers": []}
+    return {"type": type_name, "collection": collection, "ancestors": ancestors,
+            "descendants": descendants, "implements": implements, "implementers": implementers}
+
+def find_references(collection: str, name: str, top_k: int = 30) -> dict:
+    """Bir sembol adının korpustaki izleri — TAM statik analiz DEĞİL, üç kaynağın
+    birleşimi: (1) definitions: bare adı birebir eşleşen chunk'lar (decl/method/type),
+    (2) callers: bu tanımların called_by kayıtları (isim-sezgili çağrı grafiği),
+    (3) textual: BM25 kelime aramasında adı geçen diğer chunk'lar (yorum/string
+    dahil olabilir). Tip ise kalıtım bilgisi için ayrıca get_type_hierarchy çağırın."""
+    bare = name.split(".")[-1].lower()
+    sr = search(name, [collection], mode="sparse", top_k=max(top_k, 30), log=False)
+    if "error" in sr:
+        return sr
+    definitions, textual = [], []
+    for h in sr["hits"]:
+        hbare = (h["name"] or "").split(".")[-1].lower()
+        entry = {k: h[k] for k in ("id", "name", "unit", "kind", "line_start", "line_end")}
+        if hbare == bare:
+            definitions.append(entry)
+        else:
+            textual.append(entry)
+    callers, seen_c = [], set()
+    for d in definitions:
+        if d["kind"] != "method":
+            continue
+        pts = cl.retrieve(collection, ids=[d["id"]], with_payload=["called_by"])
+        for c in (pts[0].payload.get("called_by") or []) if pts else []:
+            if c["id"] not in seen_c:
+                seen_c.add(c["id"]); callers.append(c)
+    return {"name": name, "collection": collection,
+            "definitions": definitions[:top_k], "callers": callers[:top_k],
+            "textual": textual[:top_k]}
 
 def list_collections() -> list[dict]:
     out = []

@@ -32,7 +32,8 @@ QDRANT, OLLAMA = retrieval.QDRANT, retrieval.OLLAMA
 HISTORY_COLL = "_index_history"    # indeksleme geçmişi
 PROFILE_COLL = "_index_profiles"   # koleksiyon başına TEK nokta (versiyon gibi kullanıcı alanları) — hepsi Qdrant'ın kendisinde, ayrı bir dosya yok
 SEARCH_LOG_COLL = retrieval.SEARCH_LOG_COLL   # arama telemetrisi (Analitik sekmesi okur)
-INTERNAL_COLLS = {HISTORY_COLL, PROFILE_COLL, SEARCH_LOG_COLL}
+SYMBOL_COLL = retrieval.SYMBOL_COLL           # tip kalıtım/interface kenarları
+INTERNAL_COLLS = {HISTORY_COLL, PROFILE_COLL, SEARCH_LOG_COLL, SYMBOL_COLL}
 STATE = {"index_job": None}
 WATCH_INTERVAL_SEC = 600   # auto_refresh açık koleksiyonlar için kaynak klasör tarama aralığı
 
@@ -1070,6 +1071,7 @@ def _run_index(r: IndexReq):
                 cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
             if changed_something:
                 _link_call_graph(r.collection, st)
+                retrieval.build_symbol_graph(r.collection, st)
             record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
             st.update(phase="done", sec=0.0)
             return
@@ -1113,6 +1115,7 @@ def _run_index(r: IndexReq):
             cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
         if changed_something:
             _link_call_graph(r.collection, st)
+            retrieval.build_symbol_graph(r.collection, st)
         record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
@@ -1458,3 +1461,26 @@ class McpUnitReq(BaseModel):
 @app.post("/api/mcp/read_unit")
 def mcp_read_unit(r: McpUnitReq):
     return mcp_server.read_unit(r.collection, r.unit)
+
+# ---------------- sembol grafiği uçları ----------------
+@app.post("/api/symbols/rebuild")
+def symbols_rebuild(collection: str):
+    """Var olan bir koleksiyon için sembol grafiğini (yeniden) kurar — normalde
+    her indekslemede otomatik kurulur; bu uç eski koleksiyonların migrasyonu için."""
+    if collection in INTERNAL_COLLS or not cl.collection_exists(collection):
+        return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
+    return {"ok": True, **retrieval.build_symbol_graph(collection)}
+
+class McpTypeReq(BaseModel):
+    collection: str; type_name: str
+
+@app.post("/api/mcp/get_type_hierarchy")
+def mcp_get_type_hierarchy(r: McpTypeReq):
+    return mcp_server.get_type_hierarchy(r.collection, r.type_name)
+
+class McpRefsReq(BaseModel):
+    collection: str; name: str; top_k: int = 30
+
+@app.post("/api/mcp/find_references")
+def mcp_find_references(r: McpRefsReq):
+    return mcp_server.find_references(r.collection, r.name, r.top_k)
