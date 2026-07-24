@@ -21,6 +21,7 @@ try:
                                       list_owners, upsert_owner, delete_owner, list_groups, upsert_group, delete_group)
     from ..services.collections_svc import _copy_all_points, _export_line_iter, _gzip_iter, _run_backup
     from ..services.apikeys import generate_api_key, list_api_keys, revoke_api_key
+    from ..services import generations
 except ImportError:
     import retrieval
     from services.common import (cl, ROOT, OLLAMA, INTERNAL_COLLS, STATE, HISTORY_COLL, PROFILE_COLL,
@@ -29,6 +30,7 @@ except ImportError:
                                     list_owners, upsert_owner, delete_owner, list_groups, upsert_group, delete_group)
     from services.collections_svc import _copy_all_points, _export_line_iter, _gzip_iter, _run_backup
     from services.apikeys import generate_api_key, list_api_keys, revoke_api_key
+    from services import generations
 
 router = APIRouter()
 
@@ -100,7 +102,12 @@ def collection_delete(collection: str):
         return JSONResponse({"error": "iç sistem koleksiyonu silinemez"}, status_code=400)
     if not cl.collection_exists(collection):
         return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
-    cl.delete_collection(collection)
+    if generations.is_generational(collection):
+        # ALIAS'lı (Sıra 27 staged) koleksiyon — cl.delete_collection(alias) SESSİZCE
+        # HİÇBİR ŞEY YAPMAZ (ampirik doğrulandı), alias VE tüm nesiller ayrıca silinmeli.
+        generations.delete_all_generations(collection)
+    else:
+        cl.delete_collection(collection)
     if cl.collection_exists(HISTORY_COLL):
         hist_ids = [p.id for p in cl.scroll(HISTORY_COLL, limit=10000,
                     scroll_filter=models.Filter(must=[models.FieldCondition(key="collection", match=models.MatchValue(value=collection))]))[0]]

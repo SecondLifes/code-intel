@@ -14,17 +14,19 @@ try:
     from ..chunker import extract_calls
     from ..retrieval import dense_model, sparse_model, gpu_available
     from .common import (cl, ROOT, INTERNAL_COLLS, STATE, WATCH_INTERVAL_SEC,
-                          BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language, JOB_COLL)
+                          BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language, JOB_COLL, SYMBOL_COLL)
     from .profiles import get_profile, set_profile, get_history, record_history
     from .collections_svc import _run_backup
+    from . import generations
 except ImportError:
     import retrieval
     from chunker import extract_calls
     from retrieval import dense_model, sparse_model, gpu_available
     from services.common import (cl, ROOT, INTERNAL_COLLS, STATE, WATCH_INTERVAL_SEC,
-                                  BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language, JOB_COLL)
+                                  BACKUP_DIR, BACKUP_INTERVAL_SEC, detect_language, JOB_COLL, SYMBOL_COLL)
     from services.profiles import get_profile, set_profile, get_history, record_history
     from services.collections_svc import _run_backup
+    from services import generations
 
 # ---------------- indeksleme ----------------
 class IndexReq(BaseModel):
@@ -34,6 +36,12 @@ class IndexReq(BaseModel):
     vectors: list[str] = ["dense", "sparse"]   # bu çalıştırmada hesaplanacak vektör türleri
     device: str = "gpu"                        # gpu | cpu (yalnız dense için)
     patterns: str = "*.pas"                    # virgülle ayrılmış glob desen(ler)i — hangi dosyalar taransın
+    staged: bool = False                        # Sıra 27: True ise reindex AYRI bir staging koleksiyonunda
+                                                 # yapılır, iş bitince tek atomik alias takasıyla canlıya geçilir
+                                                 # (arayan taraf ASLA yarım/geçiş-anı durumu görmez). Bilerek
+                                                 # OPT-IN — mevcut koleksiyonlar bu bayrak açıkça verilmedikçe
+                                                 # bugünkü yerinde-güncelleme davranışını aynen korur (bkz.
+                                                 # services/generations.py modül docstring'i).
 
 # Bu isimler o kadar jenerik/yaygın (RTL yerleşik rutinleri veya kütüphane
 # genelinde onlarca sınıfta ayrı ayrı tekrarlanan sıradan üye adları) ki
@@ -194,6 +202,27 @@ def load_pending_job() -> "IndexReq | None":
     except Exception:
         return None
 
+def _rekey_symbol_graph(from_key: str, to_key: str):
+    """Sıra 27 (staged): build_symbol_graph FİZİKSEL koleksiyona (qcoll) yazar
+    (src_collection=qcoll) — ama get_type_hierarchy/find_references gibi TÜM
+    okuma yolları MANTIKSAL (alias) adı sorgular. Bu yüzden staged modda taze
+    kenarlar `from_key` (qcoll) altında yazılır, burada `to_key`ye (r.collection)
+    TAŞINIR: önce eski neslin (to_key altındaki) kenarları silinir, sonra
+    yeniler yeniden etiketlenir."""
+    if from_key == to_key:
+        return
+    cl.delete(SYMBOL_COLL, points_selector=models.Filter(must=[
+        models.FieldCondition(key="src_collection", match=models.MatchValue(value=to_key))]))
+    ids, next_page = [], None
+    while True:
+        batch, next_page = cl.scroll(SYMBOL_COLL, limit=2000, offset=next_page, with_payload=False,
+            scroll_filter=models.Filter(must=[models.FieldCondition(key="src_collection", match=models.MatchValue(value=from_key))]))
+        ids.extend(p.id for p in batch)
+        if next_page is None:
+            break
+    if ids:
+        cl.set_payload(SYMBOL_COLL, payload={"src_collection": to_key}, points=models.PointIdsList(points=ids))
+
 def _run_index(r: IndexReq):
     st = STATE["index_job"]
     _save_job_checkpoint(r)
@@ -230,14 +259,27 @@ def _run_index(r: IndexReq):
 
         want_dense = "dense" in r.vectors
         want_sparse = "sparse" in r.vectors
-        exists = cl.collection_exists(r.collection)
+        DENSE_CFG = {"dense": models.VectorParams(size=1024, distance=models.Distance.COSINE)}
+        SPARSE_CFG = {"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)}
+
+        # Sıra 27: staged=True ise TÜM okuma/yazma bir STAGING gerçek koleksiyonuna
+        # (qcoll) yönlendirilir — r.collection (kullanıcının gördüğü ad) bu çalıştırma
+        # SÜRESİNCE hâlâ ESKİ nesli gösterir, en sonda TEK atomik alias takasıyla
+        # geçilir (bkz. generations.py). staged=False: bugünkü davranış AYNEN korunur,
+        # qcoll = r.collection (yerinde güncelleme).
+        prev_gen = None
+        if r.staged:
+            prev_gen = generations.ensure_generational(r.collection)   # düz koleksiyonsa gen1'e taşı+alias'la
+            qcoll = generations.start_new_generation(r.collection, DENSE_CFG, SPARSE_CFG, seed=bool(prev_gen))
+        else:
+            qcoll = r.collection
+
+        exists = cl.collection_exists(qcoll)
         if not exists:
             # her zaman iki vektör türünü de tanımla — hangisi bu turda hesaplanırsa hesaplansın,
             # diğeri daha sonra ayrı bir çalıştırmada update_vectors ile eklenebilsin.
-            cl.create_collection(r.collection,
-                vectors_config={"dense": models.VectorParams(size=1024, distance=models.Distance.COSINE)},
-                sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)})
-        retrieval.ensure_payload_indexes(r.collection)
+            cl.create_collection(qcoll, vectors_config=DENSE_CFG, sparse_vectors_config=SPARSE_CFG)
+        retrieval.ensure_payload_indexes(qcoll)
         # kullanılan dosya deseni profile yazılır — auto_refresh watcher'ı aynı
         # desenle tarama yapabilsin (aksi halde *.pas varsayar, *.inc'i kaçırırdı)
         set_profile(r.collection, patterns=r.patterns or "*.pas")
@@ -259,19 +301,19 @@ def _run_index(r: IndexReq):
         if exists:
             next_page = None
             while True:
-                batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
+                batch, next_page = cl.scroll(qcoll, limit=10000, offset=next_page,
                                               with_payload=["hash"], with_vectors=False)
                 for p_ in batch:
                     old_hash[p_.id] = p_.payload.get("hash")
                 if next_page is None:
                     break
-            for vec_name, target in (("dense", had_dense_ids), ("sparse", had_sparse_ids)):
+            for vec_name, id_set in (("dense", had_dense_ids), ("sparse", had_sparse_ids)):
                 next_page = None
                 while True:
-                    batch, next_page = cl.scroll(r.collection, limit=10000, offset=next_page,
+                    batch, next_page = cl.scroll(qcoll, limit=10000, offset=next_page,
                         with_payload=False, with_vectors=False,
                         scroll_filter=models.Filter(must=[models.HasVectorCondition(has_vector=vec_name)]))
-                    target.update(p_.id for p_ in batch)
+                    id_set.update(p_.id for p_ in batch)
                     if next_page is None:
                         break
 
@@ -329,10 +371,14 @@ def _run_index(r: IndexReq):
         changed_something = len(plan) > 0 or len(stale_ids) > 0
         if not plan:
             if stale_ids:
-                cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
+                cl.delete(qcoll, points_selector=models.PointIdsList(points=stale_ids))
             if changed_something:
-                _link_call_graph(r.collection, st)
-                retrieval.build_symbol_graph(r.collection, st)
+                _link_call_graph(qcoll, st)
+                retrieval.build_symbol_graph(qcoll, st)
+                if r.staged:
+                    _rekey_symbol_graph(qcoll, r.collection)
+            if r.staged:
+                generations.swap_alias(r.collection, qcoll)
             record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
             st.update(phase="done", sec=0.0)
             _clear_job_checkpoint()
@@ -353,7 +399,7 @@ def _run_index(r: IndexReq):
             preserve_ids = [pid for (_x, pid, _nd, _ns, bd, bs) in b if bd or bs]
             old_vecs: dict[int, dict] = {}
             if preserve_ids:
-                for p_ in cl.retrieve(r.collection, ids=preserve_ids, with_payload=False, with_vectors=True):
+                for p_ in cl.retrieve(qcoll, ids=preserve_ids, with_payload=False, with_vectors=True):
                     old_vecs[p_.id] = p_.vector or {}
             pts = []
             for (x, pid, need_dense, need_sparse, before_dense, before_sparse), dv, sv in zip(b, dvs, svs):
@@ -374,14 +420,18 @@ def _run_index(r: IndexReq):
                              | ({"huge": True} if x.get("huge") else {})           # dev metod: kod kırpık, tam hali diskte
                              | ({"lang": x["lang"]} if x.get("lang") else {})      # çok dilli (Sıra 10): Pascal'da yok
                              | ({"extends": x["extends"]} if x.get("extends") else {})))  # kalıtım/interface kenarları
-            cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
+            cl.upsert(qcoll, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
         # yeni/değişen içerik güvenle yazıldıktan SONRA eskiler silinir (yukarıdaki not)
         if stale_ids:
-            cl.delete(r.collection, points_selector=models.PointIdsList(points=stale_ids))
+            cl.delete(qcoll, points_selector=models.PointIdsList(points=stale_ids))
         if changed_something:
-            _link_call_graph(r.collection, st)
-            retrieval.build_symbol_graph(r.collection, st)
+            _link_call_graph(qcoll, st)
+            retrieval.build_symbol_graph(qcoll, st)
+            if r.staged:
+                _rekey_symbol_graph(qcoll, r.collection)
+        if r.staged:
+            generations.swap_alias(r.collection, qcoll)   # TEK atomik çağrı — arayan taraf ASLA ara durumu görmez
         record_history(r.collection, src_path, r.vectors, len(rows), extra=hist_extra)
         st.update(phase="done", sec=round(time.time() - t0, 1))
         _clear_job_checkpoint()
