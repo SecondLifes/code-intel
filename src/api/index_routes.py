@@ -8,13 +8,23 @@ from fastapi.responses import JSONResponse
 try:
     from .. import retrieval
     from ..services.common import cl, ROOT, INTERNAL_COLLS, STATE
-    from ..services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan
+    from ..services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan, migrate_ids_v2
 except ImportError:
     import retrieval
     from services.common import cl, ROOT, INTERNAL_COLLS, STATE
-    from services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan
+    from services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan, migrate_ids_v2
 
 router = APIRouter()
+
+@router.post("/api/index/migrate-ids")
+def migrate_ids(collection: str):
+    """Chunker v2 repo-kimlikli ID'ye GPU'suz migrasyon (bkz. migrate_ids_v2).
+    İdempotent — v2'ye geçmiş koleksiyonda moved=0 döner."""
+    if collection in INTERNAL_COLLS or not cl.collection_exists(collection):
+        return JSONResponse({"error": f"koleksiyon yok: {collection}"}, status_code=404)
+    if STATE.get("index_job") and STATE["index_job"].get("phase") in ("starting", "chunking", "diffing", "embedding", "linking"):
+        return JSONResponse({"error": "indeksleme sürerken migrasyon yapılamaz"}, status_code=409)
+    return {"ok": True, **migrate_ids_v2(collection)}
 
 @router.post("/api/index/start")
 def index_start(r: IndexReq):

@@ -243,6 +243,28 @@ async def collection_import(file: UploadFile = File(...), overwrite: bool = Fals
     collection = manifest["collection"]
     if collection in INTERNAL_COLLS:
         return JSONResponse({"error": "iç sistem koleksiyonu adı kullanılamaz"}, status_code=400)
+
+    # ATOMİKLİK (Sıra 6): TÜM satırlar önce ayrıştırılıp DOĞRULANIR, mevcut
+    # koleksiyona ancak dosyanın tamamı sağlamsa dokunulur. Eski akış overwrite'ta
+    # önce siliyordu — bozuk/yarım bir dosya hem eskiyi silmiş hem yenisini eksik
+    # bırakmış olurdu (dış analizde işaretlenen veri kaybı riski).
+    parsed: list[models.PointStruct] = []
+    try:
+        for i, line in enumerate(lines[1:], start=2):
+            row = json.loads(line)
+            if "_default" in row["vector"]:
+                vec = row["vector"]["_default"]   # adsız vektör: düz liste olarak geri yazılır
+            else:
+                vec = {}
+                for k, val in row["vector"].items():
+                    vec[k] = models.SparseVector(indices=val["indices"], values=val["values"]) if isinstance(val, dict) and val.get("_sparse") else val
+            parsed.append(models.PointStruct(id=row["id"], vector=vec, payload=row["payload"]))
+    except Exception as e:
+        return JSONResponse({"error": f"satır {i} bozuk — mevcut koleksiyona DOKUNULMADI: {str(e)[:120]}"}, status_code=400)
+    expected = manifest.get("points_count")
+    if expected is not None and len(parsed) != expected:
+        return JSONResponse({"error": f"satır sayısı manifest ile uyuşmuyor ({len(parsed)} != {expected}) — dosya kesik olabilir, mevcut koleksiyona DOKUNULMADI"}, status_code=400)
+
     if cl.collection_exists(collection):
         if not overwrite:
             return JSONResponse({"error": f'"{collection}" zaten var — üzerine yazmak için overwrite=true gönderin'}, status_code=409)
@@ -260,20 +282,10 @@ async def collection_import(file: UploadFile = File(...), overwrite: bool = Fals
     cl.create_collection(collection, vectors_config=vectors_cfg, sparse_vectors_config=sparse_cfg)
     retrieval.ensure_payload_indexes(collection)
 
-    B = 200; pts = []; count = 0
-    for line in lines[1:]:
-        row = json.loads(line)
-        if "_default" in row["vector"]:
-            vec = row["vector"]["_default"]   # adsız vektör: düz liste olarak geri yazılır
-        else:
-            vec = {}
-            for k, val in row["vector"].items():
-                vec[k] = models.SparseVector(indices=val["indices"], values=val["values"]) if isinstance(val, dict) and val.get("_sparse") else val
-        pts.append(models.PointStruct(id=row["id"], vector=vec, payload=row["payload"]))
-        if len(pts) >= B:
-            cl.upsert(collection, points=pts); count += len(pts); pts = []
-    if pts:
-        cl.upsert(collection, points=pts); count += len(pts)
+    B = 200; count = 0
+    for i in range(0, len(parsed), B):
+        b = parsed[i:i + B]
+        cl.upsert(collection, points=b); count += len(b)
 
     if manifest.get("profile"):
         prof = {k: v for k, v in manifest["profile"].items() if k != "collection"}
@@ -464,6 +476,51 @@ def api_page():
 @router.get("/viewer")
 def viewer_page():
     return FileResponse(ROOT / "static" / "viewer.html")
+
+# ---------------- kayıtlı çalışma alanları (workspace) ----------------
+# Arama tercihleri paketi (koleksiyon seçimi, mod, filtreler, rerank, gruplama)
+# sunucuda saklanır — tarayıcı localStorage'ına hapsolmaz, farklı tarayıcı/makine
+# aynı çalışma alanlarını görür (birleşik analiz #6 önerisi, tek-kullanıcı sürümü).
+import uuid as _uuid
+
+class WorkspaceReq(BaseModel):
+    name: str
+    config: dict   # {collections, mode, kind, unit, rerank, group, ...} — UI ne verirse
+
+def _ws_id(name: str) -> str:
+    return str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"ws|{name}"))
+
+def _ensure_ws_coll():
+    WC = retrieval.WORKSPACE_COLL
+    if not cl.collection_exists(WC):
+        cl.create_collection(WC, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+    return WC
+
+@router.get("/api/workspaces")
+def workspaces_list():
+    WC = retrieval.WORKSPACE_COLL
+    if not cl.collection_exists(WC):
+        return {"workspaces": []}
+    pts, _ = cl.scroll(WC, limit=200, with_payload=True)
+    return {"workspaces": sorted(({"name": p.payload.get("name"), "config": p.payload.get("config", {}),
+                                    "date": p.payload.get("date")} for p in pts), key=lambda w: w["name"] or "")}
+
+@router.post("/api/workspaces")
+def workspaces_save(r: WorkspaceReq):
+    if not r.name.strip():
+        return JSONResponse({"error": "ad boş olamaz"}, status_code=400)
+    WC = _ensure_ws_coll()
+    cl.upsert(WC, points=[models.PointStruct(id=_ws_id(r.name.strip()), vector=[0.0],
+        payload={"name": r.name.strip(), "config": r.config,
+                 "date": datetime.now().isoformat(timespec="seconds")})])
+    return {"ok": True}
+
+@router.delete("/api/workspaces")
+def workspaces_delete(name: str):
+    WC = retrieval.WORKSPACE_COLL
+    if cl.collection_exists(WC):
+        cl.delete(WC, points_selector=models.PointIdsList(points=[_ws_id(name.strip())]))
+    return {"ok": True}
 
 _VIEWABLE_EXT = {".md": "md", ".markdown": "md", ".html": "html", ".htm": "html", ".txt": "text"}
 

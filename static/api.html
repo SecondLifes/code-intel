@@ -65,7 +65,7 @@ pre.out.err{color:var(--err)}
 
   <div class="panelcard">
     <h3 id="t-mcp">MCP Tool'ları<span class="badge">canlı test</span></h3>
-    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 13 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
+    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 15 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
   </div>
 
   <div class="panelcard">
@@ -90,6 +90,8 @@ pre.out.err{color:var(--err)}
       <div class="field" style="max-width:180px"><label>unit (alt-dize)</label><input id="sc-unit" placeholder="Providers/"></div>
       <div class="field" style="max-width:110px"><label>rerank</label>
         <select id="sc-rerank"><option value="false">false</option><option value="true">true</option></select></div>
+      <div class="field" style="max-width:110px"><label>expand</label>
+        <select id="sc-expand"><option value="false">false</option><option value="true">true</option></select></div>
     </div>
     <button onclick="runTool('search_code')">▶ Çalıştır</button>
     <pre class="out" id="out-search_code"></pre>
@@ -184,9 +186,32 @@ pre.out.err{color:var(--err)}
     <div class="row">
       <div class="field"><label>collection</label><input id="ai-coll" list="coll-list" placeholder="unidac"></div>
       <div class="field"><label>base (commit, boş = son indekslenen)</label><input id="ai-base" placeholder=""></div>
+      <div class="field" style="max-width:160px"><label>head (varsayılan HEAD)</label><input id="ai-head" placeholder="HEAD"></div>
     </div>
     <button onclick="runTool('analyze_impact')">▶ Çalıştır</button>
     <pre class="out" id="out-analyze_impact"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-get_unit_deps">
+    <h3>get_unit_deps</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="udp-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field" style="min-width:280px"><label>unit (yol veya ad)</label><input id="udp-unit" placeholder="MemData.pas"></div>
+    </div>
+    <button onclick="runTool('get_unit_deps')">▶ Çalıştır</button>
+    <pre class="out" id="out-get_unit_deps"></pre>
+  </div>
+
+  <div class="panelcard" id="tool-document_unit">
+    <h3>document_unit</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="du-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field" style="min-width:280px"><label>unit (tam göreli yol)</label><input id="du-unit" placeholder="MemData.pas"></div>
+      <div class="field" style="max-width:110px"><label>force</label>
+        <select id="du-force"><option value="false">false</option><option value="true">true</option></select></div>
+    </div>
+    <button onclick="runTool('document_unit')">▶ Çalıştır</button>
+    <pre class="out" id="out-document_unit"></pre>
   </div>
 
   <div class="panelcard" id="tool-ask_domain_model">
@@ -225,7 +250,7 @@ function applyLang(){
   $('t-rest').textContent=T('REST API','REST API');
   $('t-restdesc').textContent=T('Panelin kullandığı tüm /api/* uçları — canlı, interaktif dokümantasyon ve deneme burada.','Every /api/* endpoint the panel itself uses — live, interactive docs and try-it-out here.');
   $('t-mcp').innerHTML=T('MCP Tool\'ları','MCP Tools')+'<span class="badge">'+T('canlı test','live test')+'</span>';
-  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 13 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 13 tools — just triggered from here instead of stdio.');
+  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 15 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 15 tools — just triggered from here instead of stdio.');
   $('t-viewer').textContent=T('Dosya Görüntüleyici','File Viewer');
   $('t-viewerdesc').textContent=T('Diskteki bir .md/.html/.txt dosyasını panelde (karanlık temayla) görüntüler.','Renders a .md/.html/.txt file from disk inside the panel (dark theme).');
   $('t-vwopen').textContent=T('Görüntüle','View');
@@ -245,12 +270,15 @@ const TOOLS={
     query:$('sc-query').value,
     collections:$('sc-colls').value.trim()?$('sc-colls').value.split(',').map(s=>s.trim()):null,
     mode:$('sc-mode').value, top_k:parseInt($('sc-topk').value)||8,
-    kind:$('sc-kind').value, unit:$('sc-unit').value.trim(), rerank:$('sc-rerank').value==='true'
+    kind:$('sc-kind').value, unit:$('sc-unit').value.trim(), rerank:$('sc-rerank').value==='true',
+    expand:$('sc-expand').value==='true'
   })},
   find_similar:{method:'POST',url:'/api/mcp/find_similar',body:()=>({collection:$('fs-coll').value,id:parseInt($('fs-id').value),top_k:parseInt($('fs-topk').value)||8})},
   read_unit:{method:'POST',url:'/api/mcp/read_unit',body:()=>({collection:$('ru-coll').value,unit:$('ru-unit').value.trim()})},
   get_type_hierarchy:{method:'POST',url:'/api/mcp/get_type_hierarchy',body:()=>({collection:$('th-coll').value,type_name:$('th-type').value.trim()})},
-  analyze_impact:{method:'POST',url:'/api/mcp/analyze_impact',body:()=>({collection:$('ai-coll').value,base:$('ai-base').value.trim()})},
+  analyze_impact:{method:'POST',url:'/api/mcp/analyze_impact',body:()=>({collection:$('ai-coll').value,base:$('ai-base').value.trim(),head:$('ai-head').value.trim()||'HEAD'})},
+  get_unit_deps:{method:'POST',url:'/api/mcp/get_unit_deps',body:()=>({collection:$('udp-coll').value,unit:$('udp-unit').value.trim()})},
+  document_unit:{method:'POST',url:'/api/mcp/document_unit',body:()=>({collection:$('du-coll').value,unit:$('du-unit').value.trim(),force:$('du-force').value==='true'})},
   find_references:{method:'POST',url:'/api/mcp/find_references',body:()=>({collection:$('fr-coll').value,name:$('fr-name').value.trim(),top_k:parseInt($('fr-topk').value)||30})},
   get_chunk:{method:'POST',url:'/api/mcp/get_chunk',body:()=>({collection:$('gc-coll').value,id:parseInt($('gc-id').value)})},
   explain_chunk:{method:'POST',url:'/api/mcp/explain_chunk',body:()=>({collection:$('ec-coll').value,id:parseInt($('ec-id').value),depth:$('ec-depth').value})},

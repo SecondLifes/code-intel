@@ -322,7 +322,9 @@ def _run_index(r: IndexReq):
                 pts.append(models.PointStruct(
                     id=pid, vector=vec,
                     payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")}
-                             | {"code": x["code"][:4000], "doc": x.get("doc", ""), "calls_raw": x.get("calls_raw", [])}))
+                             | {"code": x["code"][:4000], "doc": x.get("doc", ""), "calls_raw": x.get("calls_raw", [])}
+                             | ({"uses": x["uses"]} if x.get("uses") else {})      # unithead: uses-graf girdisi
+                             | ({"huge": True} if x.get("huge") else {})))         # dev metod: kod kırpık, tam hali diskte
             cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
         # yeni/değişen içerik güvenle yazıldıktan SONRA eskiler silinir (yukarıdaki not)
@@ -345,6 +347,48 @@ def _run_index(r: IndexReq):
             pass
 
 # ---------------- otomatik artımlı yenileme (watch mode) ----------------
+def migrate_ids_v2(collection: str) -> dict:
+    """Chunker v2'nin repo-kimlikli ID'sine GPU'SUZ geçiş: her noktanın yeni ID'si
+    mevcut payload'dan hesaplanır (lib:unit:kind_key:code[:160] — payload code'u
+    full_text[:4000] olduğu için ilk 160 karakter chunker'ın hash girdisiyle
+    birebir aynı), nokta vektörleri ve TÜM payload'ıyla (tr/tr_deep çeviri
+    önbelleği dahil!) yeni ID'ye kopyalanır, eskisi silinir. Yeniden embedding
+    YOK — 513K noktalık korpus dakikalar içinde taşınır; ayrı yapılsaydı ~2 saat
+    GPU gerekirdi. İdempotent: ikinci çağrıda moved=0.
+    Sonda çağrı/sembol grafları yeniden kurulur (calls/called_by listeleri eski
+    ID'lere işaret eder olurdu)."""
+    import xxhash
+    kind_to_key = {"method": "impl", "decl": "decl", "type": "type", "unithead": "unithead"}
+    moved = same = skipped = 0
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=500, offset=next_page,
+                                      with_payload=True, with_vectors=True)
+        news, dels = [], []
+        for p in batch:
+            pl = p.payload
+            key = kind_to_key.get(pl.get("kind"))
+            lib, unit = pl.get("lib"), pl.get("unit")
+            if not (key and lib and unit):
+                skipped += 1
+                continue
+            new_id = int(xxhash.xxh3_64(f"{lib}:{unit}:{key}:{pl.get('code', '')[:160]}".encode()).hexdigest()[:12], 16)
+            if new_id == p.id:
+                same += 1
+                continue
+            news.append(models.PointStruct(id=new_id, vector=p.vector or {}, payload=pl))
+            dels.append(p.id)
+        if news:
+            cl.upsert(collection, points=news)      # önce yaz, sonra sil — çökme yarı-durumu eskiyi korur
+            cl.delete(collection, points_selector=models.PointIdsList(points=dels))
+            moved += len(news)
+        if next_page is None:
+            break
+    if moved:
+        _link_call_graph(collection)
+        retrieval.build_symbol_graph(collection)
+    return {"collection": collection, "moved": moved, "already_v2": same, "skipped": skipped}
+
 def _source_dirty(path: str, patterns: str, last_iso: str | None) -> bool:
     """Son indekslemeden sonra değişmiş (mtime daha yeni) EN AZ BİR kaynak dosya
     var mı? Dosya silinmesini mtime yakalayamaz — o durum bir sonraki gerçek

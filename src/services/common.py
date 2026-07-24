@@ -16,7 +16,10 @@ HISTORY_COLL = "_index_history"    # indeksleme geçmişi
 PROFILE_COLL = "_index_profiles"   # koleksiyon başına TEK nokta (kullanıcı alanları)
 SEARCH_LOG_COLL = retrieval.SEARCH_LOG_COLL
 SYMBOL_COLL = retrieval.SYMBOL_COLL
-INTERNAL_COLLS = {HISTORY_COLL, PROFILE_COLL, SEARCH_LOG_COLL, SYMBOL_COLL}
+WORKSPACE_COLL = retrieval.WORKSPACE_COLL
+UNITDOC_COLL = retrieval.UNITDOC_COLL
+ANSWER_COLL = retrieval.ANSWER_COLL
+INTERNAL_COLLS = retrieval.INTERNAL_COLLS   # TEK kaynak: retrieval.py (kopya liste kaymasın)
 STATE = {"index_job": None}   # TEK paylaşılan iş durumu — tüm modüller aynı dict'i günceller
 WATCH_INTERVAL_SEC = 600      # auto_refresh kaynak tarama aralığı
 

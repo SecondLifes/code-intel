@@ -92,6 +92,7 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 #compact-btn.on{background:var(--amber);color:#1a1305;border-color:var(--amber)}
 pre{background:var(--code);margin:0;padding:12px 16px;font:12.5px/1.55 var(--mono);color:#d8cbb0;overflow-x:auto}
 pre .kw{color:var(--amber)}
+pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding:0 1px}
 .exp{display:none;padding:11px 16px;background:rgba(73,179,156,.06);border-top:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;color:#dfe8e3}
 .exp.has{display:block}
 .rel{display:none;padding:11px 16px;background:rgba(224,162,74,.05);border-top:1px solid var(--line);font-size:12.5px}
@@ -185,6 +186,9 @@ pre .kw{color:var(--amber)}
       <span id="t-rr">🎯 Hassas sıra</span>
     </label>
     <div class="sp"></div>
+    <select class="mini" id="ws-select" onchange="applyWorkspace()" title="Kayıtlı çalışma alanları"><option value="">WS…</option></select>
+    <button class="mini" id="ws-save" onclick="saveWorkspace()" type="button" title="Mevcut ayarları çalışma alanı olarak kaydet">💾</button>
+    <button class="mini" id="ws-del" onclick="deleteWorkspace()" type="button" title="Seçili çalışma alanını sil">🗑</button>
     <label class="mini" id="group-toggle-label" style="display:flex;align-items:center;gap:6px;cursor:pointer">
       <input type="checkbox" id="group-toggle" onchange="toggleGrouping(this.checked)" style="accent-color:var(--amber)">
       <span id="t-grouptoggle">Sahibe/Koleksiyona göre grupla</span>
@@ -304,10 +308,59 @@ async function jobPeek(){try{
   if(s.phase==='embedding'||s.phase==='chunking'){el.classList.add('show');el.textContent='◷ '+(s.total?Math.round(100*s.done/s.total)+'%':'…')+' '+T('indeksleniyor','indexing');}
   else el.classList.remove('show');
 }catch(e){}}
-health();jobPeek();setInterval(()=>{health();jobPeek();},8000);
+health();jobPeek();loadWorkspaces();setInterval(()=>{health();jobPeek();},8000);
 
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function hl(code){return esc(code).replace(/\b(procedure|function|begin|end|var|const|type|if|then|else|try|finally|except|for|while|do|class|record|nil|inherited|override|virtual)\b/g,'<span class="kw">$1</span>');}
+// Sorgu terimlerini kod önizlemesinde işaretle — "bu sonuç neden geldi"nin
+// satır-düzeyi yanıtı. Tag içlerine (span/mark) bulaşmasın diye tag-dışı guard'lı.
+function markQuery(html){
+  const toks=[...new Set((LAST_Q||'').split(/[^a-zA-Z0-9]+/).filter(t=>t.length>=3))].slice(0,8);
+  for(const t of toks){
+    const safe=t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    html=html.replace(new RegExp('(?![^<]*>)('+safe+')','gi'),'<mark>$1</mark>');
+  }
+  return html;
+}
+// ---- kayıtlı çalışma alanları ----
+let WS_LIST=[];
+async function loadWorkspaces(){
+  try{WS_LIST=(await(await fetch('/api/workspaces')).json()).workspaces||[];}catch(e){WS_LIST=[];}
+  const cur=$('ws-select').value;
+  $('ws-select').innerHTML=`<option value="">${T('Çalışma alanı…','Workspace…')}</option>`+
+    WS_LIST.map(w=>`<option${w.name===cur?' selected':''}>${esc(w.name)}</option>`).join('');
+}
+function currentConfig(){
+  return {collections:SELECTED_COLLS, mode:MODE, kind:$('f-kind').value, unit:$('f-unit').value.trim(),
+          rerank:$('rr-toggle').checked, group:GROUP_MODE};
+}
+async function saveWorkspace(){
+  const name=prompt(T('Çalışma alanı adı:','Workspace name:'), $('ws-select').value||'');
+  if(!name)return;
+  await fetch('/api/workspaces',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,config:currentConfig()})});
+  await loadWorkspaces();$('ws-select').value=name;
+}
+async function deleteWorkspace(){
+  const name=$('ws-select').value;
+  if(!name||!confirm(T(`"${name}" çalışma alanı silinsin mi?`,`Delete workspace "${name}"?`)))return;
+  await fetch('/api/workspaces?name='+encodeURIComponent(name),{method:'DELETE'});
+  await loadWorkspaces();
+}
+function applyWorkspace(){
+  const w=WS_LIST.find(x=>x.name===$('ws-select').value);
+  if(!w)return;
+  const c=w.config||{};
+  if(Array.isArray(c.collections)&&c.collections.length){
+    SELECT_ALL_MODE=false;localStorage.setItem('ci-colls-allmode','0');
+    SELECTED_COLLS=c.collections.filter(n=>ALL_COLLS.includes(n));
+    if(!SELECTED_COLLS.length)SELECTED_COLLS=[ALL_COLLS[0]];
+    localStorage.setItem('ci-colls',JSON.stringify(SELECTED_COLLS));renderCollPicker();
+  }
+  if(c.mode){MODE=c.mode;[...$('seg-mode').children].forEach(x=>x.classList.toggle('on',x.dataset.m===MODE));}
+  $('f-kind').value=c.kind||'';$('f-unit').value=c.unit||'';$('rr-toggle').checked=!!c.rerank;
+  if(typeof c.group==='boolean'){GROUP_MODE=c.group;$('group-toggle').checked=c.group;localStorage.setItem('ci-groupmode',c.group?'1':'0');}
+}
 function citeFmt(t){return esc(t).replace(/\[(\d+)\]/g,'<b class="cite">[$1]</b>');}
 // "Neden geldi" — sıralama açıklaması (dense/sparse ham sırası, isim boost'u,
 // rerank olasılığı). Geri bildirimle birlikte sıralama ayıklamasının temel aracı.
@@ -339,13 +392,13 @@ function srcCard(h,i){return `
       ${whyText(h.why)?`<span class="m" style="cursor:help" title="${esc(whyText(h.why))}">ⓘ</span>`:''}
       <span class="sc">${h.score}</span>
     </div>
-    <div class="codewrap"><pre>${hl(h.code)}</pre></div>
+    <div class="codewrap"><pre>${markQuery(hl(h.code))}</pre></div>
     <div class="exp ${h.tr?'has':''}" id="e${h.id}">${esc(h.tr||'')}</div>
     <div class="rel" id="r${h.id}"></div>
     <div class="tools">
       <button onclick="explain('${h.id}','${h.collection}','fast',this)">⚡ ${T('Açıkla','Explain')}</button>
       <button onclick="explain('${h.id}','${h.collection}','deep',this)">🔬 ${T('Derin','Deep')}</button>
-      <button onclick="showRelations('${h.id}','${h.collection}',this)">🔗 ${T('İlişkiler','Relations')}</button>
+      <button onclick="showRelations('${h.id}','${h.collection}',this,'${h.kind}','${esc((h.name||'').split('=')[0].trim())}')">🔗 ${T('İlişkiler','Relations')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
       <button onclick="showInBrowser('${h.id}','${h.collection}',this)">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
@@ -393,12 +446,20 @@ function searchBody(offset){
   return {q:LAST_Q,collections:SELECTED_COLLS,mode:MODE,top_k:PAGE_SIZE,offset,
           kind:$('f-kind').value,unit:$('f-unit').value.trim(),rerank:$('rr-toggle').checked};
 }
-// Çok turlu sohbet geçmişi — sunucu stateless, geçmişin sahibi bu sekme.
-// Sayfa yenilenince sıfırlanır; "🧹" ile elle de temizlenebilir.
-let CHAT_HISTORY=[];
-function clearChat(){CHAT_HISTORY=[];const el=$('chatchip');if(el)el.remove();}
+// Çok turlu sohbet geçmişi — sunucu stateless; geçmiş artık localStorage'da
+// KALICI (sayfa yenilense de sürer), "🧹" temizler, "⬇" markdown indirir.
+let CHAT_HISTORY=JSON.parse(localStorage.getItem('ci-chat')||'[]');
+function persistChat(){localStorage.setItem('ci-chat',JSON.stringify(CHAT_HISTORY));}
+function clearChat(){CHAT_HISTORY=[];persistChat();const el=$('chatchip');if(el)el.remove();}
+function exportChat(){
+  if(!CHAT_HISTORY.length)return;
+  const md=CHAT_HISTORY.map(t=>`## ❓ ${t.q}\n\n${t.a}\n`).join('\n---\n\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['# CodeIntel Sohbet\n\n'+md],{type:'text/markdown'}));
+  a.download='codeintel-sohbet.md';a.click();URL.revokeObjectURL(a.href);
+}
 function chatChip(){
-  return CHAT_HISTORY.length?` · <span id="chatchip">💬 ${CHAT_HISTORY.length} ${T('tur','turns')} <span style="cursor:pointer" onclick="clearChat()" title="${T('Sohbet geçmişini temizle','Clear chat history')}">🧹</span></span>`:'';
+  return CHAT_HISTORY.length?` · <span id="chatchip">💬 ${CHAT_HISTORY.length} ${T('tur','turns')} <span style="cursor:pointer" onclick="clearChat()" title="${T('Sohbet geçmişini temizle','Clear chat history')}">🧹</span> <span style="cursor:pointer" onclick="exportChat()" title="${T('Sohbeti markdown indir','Download chat as markdown')}">⬇</span></span>`:'';
 }
 async function run(){
   const q=$('q').value.trim();if(!q)return;
@@ -456,7 +517,7 @@ async function runAskStream(q){
     }
   }
   $('ans').innerHTML=text?citeFmt(text):$('ans').innerHTML.replace('<span class="spin"></span>','');
-  if(text){CHAT_HISTORY.push({q,a:text});if(CHAT_HISTORY.length>8)CHAT_HISTORY.shift();}
+  if(text){CHAT_HISTORY.push({q,a:text});if(CHAT_HISTORY.length>8)CHAT_HISTORY.shift();persistChat();}
   $('ansmeta').innerHTML=`${esc((meta&&meta.model)||model)} · ${T('yanıt','answer')} ${sec}s · ${T('arama','search')} ${(meta&&meta.ms_search)||'?'}ms · ${MODE}${chatChip()}`;
 }
 function err(m){return `<div class="answer" style="border-left-color:#c65">⚠️ ${esc(m)}</div>`;}
@@ -497,7 +558,7 @@ function relGroup(title,items){
 }
 function jumpTo(name){$('q').value=name;document.querySelector('[data-a="find"]').click();run();}
 
-async function showRelations(id,collection,btn){
+async function showRelations(id,collection,btn,kind,name){
   const box=$('r'+id);
   const wasOpen=box.classList.contains('has');
   if(wasOpen){box.classList.remove('has');return;}
@@ -510,6 +571,18 @@ async function showRelations(id,collection,btn){
       box.innerHTML=relGroup(T('Bunu çağıranlar','Called by'),r.called_by)+
                      relGroup(T('Bunun çağırdıkları','Calls'),r.calls)+
                      relGroup(T('Aynı dosyadaki diğerleri','Same file'),r.same_unit);
+    }
+    // tip chunk'ları için kalıtım hiyerarşisi de göster (sembol grafiğinden)
+    if(kind==='type'&&name){
+      try{
+        const h=await(await fetch('/api/mcp/get_type_hierarchy',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({collection,type_name:name})})).json();
+        const anc=(h.ancestors||[]).map(a=>({name:a.name+(a.in_corpus===false?' ⌁':''),unit:''}));
+        const desc=(h.descendants||[]).map(d=>({name:d.name,unit:d.unit||''}));
+        if(anc.length||desc.length){
+          box.innerHTML+=relGroup(T('Üst sınıflar','Ancestors'),anc)+relGroup(T('Alt sınıflar','Descendants'),desc);
+        }
+      }catch(e){}
     }
     box.classList.add('has');
   }catch(x){box.innerHTML=err(String(x));box.classList.add('has');}

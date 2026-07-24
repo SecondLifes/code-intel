@@ -112,8 +112,54 @@ def _build_ask_prompt(r: AskReq, hits: list) -> str:
             + (f"\n\nPREVIOUS CONVERSATION (context):{hist}" if hist else "")
             + f"\n\nQUESTION: {r.q}\n\nSNIPPETS:\n{ctx}")
 
+# ---------------- yanıt önbelleği ----------------
+# Aynı soru + koleksiyon seti + model için LLM'i yeniden çalıştırmamak (30-60 sn
+# tasarruf). YALNIZCA geçmişsiz (ilk tur) sorular önbelleklenir — çok turlu
+# yanıtlar konuşma bağlamına bağlıdır, önbellekten dönmesi yanlış olur. 7 günden
+# eski kayıtlar bayat sayılır (indeks bu arada değişmiş olabilir).
+import uuid as _uuid
+ANSWER_TTL_SEC = 7 * 24 * 3600
+
+def _ans_key(r) -> str:
+    return str(_uuid.uuid5(_uuid.NAMESPACE_DNS,
+        f"ans|{r.model}|{r.lang}|{r.mode}|{','.join(sorted(r.collections))}|{r.q.strip().lower()}"))
+
+def _ans_get(r) -> dict | None:
+    if r.history:
+        return None
+    try:
+        if not cl.collection_exists(retrieval.ANSWER_COLL):
+            return None
+        pts = cl.retrieve(retrieval.ANSWER_COLL, ids=[_ans_key(r)], with_payload=True)
+        if not pts:
+            return None
+        pl = pts[0].payload
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(pl["date"])).total_seconds()
+        return pl if age < ANSWER_TTL_SEC else None
+    except Exception:
+        return None
+
+def _ans_put(r, answer: str, hits: list, total: int):
+    if r.history or not answer:
+        return
+    try:
+        if not cl.collection_exists(retrieval.ANSWER_COLL):
+            from qdrant_client import models as _m
+            cl.create_collection(retrieval.ANSWER_COLL,
+                vectors_config=_m.VectorParams(size=1, distance=_m.Distance.DOT))
+        from qdrant_client import models as _m
+        cl.upsert(retrieval.ANSWER_COLL, points=[_m.PointStruct(id=_ans_key(r), vector=[0.0],
+            payload={"answer": answer, "hits": hits[:6], "total": total, "model": r.model,
+                     "date": datetime.now(timezone.utc).isoformat()})])
+    except Exception:
+        pass
+
 @router.post("/api/ask")
 def ask(r: AskReq):
+    cached = _ans_get(r)
+    if cached:
+        return {"answer": cached["answer"], "cached": True, "model": cached.get("model"),
+                "total": cached.get("total"), "hits": cached.get("hits", [])}
     sr = search(SearchReq(q=r.q, collections=r.collections, mode=r.mode, top_k=6))
     if isinstance(sr, JSONResponse):
         return sr
@@ -127,6 +173,7 @@ def ask(r: AskReq):
     txt = json.loads(urllib.request.urlopen(
         urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
         timeout=600).read()).get("response", "").strip()
+    _ans_put(r, txt, hits, sr.get("total", len(hits)))
     return {"answer": txt, "sec": round(time.time() - t0, 1), "model": r.model, "ms_search": sr["ms"],
             "total": sr.get("total", len(hits)), "hits": hits}
 
@@ -135,7 +182,18 @@ def ask_stream(r: AskReq):
     """SSE akışlı RAG sohbet — /api/ask ile aynı arama+prompt yolu, ama Ollama
     yanıtı token token akıtılır: önce `meta` olayı (kaynak hit'ler + arama süresi),
     sonra `data:` satırlarında {"t": parça}, en sonda `done` olayı. Panel arayüzü
-    bunu kullanır; eski bloklayan /api/ask REST istemcileri için aynen durur."""
+    bunu kullanır; eski bloklayan /api/ask REST istemcileri için aynen durur.
+    Önbellekli yanıtlar tek parça halinde anında akar (cached=true)."""
+    cached = _ans_get(r)
+    if cached:
+        def gen_cached():
+            meta = {"hits": cached.get("hits", []), "ms_search": 0,
+                    "total": cached.get("total"), "model": cached.get("model"), "cached": True}
+            yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'t': cached['answer']}, ensure_ascii=False)}\n\n"
+            yield "event: done\ndata: {\"sec\": 0, \"cached\": true}\n\n"
+        return StreamingResponse(gen_cached(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache"})
     sr = search(SearchReq(q=r.q, collections=r.collections, mode=r.mode, top_k=6))
     if isinstance(sr, JSONResponse):
         err = bytes(sr.body).decode("utf-8", "replace")
@@ -156,6 +214,7 @@ def ask_stream(r: AskReq):
         body = json.dumps({"model": r.model, "prompt": prompt, "stream": True,
                            "options": {"num_predict": 600}, "think": False}).encode()
         t0 = time.time()
+        full = []   # akan yanıt biriktirilir — sonda önbelleğe yazmak için
         try:
             with urllib.request.urlopen(
                     urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
@@ -169,12 +228,14 @@ def ask_stream(r: AskReq):
                         continue
                     tok = d.get("response", "")
                     if tok:
+                        full.append(tok)
                         yield f"data: {json.dumps({'t': tok}, ensure_ascii=False)}\n\n"
                     if d.get("done"):
                         break
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)[:200]}, ensure_ascii=False)}\n\n"
             return
+        _ans_put(r, "".join(full).strip(), hits, sr.get("total", len(hits)))
         yield f"event: done\ndata: {json.dumps({'sec': round(time.time() - t0, 1)})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream",

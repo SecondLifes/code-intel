@@ -32,7 +32,7 @@ def _first_hit_rank(names: list[str], expected: list[str]) -> int | None:
 
 
 def run(collections: list[str] | None, mode: str, top_k: int, rerank: bool = False,
-        verbose: bool = True) -> dict:
+        expand: bool = False, verbose: bool = True) -> dict:
     qa = json.loads((pathlib.Path(__file__).parent / "golden_qa.json").read_text(encoding="utf-8"))
     if collections:
         qa = [x for x in qa if x.get("collection", "unidac") in collections]
@@ -46,7 +46,7 @@ def run(collections: list[str] | None, mode: str, top_k: int, rerank: bool = Fal
         st = per_coll.setdefault(coll, {"n": 0, "hits": 0, "rr": 0.0, "ndcg": 0.0, "rows": []})
         t0 = time.time()
         # log=False: eval koşuları panel Analitik'ine (gerçek kullanıcı telemetrisi) karışmasın
-        result = retrieval.search(item["question"], [coll], mode, top_k, rerank=rerank, log=False)
+        result = retrieval.search(item["question"], [coll], mode, top_k, rerank=rerank, expand=expand, log=False)
         ms = (time.time() - t0) * 1000
         latencies.append(ms)
         st["n"] += 1
@@ -118,9 +118,10 @@ if __name__ == "__main__":
     ap.add_argument("--mode", default="hybrid", choices=["hybrid", "dense", "sparse"])
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--rerank", action="store_true", help="cross-encoder yeniden sıralamayı da ölç")
+    ap.add_argument("--expand", action="store_true", help="LLM sorgu genişletmeyi de ölç (A2 pilotu)")
     ap.add_argument("--compare", action="store_true", help="baseline vs rerank yan yana")
     args = ap.parse_args()
     if args.compare:
         compare(args.collection, args.mode, args.k)
     else:
-        run(args.collection, args.mode, args.k, args.rerank)
+        run(args.collection, args.mode, args.k, args.rerank, args.expand)

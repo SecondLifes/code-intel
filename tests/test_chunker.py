@@ -94,3 +94,61 @@ def test_noise_filter_drops_tiny_declarations_without_doc(tmp_path):
     p = write(tmp_path, "tiny.pas", "type\n  TA = class\n    destructor Destroy; override;\n  end;\n")
     decls = [ch for ch in chunk_file(p, "test") if ch["kind"] == "decl"]
     assert decls == []   # "destructor Destroy; override;" tek başına 40 karakterden kısa
+
+
+# ---------------- Chunker v2 (Sıra 5) ----------------
+FULL_UNIT = """unit MyUnit;
+
+interface
+
+uses SysUtils, Classes, Generics.Collections;
+
+function Foo: Integer;
+
+implementation
+
+uses Windows {yorum}, Messages, Vcl.Forms in '..\\Vcl.Forms.pas';
+
+function Foo: Integer;
+begin
+  Result := 1;
+end;
+
+end.
+"""
+
+
+def test_v2_unithead_extracts_uses(tmp_path):
+    """`unit X;` başlıklı dosyalar kind=unithead chunk'ı üretmeli; uses listesi
+    her iki bölümden, yorumlar ve `in '...'` ekleri ayıklanmış halde gelmeli."""
+    p = write(tmp_path, "MyUnit.pas", FULL_UNIT)
+    heads = [ch for ch in chunk_file(p, "test") if ch["kind"] == "unithead"]
+    assert len(heads) == 1
+    assert heads[0]["name"] == "MyUnit"
+    assert heads[0]["uses"] == ["SysUtils", "Classes", "Generics.Collections", "Windows", "Messages", "Vcl.Forms"]
+
+
+def test_v2_headerless_file_has_no_unithead(tmp_path):
+    """Başlıksız parçalar (include/test kırpıntıları) unithead ÜRETMEMELİ."""
+    p = write(tmp_path, "frag.pas", OVERLOADED_CLASS)
+    assert not [ch for ch in chunk_file(p, "test") if ch["kind"] == "unithead"]
+
+
+def test_v2_huge_method_included_with_flag(tmp_path):
+    """>400 satırlık metodlar v1'de TAMAMEN atlanıyordu — v2'de kırpılmış kod +
+    huge=true bayrağıyla indekslenmeli (tam kod diskten-okuma yoluyla gelir)."""
+    body = "function Big: Integer;\nbegin\n" + "  Result := 1;\n" * 450 + "end;\n"
+    p = write(tmp_path, "big.pas", "unit Big;\ninterface\nfunction Big: Integer;\nimplementation\n" + body + "end.\n")
+    methods = [ch for ch in chunk_file(p, "test") if ch["kind"] == "method"]
+    assert methods and methods[0].get("huge") is True
+    assert methods[0]["code"].count("\n") <= 402
+    assert methods[0]["line_end"] > 400   # gerçek satır aralığı korunur
+
+
+def test_v2_id_is_repo_scoped(tmp_path):
+    """Aynı dosya farklı lib ile chunk'lanınca ID'ler FARKLI olmalı — merge'de
+    kütüphaneler arası sessiz ID çakışmasını bitiren repo-kimlikli ID."""
+    p = write(tmp_path, "MyUnit.pas", FULL_UNIT)
+    a = {ch["name"] + ch["kind"]: ch["id"] for ch in chunk_file(p, "libA")}
+    b = {ch["name"] + ch["kind"]: ch["id"] for ch in chunk_file(p, "libB")}
+    assert a and all(a[k] != b[k] for k in a)

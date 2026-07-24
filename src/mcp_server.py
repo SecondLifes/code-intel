@@ -1,7 +1,7 @@
 """Code-Intel MCP sunucusu — stdio üzerinden Claude Code, Codex CLI, Gemini CLI
 gibi MCP-uyumlu ajanlara Delphi kod tabanı arama/açıklama/inceleme araçları sunar.
-13 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
-get_type_hierarchy, find_references, analyze_impact, explain_chunk, review_code,
+15 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
+get_type_hierarchy, find_references, get_unit_deps, analyze_impact, document_unit, explain_chunk, review_code,
 ask_domain_model, list_domain_models, list_collections.
 
 Çalıştır:  .venv/Scripts/python.exe -m src.mcp_server
@@ -55,7 +55,8 @@ def tool(fn):
 
 @tool
 def search_code(query: str, collections: list[str] | None = None, mode: str = "hybrid", top_k: int = 8,
-                 offset: int = 0, kind: str = "", unit: str = "", rerank: bool = False) -> dict:
+                 offset: int = 0, kind: str = "", unit: str = "", rerank: bool = False,
+                 expand: bool = False) -> dict:
     """Delphi kod tabanında hibrit (anlamsal+kelime, ağırlıklı RRF + isim-eşleşme
     boost'uyla birleştirilmiş) arama yapar.
 
@@ -74,7 +75,7 @@ def search_code(query: str, collections: list[str] | None = None, mode: str = "h
     decl+method kopyaları tekilleştirilir (method tutulur).
     """
     return retrieval.search(query, collections or DEFAULT_COLLECTIONS, mode, top_k, offset,
-                            kind=kind, unit=unit, rerank=rerank)
+                            kind=kind, unit=unit, rerank=rerank, expand=expand)
 
 @tool
 def find_similar(collection: str, id: int, top_k: int = 8) -> dict:
@@ -163,15 +164,35 @@ def find_references(collection: str, name: str, top_k: int = 30) -> dict:
     return retrieval.find_references(collection, name, top_k)
 
 @tool
-def analyze_impact(collection: str, base: str = "") -> dict:
+def analyze_impact(collection: str, base: str = "", head: str = "HEAD") -> dict:
     """Değişiklik etki analizi: koleksiyonun kaynak deposunda base commit'ten
     (verilmezse SON İNDEKSLENEN commit'ten) bu yana değişen dosyaları bulur ve
     "bu değişiklik neyi etkiler?" sorusunu yanıtlar: changed_units (değişen
     dosyalar), chunks_changed, impacted_callers (değişen koda değişiklik kümesi
     DIŞINDAN çağrı yapan metodlar), impacted_subtypes (değişen tiplerin alt
-    sınıfları). Kaynak klasör git deposu değilse zarif hata döner. Dosya-düzeyi
-    diff + isim-sezgili graf — kesin statik analiz değildir."""
-    return retrieval.analyze_impact(collection, base)
+    sınıfları). head verilirse (varsayılan HEAD) iki revizyon ARASI karşılaştırma
+    yapılır (revizyon-karşılaştırma modu; HEAD ise çalışma ağacı da dahil).
+    Kaynak klasör git deposu değilse zarif hata döner. Dosya-düzeyi diff +
+    isim-sezgili graf — kesin statik analiz değildir."""
+    return retrieval.analyze_impact(collection, base, head)
+
+@tool
+def get_unit_deps(collection: str, unit: str) -> dict:
+    """Bir dosyanın (unit) bağımlılık grafiği: uses (bu dosyanın kullandığı
+    unit'ler) ve used_by (bu unit'i kullanan dosyalar) — refactor/etki analizi
+    için "bu dosyaya kim bağımlı" sorusunun yanıtı. unit tam göreli yol
+    ("Core/Utils.pas") ya da unit adı ("Utils") olabilir. Kenarlar indeksleme
+    sırasında kaynak dosyaların uses bildirimlerinden çıkarılır."""
+    return retrieval.get_unit_deps(collection, unit)
+
+@tool
+def document_unit(collection: str, unit: str, force: bool = False) -> dict:
+    """Bir dosyanın (unit, tam göreli yol) teknik dokümantasyonunu Markdown olarak
+    üretir: amaç, bağımlılıklar (uses), public API, önemli tipler, notlar. Sonuç
+    kalıcı önbelleklenir — aynı unit için tekrar çağrı anında döner (force=True
+    yeniden üretir). Yerel Ollama ile üretilir, kod dışarı çıkmaz; ilk üretim
+    derin modelle ~30-60 sn sürebilir."""
+    return retrieval.document_unit(collection, unit, DEEP_MODEL, force)
 
 @tool
 def list_domain_models() -> dict:

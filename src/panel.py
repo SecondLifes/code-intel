@@ -104,8 +104,21 @@ app.include_router(search_routes.router)
 app.include_router(index_routes.router)
 app.include_router(mcp_routes.router)
 
+LOG_ROTATE_BYTES = 20_000_000   # log dosyası bu boyutu aşınca .1'e devredilir (1 eski kopya tutulur)
+
+def _rotate_logs():
+    try:
+        for f in (ROOT / "logs").glob("*.log"):
+            if f.stat().st_size > LOG_ROTATE_BYTES:
+                old = f.with_suffix(f.suffix + ".1")
+                old.unlink(missing_ok=True)
+                f.rename(old)
+    except Exception:
+        pass
+
 @app.on_event("startup")
 def _startup():
+    _rotate_logs()
     # payload index'leri geriye dönük tamamla (idempotent, eski koleksiyonlar için migrasyon)
     try:
         for c in cl.get_collections().collections:

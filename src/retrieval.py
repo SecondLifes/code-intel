@@ -39,7 +39,11 @@ SYMBOL_COLL = "_symbol_graph"   # tip kalıtım/interface kenarları — AYRI ko
                                 # ana koleksiyon payload'ına liste gömme yaklaşımı
                                 # bilinçli olarak KULLANILMIYOR (375K'lık koleksiyonlarda
                                 # ölçeklenmez; birleşik analiz kararı)
-INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL, SYMBOL_COLL}
+WORKSPACE_COLL = "_workspaces"  # kayıtlı çalışma alanları (arama tercihleri paketi)
+UNITDOC_COLL = "_unit_docs"     # oto-üretilmiş unit dokümantasyonu önbelleği
+ANSWER_COLL = "_answer_cache"   # RAG sohbet yanıt önbelleği
+INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL, SYMBOL_COLL,
+                  WORKSPACE_COLL, UNITDOC_COLL, ANSWER_COLL}
 
 # Cross-encoder reranker: çok dilli (Türkçe sorgu + İngilizce kod çalışır).
 # İlk kullanımda (~1.1GB) indirilir, sonra kalıcı önbellekten yüklenir.
@@ -241,7 +245,8 @@ def ensure_payload_indexes(collection: str):
             pass
 
 def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8, offset: int = 0,
-           kind: str = "", unit: str = "", rerank: bool = False, log: bool = True) -> dict:
+           kind: str = "", unit: str = "", rerank: bool = False, log: bool = True,
+           expand: bool = False, diversify: bool = True) -> dict:
     """Hibrit (dense+sparse, kendi ağırlıklı RRF'imiz + isim-eşleşme boost'u ile
     birleştirilmiş) arama. Birden fazla koleksiyon verilirse aralarında da aynı
     füzyon uygulanır. Uyumsuz bir koleksiyon (örn. dense/sparse şeması yok)
@@ -259,8 +264,23 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
     ANN arama olduğu için "korpustaki TÜM eşleşme sayısı" değildir) ve `has_more`
     döner."""
     t0 = time.time()
+    # SORGU GENİŞLETME (opsiyonel, A2 pilotu): Türkçe sorguyu hızlı modelle EN
+    # kod terimlerine çevirip yalnız BM25 koluna + isim-boost token'larına ekler
+    # (dense zaten çok dilli — ona dokunulmaz). Başarısızlıkta sorgu aynen kalır.
+    q_sparse, expanded_kw = q, ""
+    if expand:
+        try:
+            kw = ollama_generate(_CFG.get("fast_model", "gemma4:12b"),
+                "Asagidaki kod arama sorgusu icin Ingilizce 3-6 teknik anahtar kelime uret "
+                "(fonksiyon/kavram adlari). YALNIZCA kelimeleri boslukla ayirip yaz:\n" + q,
+                num_predict=40, timeout=30)
+            expanded_kw = " ".join(re.findall(r"[A-Za-z0-9_]+", kw))[:120]
+            if expanded_kw:
+                q_sparse = f"{q} {expanded_kw}"
+        except Exception:
+            pass
     dv = list(dense_model("gpu" if gpu_available() else "cpu").embed([f"query: {q}"]))[0].tolist()
-    sv = list(sparse_model().query_embed(q))[0]
+    sv = list(sparse_model().query_embed(q_sparse))[0]
     sq = models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
     # Sabit bir üst sınır (offset'e göre BÜYÜMEZ) — aksi halde sayfa 2'de daha
     # fazla aday çekilip `total` sayısı sayfa sayfa değişir (gerçekte test edilip
@@ -268,7 +288,7 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
     # total=351 döndürüyordu). 200, bu korpus ölçeğinde ~25 sayfa sayfalama için
     # yeterli ve ek gecikmesi ölçülebilir değil.
     per_coll_limit = max(200, offset + top_k)
-    query_tokens = _tokenize(q)
+    query_tokens = _tokenize(q_sparse)   # genişletilmiş EN terimler isim-boost'a da girer
     flt = models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value=kind))]) if kind else None
 
     # Koleksiyon önceliği (yıldız) yalnızca birden fazla koleksiyon birlikte
@@ -331,6 +351,22 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
         except Exception as e:
             errors["_rerank"] = str(e)[:200]   # rerank çökerse füzyon sırası korunur
 
+    # MMR-lite çeşitlilik: ilk pencerede tek dosyanın baskınlığını yumuşat —
+    # aynı unit'ten en fazla 3 sonuç ilk 24 pozisyonda kalır, fazlası aşağı iner
+    # (dedup sonrası bile tek dosya ilk sayfayı doldurabiliyordu). Sıra korunur,
+    # sonuç ATILMAZ; eval ile doğrulandı (isim-boost'lu ilk isabetler etkilenmez).
+    if diversify and ranked:
+        MAX_PER_UNIT, WINDOW = 3, 24
+        head_list, tail_list, per_unit = [], [], {}
+        for item in ranked:
+            u = item[1][1].payload.get("unit")
+            if len(head_list) < WINDOW and per_unit.get(u, 0) >= MAX_PER_UNIT:
+                tail_list.append(item)
+            else:
+                head_list.append(item)
+                per_unit[u] = per_unit.get(u, 0) + 1
+        ranked = head_list + tail_list
+
     total = len(ranked)
     page = ranked[offset:offset + top_k]
     ms = int((time.time() - t0) * 1000)
@@ -344,6 +380,7 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
     # could jump from ~0.8 to ~18 depending on which source last touched the
     # point dict, even though sort order was already correct).
     return {"ms": ms, "total": total, "has_more": total > offset + top_k, "rerank": bool(rerank),
+            **({"expanded": expanded_kw} if expanded_kw else {}),
             "hits": [
         {"collection": c, "score": round(fscore, 4), "id": h.id,
          **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
@@ -572,8 +609,21 @@ def build_symbol_graph(collection: str, st: dict | None = None) -> dict:
                     edges.append((child, parent, edge, p.payload.get("unit"), p.id))
         if next_page is None:
             break
+    # ---- uses kenarları (chunker v2 unithead chunk'larından; unit-düzeyi bağımlılık) ----
+    uses_edges = []   # (child_unit_path, child_unit_name, used_name)
+    next_page = None
+    while True:
+        batch, next_page = cl.scroll(collection, limit=5000, offset=next_page,
+            with_payload=["unit", "name", "uses"],
+            scroll_filter=models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value="unithead"))]))
+        for p in batch:
+            for used in (p.payload.get("uses") or []):
+                uses_edges.append((p.payload.get("unit"), p.payload.get("name") or "", used, p.id))
+        if next_page is None:
+            break
+
     if st is not None:
-        st.update(phase="symbols", total=len(edges), done=0)
+        st.update(phase="symbols", total=len(edges) + len(uses_edges), done=0)
     # bu koleksiyonun eski kenarlarını temizle (idempotency)
     cl.delete(SYMBOL_COLL, points_selector=models.Filter(must=[
         models.FieldCondition(key="src_collection", match=models.MatchValue(value=collection))]))
@@ -590,11 +640,42 @@ def build_symbol_graph(collection: str, st: dict | None = None) -> dict:
                      "unit": unit}))
         if len(pts) >= B:
             cl.upsert(SYMBOL_COLL, points=pts); pts = []
+    for unit_path, unit_name, used, chunk_id in uses_edges:
+        pts.append(models.PointStruct(
+            id=_symbol_edge_id(collection, f"{unit_path}", used.lower(), "uses"), vector=[0.0],
+            payload={"src_collection": collection, "edge": "uses",
+                     "child_name": unit_name.lower(), "child_display": unit_name,
+                     "child_id": chunk_id, "unit": unit_path,
+                     "parent_name": used.lower(), "parent_display": used, "parent_id": None}))
+        if len(pts) >= B:
+            cl.upsert(SYMBOL_COLL, points=pts); pts = []
     if pts:
         cl.upsert(SYMBOL_COLL, points=pts)
     if st is not None:
-        st.update(done=len(edges))
-    return {"types_seen": n_types, "edges": len(edges)}
+        st.update(done=len(edges) + len(uses_edges))
+    return {"types_seen": n_types, "edges": len(edges), "uses_edges": len(uses_edges)}
+
+def get_unit_deps(collection: str, unit: str) -> dict:
+    """Unit-düzeyi bağımlılıklar (chunker v2 uses kenarlarından): `uses` (bu
+    dosyanın kullandığı unit'ler) ve `used_by` (bu unit'i uses'ına yazan dosyalar).
+    `unit` tam göreli yol ("Core/Utils.pas") ya da unit adı ("Utils") olabilir.
+    Kenarlar indekslemede tazelenir; eski (v2 öncesi indekslenmiş) koleksiyonlarda
+    reindex yapılana kadar boş döner."""
+    if not cl.collection_exists(SYMBOL_COLL):
+        return {"error": "sembol grafiği henüz kurulmamış"}
+    stem = pathlib.Path(unit).stem.lower()
+    coll_f = models.FieldCondition(key="src_collection", match=models.MatchValue(value=collection))
+    uses_f = models.FieldCondition(key="edge", match=models.MatchValue(value="uses"))
+    out_edges = _edge_scroll([coll_f, uses_f,
+        models.FieldCondition(key="child_name", match=models.MatchValue(value=stem))], limit=300)
+    if "/" in unit or "\\" in unit:   # tam yol verildiyse yola göre daralt
+        out_edges = [e for e in out_edges if e.get("unit") == unit.replace("\\", "/")] or out_edges
+    in_edges = _edge_scroll([coll_f, uses_f,
+        models.FieldCondition(key="parent_name", match=models.MatchValue(value=stem))], limit=300)
+    return {"unit": unit, "collection": collection,
+            "uses": sorted({e["parent_display"] for e in out_edges}),
+            "used_by": sorted({(e.get("unit") or e["child_display"]) for e in in_edges}),
+            "note": "unit-düzeyi graf; uses listeleri kaynak dosyalardaki bildirimlerden gelir"}
 
 def _edge_scroll(flt_must: list, limit: int = 500) -> list:
     out, next_page = [], None
@@ -700,9 +781,11 @@ def git_info(path: str) -> dict:
     except Exception:
         return {}
 
-def _git_changed_files(git_root: str, base: str) -> list[str] | None:
-    """base..HEAD arası + çalışma ağacındaki (commit'lenmemiş, untracked dahil)
-    değişen dosyaların git-köküne göre yolları. Hata halinde None."""
+def _git_changed_files(git_root: str, base: str, head: str = "HEAD") -> list[str] | None:
+    """base..head arası değişen dosyalar (git-köküne göre yollar). head=HEAD ise
+    çalışma ağacındaki (commit'lenmemiş + untracked) değişiklikler de dahil —
+    başka bir head verilirse yalnız iki revizyon arası fark (revizyon-karşılaştırma
+    modu). Hata halinde None."""
     try:
         def g(*args):
             r = subprocess.run(["git", "-C", git_root, *args], capture_output=True, text=True, timeout=30)
@@ -711,14 +794,15 @@ def _git_changed_files(git_root: str, base: str) -> list[str] | None:
             return r.stdout
         changed: set[str] = set()
         if base:
-            changed.update(l.strip() for l in g("diff", "--name-only", base, "HEAD").splitlines() if l.strip())
-        changed.update(l.strip() for l in g("diff", "--name-only", "HEAD").splitlines() if l.strip())
-        changed.update(l.strip() for l in g("ls-files", "--others", "--exclude-standard").splitlines() if l.strip())
+            changed.update(l.strip() for l in g("diff", "--name-only", base, head).splitlines() if l.strip())
+        if head == "HEAD":
+            changed.update(l.strip() for l in g("diff", "--name-only", "HEAD").splitlines() if l.strip())
+            changed.update(l.strip() for l in g("ls-files", "--others", "--exclude-standard").splitlines() if l.strip())
         return sorted(changed)
     except Exception:
         return None
 
-def analyze_impact(collection: str, base: str = "", max_items: int = 100) -> dict:
+def analyze_impact(collection: str, base: str = "", head: str = "HEAD", max_items: int = 100) -> dict:
     """Değişiklik etki analizi: kaynak depoda base'ten (verilmezse SON İNDEKSLENEN
     commit'ten) bu yana değişen dosyaları bulur ve indeksteki izdüşümünü çıkarır —
     hangi chunk'lar değişti, onları KİM çağırıyor (called_by), değişen tiplerin
@@ -735,13 +819,13 @@ def analyze_impact(collection: str, base: str = "", max_items: int = 100) -> dic
     if not gi:
         return {"error": f"kaynak klasör bir git deposunda değil: {src} (etki analizi git gerektirir)"}
     base_ref = base or prof.get("last_commit") or ""
-    if base_ref == gi.get("commit") and not gi.get("dirty"):
+    if head == "HEAD" and base_ref == gi.get("commit") and not gi.get("dirty"):
         return {"base": base_ref[:12], "head": gi["commit"][:12], "dirty": False,
                 "changed_units": [], "impacted_callers": [], "impacted_subtypes": [],
                 "note": "son indekslemeden bu yana değişiklik yok"}
-    files = _git_changed_files(gi["git_root"], base_ref)
+    files = _git_changed_files(gi["git_root"], base_ref, head)
     if files is None:
-        return {"error": f"git diff başarısız — base geçerli mi: {base_ref!r}"}
+        return {"error": f"git diff başarısız — base/head geçerli mi: {base_ref!r}..{head!r}"}
 
     # git-kökü göreli yol -> kaynak-kökü göreli unit yolu (indeksin 'unit' alanı)
     src_p, root_p = pathlib.Path(src).resolve(), pathlib.Path(gi["git_root"]).resolve()
@@ -778,12 +862,56 @@ def analyze_impact(collection: str, base: str = "", max_items: int = 100) -> dic
             for c in (p.payload.get("called_by") or []):
                 if c["id"] not in changed_ids:   # değişen kümenin DIŞINDAN çağıranlar = gerçek etki
                     callers.setdefault(c["id"], c)
-    return {"base": (base_ref or "(yok)")[:12], "head": gi["commit"][:12], "branch": gi.get("branch"),
-            "dirty": gi.get("dirty"),
+    return {"base": (base_ref or "(yok)")[:12], "head": (head if head != "HEAD" else gi["commit"])[:12],
+            "branch": gi.get("branch"), "dirty": gi.get("dirty"),
             "changed_units": units[:max_items], "chunks_changed": len(changed_chunks),
             "impacted_callers": list(callers.values())[:max_items],
             "impacted_subtypes": list(subtypes.values())[:max_items],
             "note": "etki listesi isim-sezgili çağrı grafiği + tip kenarlarına dayanır (dosya-düzeyi diff)"}
+
+# ---------------- otomatik unit dokümantasyonu (önbellekli) ----------------
+def document_unit(collection: str, unit: str, model: str = "", force: bool = False) -> dict:
+    """Bir dosyanın (unit) teknik dokümantasyonunu Markdown olarak üretir ve
+    _unit_docs iç koleksiyonunda KALICI önbellekler (aynı unit için tekrar çağrı
+    anında döner; force=True yeniden üretir). Girdi: unit'in decl/type chunk'ları
+    (public API), unithead uses listesi ve /// doc özetleri. Üretim yereldeki
+    Ollama modeliyle yapılır — kod dışarı çıkmaz."""
+    key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{collection}|{unit}"))
+    try:
+        if not force and cl.collection_exists(UNITDOC_COLL):
+            pts = cl.retrieve(UNITDOC_COLL, ids=[key], with_payload=True)
+            if pts and pts[0].payload.get("md"):
+                return {"cached": True, "unit": unit, "collection": collection,
+                        "model": pts[0].payload.get("model"), "md": pts[0].payload["md"]}
+    except Exception:
+        pass
+    ru = read_unit(collection, unit, max_chars=24_000)
+    if "error" in ru:
+        return ru
+    # bağlam: decl/type + doc'lar öncelikli (public yüzey), gövdelerden kısa örnek
+    pts, _ = cl.scroll(collection, limit=400, with_payload=["name", "kind", "doc", "uses", "code"],
+        scroll_filter=models.Filter(must=[models.FieldCondition(key="unit", match=models.MatchValue(value=unit))]))
+    uses = next((p.payload.get("uses") for p in pts if p.payload.get("kind") == "unithead"), None) or []
+    decls = [f"- {p.payload.get('name')}" + (f" — {p.payload.get('doc')}" if p.payload.get("doc") else "")
+             for p in pts if p.payload.get("kind") in ("decl", "type")][:80]
+    mdl = model or _CFG.get("deep_model", "qwen3.6")
+    prompt = ("Asagidaki Delphi unit'i icin Markdown teknik dokumantasyon uret (Turkce). "
+              "Bolumler: ## Amac (2-3 cumle), ## Bagimliliklar, ## Public API (imza + tek satir aciklama), "
+              "## Onemli Tipler, ## Notlar (varsa riskler/desenler). Kod URETME, yalnizca dokumante et. "
+              f"Kisa ve teknik yaz.\n\nUNIT: {unit}\nUSES: {', '.join(uses) or '(yok)'}\n"
+              f"BILDIRIMLER:\n" + "\n".join(decls) + f"\n\nKOD (kirpilmis):\n{ru['code'][:12000]}")
+    t0 = time.time()
+    md = ollama_generate(mdl, prompt, num_predict=1200)
+    try:
+        if not cl.collection_exists(UNITDOC_COLL):
+            cl.create_collection(UNITDOC_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+        cl.upsert(UNITDOC_COLL, points=[models.PointStruct(id=key, vector=[0.0],
+            payload={"collection": collection, "unit": unit, "md": md, "model": mdl,
+                     "date": datetime.now(timezone.utc).isoformat()})])
+    except Exception:
+        pass
+    return {"cached": False, "unit": unit, "collection": collection, "model": mdl,
+            "sec": round(time.time() - t0, 1), "md": md}
 
 def list_collections() -> list[dict]:
     out = []
