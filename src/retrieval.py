@@ -621,7 +621,11 @@ def build_symbol_graph(collection: str, st: dict | None = None) -> dict:
                 n_types += 1
                 type_ids.setdefault(child.lower(), []).append(p.id)
                 for i, parent in enumerate(plist):
-                    edge = "inherits" if i == 0 else "implements"
+                    # Rust'ta gerçek sınıf kalıtımı YOK — yalnız trait implementasyonu
+                    # var; "impl Trait for Tip" HER ZAMAN implements'tir, ilk-öğe=
+                    # inherits kuralı (Pascal/Java/C# için doğru) burada yanlış
+                    # sınıflandırma yapardı (canlı testte fark edildi).
+                    edge = "implements" if lang == "rust" else ("inherits" if i == 0 else "implements")
                     edges.append((child, parent, edge, p.payload.get("unit"), p.id))
                 continue
             code = p.payload.get("code", "")

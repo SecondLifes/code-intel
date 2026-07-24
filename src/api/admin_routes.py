@@ -109,6 +109,9 @@ def collection_delete(collection: str):
     jsonl = ROOT / f"data/chunks-{collection}.jsonl"
     if jsonl.exists():
         jsonl.unlink()
+    manual_json = ROOT / f"data/manuals/{collection}.json"
+    if manual_json.exists():
+        manual_json.unlink()   # önceden öksüz kalıyordu — koleksiyon silinince manual da silinmeli
     return {"ok": True}
 
 # ---------------- koleksiyon yeniden adlandırma ----------------
@@ -143,6 +146,15 @@ def collection_rename(r: RenameReq):
     old_jsonl = ROOT / f"data/chunks-{r.old_name}.jsonl"
     if old_jsonl.exists():
         old_jsonl.rename(ROOT / f"data/chunks-{r.new_name}.jsonl")
+    old_manual = ROOT / f"data/manuals/{r.old_name}.json"
+    if old_manual.exists():
+        # dosya içinde de "collection" alanı eski adı taşıyor — sadece dosya adını
+        # taşımak yetmez, /manual/<yeni-ad> açılınca içerik de tutarlı görünsün
+        import json as _json
+        m = _json.loads(old_manual.read_text(encoding="utf-8"))
+        m["collection"] = r.new_name
+        (ROOT / f"data/manuals/{r.new_name}.json").write_text(_json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
+        old_manual.unlink()
     return {"ok": True, "points_copied": n}
 
 # ---------------- koleksiyonları birleştirme (kaynaklar SİLİNMEZ, sadece kopyalanır) ----------------
