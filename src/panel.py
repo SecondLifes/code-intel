@@ -30,12 +30,14 @@ try:
     from . import retrieval
     from .services import common
     from .services.indexing_svc import _watch_loop
+    from .services.apikeys import validate_api_key
     from .api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
 except ImportError:
     # `uvicorn src.panel:app` paket-göreli çalışır; `python src/panel.py` (paketsiz) düşülür.
     import retrieval
     from services import common
     from services.indexing_svc import _watch_loop
+    from services.apikeys import validate_api_key
     from api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
 
 # Geriye dönük takma adlar — testler ve dış kullanıcılar panel.X olarak erişebilir.
@@ -49,35 +51,48 @@ cl = common.cl
 
 app = FastAPI(title="Code-Intel Panel")
 
-# ---------------- güvenlik sınırı (Sıra 4) ----------------
+# ---------------- güvenlik sınırı (Sıra 4 + Sıra 11a rol ayrımı) ----------------
 # Katmanlar:
 #  1) API-key: CODEINTEL_API_KEY ayarlıysa, localhost dışından TÜM /api/* için zorunlu.
-#  2) Admin kilidi: anahtar ayarlı DEĞİLKEN yıkıcı/yönetim uçları localhost dışına
-#     TAMAMEN kapalı — panel yanlışlıkla 0.0.0.0'a bind edilse bile LAN'daki biri
-#     koleksiyon silemez/değiştiremez (dış analizde işaretlenen boşluk).
+#     Sunulan anahtar ya bu tek "üstün" ortam-değişkeni anahtarıyla (rol=admin, geriye
+#     dönük uyum) ya da Ayarlar'dan üretilen ROL'LÜ bir kayıt-defteri anahtarıyla eşleşmeli.
+#  2) Admin kilidi: yönetim uçları (ADMIN_PREFIXES) localhost dışından ancak rol=admin
+#     bir anahtarla açılır — CODEINTEL_API_KEY hiç ayarlanmamışsa bile Ayarlar'dan
+#     üretilmiş bir admin-rollü anahtarla uzaktan yönetim artık mümkün (eskiden tamamen
+#     kapalıydı). "read" rollü bir anahtarla admin uca gidilirse 403.
 #  3) Rate limit: kaba, bellek-içi kayan pencere (istemci başına 300 istek/10 sn) —
 #     kaçak döngülere/istek fırtınasına fren; normal panel kullanımına görünmez.
-#  4) Audit log: yönetim uçlarına yazma istekleri logs\admin-audit.log'a satır satır.
+#  4) Audit log: yönetim uçlarına yazma istekleri logs\admin-audit.log'a satır satır
+#     (kullanılan anahtarın adı biliniyorsa onunla birlikte).
 # "testclient" starlette TestClient'ın sabit in-process işaretidir — gerçek ağ
 # istemcisi bu değeri taşıyamaz (socket'ten gelir), test paketi yerel sayılır.
 API_KEY = os.environ.get("CODEINTEL_API_KEY", "")
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 ADMIN_PREFIXES = ("/api/collection", "/api/index/start", "/api/backup/run",
                    "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile",
-                   "/api/owners", "/api/groups", "/api/git-update-all", "/api/index/migrate-ids",
-                   "/api/manual/build")
+                   "/api/owners", "/api/groups", "/api/apikeys", "/api/git-update-all",
+                   "/api/index/migrate-ids", "/api/manual/build")
 RATE_WINDOW_SEC, RATE_MAX = 10, 300
 _rate: dict[str, deque] = {}
 _AUDIT_FILE = common.ROOT / "logs" / "admin-audit.log"
 
-def _audit(host: str, method: str, path: str):
+def _audit(host: str, method: str, path: str, key_name: str = ""):
     try:
         _AUDIT_FILE.parent.mkdir(exist_ok=True)
         with open(_AUDIT_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "ip": host,
-                                 "method": method, "path": path}, ensure_ascii=False) + "\n")
+                                 "method": method, "path": path, "key": key_name}, ensure_ascii=False) + "\n")
     except Exception:
         pass   # audit hatası isteği asla düşürmez
+
+def _presented_key_role(raw: str | None) -> tuple[str | None, str]:
+    """(rol, anahtar_adı) döndürür. Eşleşme yoksa (None, '')."""
+    if not raw:
+        return None, ""
+    if API_KEY and raw == API_KEY:
+        return "admin", "CODEINTEL_API_KEY (ortam değişkeni)"
+    rec = validate_api_key(raw)
+    return (rec["role"], rec["name"]) if rec else (None, "")
 
 @app.middleware("http")
 async def security_guard(request: Request, call_next):
@@ -92,13 +107,15 @@ async def security_guard(request: Request, call_next):
             return JSONResponse({"error": "çok fazla istek — kısa bir süre bekleyin"}, status_code=429)
         dq.append(now)
         is_local = host in LOCAL_HOSTS
-        if API_KEY and not is_local and request.headers.get("x-api-key") != API_KEY:
+        role, key_name = (None, "") if is_local else _presented_key_role(request.headers.get("x-api-key"))
+        if API_KEY and not is_local and role is None:
             return JSONResponse({"error": "geçersiz veya eksik X-API-Key"}, status_code=401)
         is_admin = any(path.startswith(p) for p in ADMIN_PREFIXES)
-        if is_admin and not is_local and not API_KEY:
-            return JSONResponse({"error": "yönetim uçları yalnız localhost'tan erişilebilir (uzak erişim için CODEINTEL_API_KEY ayarlayın)"}, status_code=403)
+        if is_admin and not is_local and role != "admin":
+            return JSONResponse({"error": "yönetim uçları yalnız localhost'tan veya rol=admin bir API anahtarıyla erişilebilir "
+                                           "(Ayarlar'dan üretin veya CODEINTEL_API_KEY tanımlayın)"}, status_code=403)
         if is_admin and request.method in ("POST", "DELETE", "PUT"):
-            _audit(host, request.method, path)
+            _audit(host, request.method, path, key_name)
     return await call_next(request)
 
 app.include_router(admin_routes.router)

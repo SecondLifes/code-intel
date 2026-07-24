@@ -20,6 +20,7 @@ try:
     from ..services.profiles import (profile_id, get_profile, set_profile, get_history,
                                       list_owners, upsert_owner, delete_owner, list_groups, upsert_group, delete_group)
     from ..services.collections_svc import _copy_all_points, _export_line_iter, _gzip_iter, _run_backup
+    from ..services.apikeys import generate_api_key, list_api_keys, revoke_api_key
 except ImportError:
     import retrieval
     from services.common import (cl, ROOT, OLLAMA, INTERNAL_COLLS, STATE, HISTORY_COLL, PROFILE_COLL,
@@ -27,6 +28,7 @@ except ImportError:
     from services.profiles import (profile_id, get_profile, set_profile, get_history,
                                     list_owners, upsert_owner, delete_owner, list_groups, upsert_group, delete_group)
     from services.collections_svc import _copy_all_points, _export_line_iter, _gzip_iter, _run_backup
+    from services.apikeys import generate_api_key, list_api_keys, revoke_api_key
 
 router = APIRouter()
 
@@ -587,6 +589,26 @@ def groups_save(r: GroupReq):
 @router.delete("/api/groups")
 def groups_delete(name: str):
     delete_group(name)
+    return {"ok": True}
+
+# ---------------- API anahtarları (Sıra 11a — rol ayrımı: read | admin) ----------------
+class ApiKeyReq(BaseModel):
+    name: str; role: str = "read"
+
+@router.get("/api/apikeys")
+def apikeys_list():
+    return {"keys": list_api_keys()}
+
+@router.post("/api/apikeys")
+def apikeys_create(r: ApiKeyReq):
+    try:
+        return {"ok": True, "key": generate_api_key(r.name, r.role)}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+@router.delete("/api/apikeys")
+def apikeys_revoke(id: str):
+    revoke_api_key(id)
     return {"ok": True}
 
 _VIEWABLE_EXT = {".md": "md", ".markdown": "md", ".html": "html", ".htm": "html", ".txt": "text"}

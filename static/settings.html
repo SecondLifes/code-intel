@@ -295,6 +295,24 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
     <div class="note" id="t-backupnote" style="margin-bottom:8px">Günlük otomatik yedek: küçük koleksiyonlar (≤50K nokta) + tüm iç kayıtlar (profil/geçmiş/telemetri) backups\ altına alınır, koleksiyon başına son 3 kopya tutulur. Büyük koleksiyonlar yalnızca bu düğmeyle (elle) yedeklenir.</div>
     <div id="backup-list" class="note">…</div>
   </div>
+
+  <!-- API ANAHTARLARI -->
+  <div class="panelcard">
+    <h3 id="t-apikeys" style="margin:0 0 6px">API Anahtarları</h3>
+    <div class="note" id="t-apikeysnote" style="margin-bottom:10px">Uzak (localhost dışı) erişim için rol-ayrımlı anahtar üretin: <b id="t-roleread2">Okuma</b> arama/RAG/analitik uçlarına, <b id="t-roleadmin2">Yönetim</b> koleksiyon/indeksleme/profil gibi yönetim uçlarına da erişebilir. Ham anahtar yalnız üretildiği an gösterilir — kaybederseniz iptal edip yenisini üretmeniz gerekir.</div>
+    <div class="row" style="align-items:flex-end;margin-bottom:10px">
+      <div class="field"><label id="l-newkeyname">Ad</label><input id="newkey-name" placeholder="ör. CI hattı"></div>
+      <div class="field" style="max-width:150px"><label id="l-newkeyrole">Rol</label>
+        <select id="newkey-role"><option value="read" id="opt-roleread">Okuma</option><option value="admin" id="opt-roleadmin">Yönetim</option></select>
+      </div>
+      <button type="button" onclick="createApiKey()" id="btn-newkey">➕ <span id="t-newkey">Anahtar Üret</span></button>
+    </div>
+    <div id="newkey-reveal" style="display:none;margin-bottom:12px;padding:10px;background:var(--card);border:1px solid var(--amber)"></div>
+    <table><thead><tr>
+      <th id="th-keyname">Ad</th><th id="th-keyrole">Rol</th><th id="th-keyprefix">Önek</th>
+      <th id="th-keycreated">Oluşturuldu</th><th id="th-keyused">Son Kullanım</th><th></th>
+    </tr></thead><tbody id="apikey-rows"></tbody></table>
+  </div>
 </main>
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr';
@@ -344,7 +362,16 @@ function applyLang(){
   $('t-dupnote').textContent=T('Seçilen koleksiyondaki method\'ların kayıtlı vektörleriyle eşik-üstü benzerlik taraması yapar — kopyalanmış/tekrarlanan mantığı bulur. Embedding hesaplanmaz, mevcut indeks kullanılır.','Scans methods in the selected collection with their stored vectors for above-threshold similarity — finds copied/repeated logic. No embedding is computed; the existing index is used.');
   $('l-dupcoll').textContent=T('Koleksiyon','Collection');$('l-dupthr').textContent=T('Eşik (0-1)','Threshold (0-1)');
   $('t-dupstart').textContent=T('Taramayı Başlat','Start Scan');
-  $('t-backup').textContent=T('Yedekler','Backups');$('t-backuprun').textContent=T('Şimdi Yedekle (tümü)','Back Up Now (all)');
+  $('t-backup').textContent=T('Yedekler','Backups');
+  $('t-apikeys').textContent=T('API Anahtarları','API Keys');
+  $('t-roleread2').textContent=T('Okuma','Read');$('t-roleadmin2').textContent=T('Yönetim','Admin');
+  $('l-newkeyname').textContent=T('Ad','Name');$('l-newkeyrole').textContent=T('Rol','Role');
+  $('opt-roleread').textContent=T('Okuma','Read');$('opt-roleadmin').textContent=T('Yönetim','Admin');
+  $('t-newkey').textContent=T('Anahtar Üret','Generate Key');
+  $('th-keyname').textContent=T('Ad','Name');$('th-keyrole').textContent=T('Rol','Role');$('th-keyprefix').textContent=T('Önek','Prefix');
+  $('th-keycreated').textContent=T('Oluşturuldu','Created');$('th-keyused').textContent=T('Son Kullanım','Last Used');
+  loadApiKeys();
+  $('t-backuprun').textContent=T('Şimdi Yedekle (tümü)','Back Up Now (all)');
   $('t-backupnote').textContent=T('Günlük otomatik yedek: küçük koleksiyonlar (≤50K nokta) + tüm iç kayıtlar (profil/geçmiş/telemetri) backups\\ altına alınır, koleksiyon başına son 3 kopya tutulur. Büyük koleksiyonlar yalnızca bu düğmeyle (elle) yedeklenir.','Daily auto-backup: small collections (≤50K points) + all internal records (profiles/history/telemetry) go under backups\\, last 3 copies kept per collection. Large collections are backed up only via this button (manually).');
   loadAnalytics();loadBackups();
   refreshHistory();
@@ -886,6 +913,41 @@ async function loadBackups(){
       :T('Henüz yedek yok — ilk otomatik yedek panel açıldıktan ~10 dk sonra alınır.','No backups yet — the first auto-backup runs ~10 min after the panel starts.'));
   }catch(e){$('backup-list').textContent='⚠️ '+e;}
 }
+// ---- API anahtarları (Sıra 11a) ----
+async function loadApiKeys(){
+  try{
+    const keys=(await(await fetch('/api/apikeys')).json()).keys||[];
+    $('apikey-rows').innerHTML=keys.length?keys.map(k=>`<tr>
+      <td>${esc(k.name)}</td>
+      <td><span style="color:${k.role==='admin'?'var(--amber)':'var(--teal)'}">${k.role==='admin'?T('Yönetim','Admin'):T('Okuma','Read')}</span></td>
+      <td class="mono" style="font-size:12px">${esc(k.prefix||'')}</td>
+      <td style="color:var(--faint);font-size:12px">${esc((k.created_at||'').replace('T',' ').slice(0,16))}</td>
+      <td style="color:var(--faint);font-size:12px">${k.last_used_at?esc(k.last_used_at.replace('T',' ').slice(0,16)):T('hiç','never')}</td>
+      <td><button type="button" onclick="revokeApiKey('${k.id}','${esc(k.name).replace(/'/g,"\\'")}')" style="padding:3px 8px;font-size:11px;background:var(--card);border:1px solid var(--line2);color:var(--faint)">🗑</button></td>
+    </tr>`).join(''):`<tr><td colspan="6" class="note">${T('Henüz anahtar yok.','No keys yet.')}</td></tr>`;
+  }catch(e){$('apikey-rows').innerHTML=`<tr><td colspan="6">⚠️ ${e}</td></tr>`;}
+}
+async function createApiKey(){
+  const name=$('newkey-name').value.trim();
+  if(!name){alert(T('Bir ad girin.','Enter a name.'));return;}
+  const role=$('newkey-role').value;
+  $('btn-newkey').disabled=true;
+  try{
+    const r=await(await fetch('/api/apikeys',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,role})})).json();
+    if(r.error){alert(r.error);return;}
+    $('newkey-name').value='';
+    $('newkey-reveal').style.display='block';
+    $('newkey-reveal').innerHTML=`<div style="margin-bottom:6px">${T('Yeni anahtar (yalnız ŞİMDİ gösteriliyor, bir daha görüntülenemez):','New key (shown ONLY now, cannot be retrieved again):')}</div>
+      <div class="mono" style="font-size:13px;word-break:break-all;color:var(--amber)">${esc(r.key.key)}</div>`;
+    await loadApiKeys();
+  }catch(e){alert(e);}finally{$('btn-newkey').disabled=false;}
+}
+async function revokeApiKey(id,name){
+  if(!confirm(T(`"${name}" anahtarı iptal edilsin mi? Bu anahtarı kullanan istemciler artık erişemez.`,`Revoke key "${name}"? Clients using it will lose access.`)))return;
+  await fetch('/api/apikeys?id='+encodeURIComponent(id),{method:'DELETE'});
+  await loadApiKeys();
+}
 async function runBackup(){
   $('btn-backup').disabled=true;
   try{
@@ -895,7 +957,7 @@ async function runBackup(){
     const t=setInterval(async()=>{const d=await(await fetch('/api/backup/status')).json();loadBackups();if((d.job||{}).phase!=='running'&&(d.job||{}).phase!=='starting'){clearInterval(t);$('btn-backup').disabled=false;}},2500);
   }catch(e){alert(e);$('btn-backup').disabled=false;}
 }
-health();loadModels();loadOwners();loadGroups();loadIndexes().then(fillDupColls);loadAnalytics();loadBackups();loadGitUpdateStatus();loadManualBuildAllStatus();
+health();loadModels();loadOwners();loadGroups();loadIndexes().then(fillDupColls);loadAnalytics();loadBackups();loadGitUpdateStatus();loadManualBuildAllStatus();loadApiKeys();
 setInterval(health,10000);setInterval(()=>{loadIndexes(false).then(fillDupColls);},10000);
 
 let jobTimer=null;

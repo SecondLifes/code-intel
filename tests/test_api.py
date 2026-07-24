@@ -124,6 +124,52 @@ def test_owners_groups_registry_crud(client):
 
 
 @needs_qdrant
+def test_apikeys_crud_and_role_validation(client):
+    """CRUD uçları TestClient='testclient' -> her zaman is_local sayılır (middleware
+    admin kilidini localhost'ta hiç uygulamaz), yani buradaki asıl kanıt yükü
+    apikeys.validate_api_key()'in doğru rolü döndürmesi ve iptalin gerçekten
+    anahtarı geçersiz kılması — middleware'in host-bazlı dalını AYRI test ediyoruz
+    (test_middleware_role_gate_pure) çünkü TestClient gerçek uzak host taklit edemez."""
+    r = client.post("/api/apikeys", json={"name": "__test_key_read", "role": "read"})
+    assert r.status_code == 200
+    created = r.json()["key"]
+    assert created["role"] == "read" and created["name"] == "__test_key_read"
+    raw = created["key"]
+    assert raw.startswith("ci_") and len(raw) > 20
+
+    listed = client.get("/api/apikeys").json()["keys"]
+    match = next((k for k in listed if k["id"] == created["id"]), None)
+    assert match is not None and "key" not in match   # liste ham anahtarı ASLA içermemeli
+
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    from services import apikeys as _ak
+    rec = _ak.validate_api_key(raw)
+    assert rec is not None and rec["role"] == "read"
+    assert _ak.validate_api_key("gecersiz-bir-anahtar-asla-eslesmez") is None
+
+    bad_role = client.post("/api/apikeys", json={"name": "__test_key_bad", "role": "superuser"})
+    assert bad_role.status_code == 400
+
+    client.delete("/api/apikeys", params={"id": created["id"]})
+    assert _ak.validate_api_key(raw) is None   # iptal sonrası artık geçersiz
+    listed2 = client.get("/api/apikeys").json()["keys"]
+    assert not any(k["id"] == created["id"] for k in listed2)
+
+
+def test_middleware_role_gate_pure():
+    """Middleware'in host-farkında rol kapısını (_presented_key_role + admin-yolu
+    kısıtı) gerçek HTTP olmadan doğrular — TestClient host'u hep 'testclient' (yerel
+    sayılır) olduğundan uzak-host senaryosunu HTTP üzerinden tetiklemek mümkün değil;
+    bu yüzden panel.py'nin ürettiği rolü doğrudan çağırıyoruz."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    import panel
+    assert panel._presented_key_role(None) == (None, "")
+    assert panel._presented_key_role("kesinlikle-gecersiz") == (None, "")
+
+
+@needs_qdrant
 def test_profile_kaynak_validation_and_clearing(client):
     # profile_set koleksiyonun GERÇEKTEN var olmasını istemez (_index_profiles
     # bağımsız bir kayıt) — gerçek "unidac" profilini kirletmemek için sahte ad.
