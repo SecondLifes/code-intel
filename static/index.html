@@ -309,6 +309,26 @@ health();jobPeek();setInterval(()=>{health();jobPeek();},8000);
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function hl(code){return esc(code).replace(/\b(procedure|function|begin|end|var|const|type|if|then|else|try|finally|except|for|while|do|class|record|nil|inherited|override|virtual)\b/g,'<span class="kw">$1</span>');}
 function citeFmt(t){return esc(t).replace(/\[(\d+)\]/g,'<b class="cite">[$1]</b>');}
+// "Neden geldi" — sıralama açıklaması (dense/sparse ham sırası, isim boost'u,
+// rerank olasılığı). Geri bildirimle birlikte sıralama ayıklamasının temel aracı.
+function whyText(w){
+  if(!w)return '';
+  const p=[];
+  if(w.dense_rank)p.push(T('anlamsal #','semantic #')+w.dense_rank);
+  if(w.sparse_rank)p.push(T('kelime #','keyword #')+w.sparse_rank);
+  if(w.name_boost)p.push(T('isim boost ×','name boost ×')+w.name_boost);
+  if(w.rerank_prob!==undefined)p.push('rerank '+w.rerank_prob);
+  if(w.priority_boost)p.push(T('yıldız ×','star ×')+w.priority_boost);
+  return p.join(' · ');
+}
+async function sendFeedback(id,collection,name,verdict,btn){
+  btn.disabled=true;const old=btn.textContent;
+  try{
+    await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({collection,id:+id,q:LAST_Q,verdict,name})});
+    btn.textContent='✓';setTimeout(()=>{btn.textContent=old;btn.disabled=false;},1500);
+  }catch(e){btn.disabled=false;}
+}
 function srcCard(h,i){return `
   <div class="src" id="s${h.id}">
     <div class="head" onclick="tog('${h.id}')">
@@ -316,6 +336,7 @@ function srcCard(h,i){return `
       <span class="n">${esc(h.name)}</span>
       <span class="collbadge">${esc(h.collection)}</span>
       <span class="m">${esc(h.unit)} · L${h.line_start}-${h.line_end}</span>
+      ${whyText(h.why)?`<span class="m" style="cursor:help" title="${esc(whyText(h.why))}">ⓘ</span>`:''}
       <span class="sc">${h.score}</span>
     </div>
     <div class="codewrap"><pre>${hl(h.code)}</pre></div>
@@ -328,6 +349,8 @@ function srcCard(h,i){return `
       <button onclick="reveal('${h.id}','${h.collection}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
       <button onclick="showInBrowser('${h.id}','${h.collection}',this)">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
+      <button title="${T('İyi sonuç','Good result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','up',this)">👍</button>
+      <button title="${T('Alakasız sonuç','Irrelevant result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','down',this)">👎</button>
       <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
     </div>
   </div>`;}

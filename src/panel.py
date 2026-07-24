@@ -1119,6 +1119,17 @@ def ask_stream(r: AskReq):
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+# ---------------- arama sonucu geri bildirimi (👍/👎) ----------------
+class FeedbackReq(BaseModel):
+    collection: str; id: int; q: str = ""; verdict: str; name: str = ""
+
+@app.post("/api/feedback")
+def feedback(r: FeedbackReq):
+    result = retrieval.log_feedback(r.collection, r.id, r.q, r.verdict, r.name)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return result
+
 # ---------------- arama analitiği (telemetri panosu) ----------------
 @app.get("/api/analytics")
 def analytics(limit: int = 5000):
@@ -1134,6 +1145,9 @@ def analytics(limit: int = 5000):
         if next_page is None or len(entries) >= limit:
             break
     now = datetime.now(timezone.utc)
+    # feedback kayıtları arama telemetrisinden AYRI sayılır (type=feedback)
+    fb_entries = [e for e in entries if e.get("type") == "feedback"]
+    entries = [e for e in entries if e.get("type") != "feedback"]
     total, last24, ms_sum = len(entries), 0, 0
     zero_counts: dict[str, int] = {}
     q_counts: dict[str, int] = {}
@@ -1153,10 +1167,16 @@ def analytics(limit: int = 5000):
             pass
     top = sorted(q_counts.items(), key=lambda kv: -kv[1])[:20]
     zero = sorted(zero_counts.items(), key=lambda kv: -kv[1])[:20]
+    fb_up = sum(1 for e in fb_entries if e.get("verdict") == "up")
+    fb_down = [e for e in fb_entries if e.get("verdict") == "down"]
     return {"searches": total, "last24h": last24, "avg_ms": round(ms_sum / total) if total else 0,
             "zero_queries": [{"q": q, "n": n} for q, n in zero],
             "top_queries": [{"q": q, "n": n} for q, n in top],
-            "modes": modes}
+            "modes": modes,
+            "feedback": {"up": fb_up, "down": len(fb_down),
+                          "recent_down": [{"q": e.get("q", ""), "name": e.get("name", ""),
+                                            "collection": e.get("collection", "")}
+                                           for e in sorted(fb_down, key=lambda e: e.get("date", ""), reverse=True)[:10]]}}
 
 @app.get("/settings")
 def settings_page():

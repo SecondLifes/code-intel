@@ -536,10 +536,17 @@ async function loadAnalytics(){
   try{
     const d=await(await fetch('/api/analytics')).json();
     const modes=Object.entries(d.modes||{}).map(([m,n])=>`${m}: ${n}`).join(' · ');
+    const fb=d.feedback||{};
     $('an-summary').innerHTML=
       `<b style="color:var(--txt)">${(d.searches||0).toLocaleString('tr')}</b> ${T('toplam arama','total searches')} · `+
       `<b style="color:var(--txt)">${(d.last24h||0).toLocaleString('tr')}</b> ${T('son 24 saat','last 24h')} · `+
-      `${T('ortalama','avg')} <b style="color:var(--txt)">${d.avg_ms||0} ms</b>`+(modes?` · ${modes}`:'');
+      `${T('ortalama','avg')} <b style="color:var(--txt)">${d.avg_ms||0} ms</b>`+(modes?` · ${modes}`:'')+
+      ` · 👍 <b style="color:var(--teal)">${fb.up||0}</b> · 👎 <b style="color:var(--err)">${fb.down||0}</b>`;
+    if((fb.recent_down||[]).length){
+      $('an-zero').insertAdjacentHTML('beforeend',
+        `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line)"><b>👎 ${T('Alakasız işaretlenenler','Marked irrelevant')}:</b></div>`+
+        fb.recent_down.map(x=>`<div style="padding:3px 0">${esc(x.name)} <span style="color:var(--faint)">(${esc(x.collection)} · "${esc(x.q)}")</span></div>`).join(''));
+    }
     const li=(arr,emptyMsg,warn)=>arr&&arr.length
       ?arr.map(x=>`<div style="padding:3px 0;border-bottom:1px solid var(--line)">${warn?'∅ ':''}<span style="color:var(--txt)">${esc(x.q)}</span> <span style="color:var(--faint)">×${x.n}</span></div>`).join('')
       :`<div>${emptyMsg}</div>`;

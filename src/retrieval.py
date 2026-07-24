@@ -121,21 +121,28 @@ def _search_one(collection: str, dv: list[float], sq, mode: str, limit: int, flt
 
 def _fuse_collection(collection: str, sources, query_tokens: set[str]):
     """Weighted rank-RRF across the given (label, weight, points) sources for ONE
-    collection, plus a name-match boost. Returns {id: (score, point)}."""
+    collection, plus a name-match boost. Returns {id: (score, point, why)} —
+    `why` sıralama AÇIKLANABİLİRLİĞİ için: bu sonucun dense/sparse kollarındaki
+    ham sırası ve aldığı isim-boost çarpanı (UI'da "neden geldi" olarak gösterilir,
+    kullanıcı geri bildirimiyle birlikte sıralama ayıklamasının temel verisi)."""
     K = 60
     scores: dict[int, float] = {}
     points: dict[int, object] = {}
-    for _label, weight, pts in sources:
+    why: dict[int, dict] = {}
+    for label, weight, pts in sources:
         for rank, p in enumerate(pts):
             scores[p.id] = scores.get(p.id, 0.0) + weight * (1.0 / (K + rank + 1))
             points[p.id] = p
+            why.setdefault(p.id, {})[f"{label}_rank"] = rank + 1
     for pid, p in points.items():
         name_tokens = _tokenize(p.payload.get("name") or "")
         if query_tokens and query_tokens.issubset(name_tokens):
             scores[pid] *= 3.0    # every query word literally in the identifier name
+            why[pid]["name_boost"] = 3.0
         elif query_tokens & name_tokens:
             scores[pid] *= 1.5    # partial overlap
-    return {pid: (scores[pid], (collection, points[pid])) for pid in points}
+            why[pid]["name_boost"] = 1.5
+    return {pid: (scores[pid], (collection, points[pid]), why[pid]) for pid in points}
 
 def get_collection_priority(collection: str) -> int:
     """panel.py'nin _index_profiles'a set_profile ile yazdığı 0-5 yıldız önceliği
@@ -197,6 +204,27 @@ def _log_search(q: str, collections: list[str], mode: str, ms: int, total: int,
     except Exception:
         pass
 
+def log_feedback(collection: str, id: int, q: str, verdict: str, name: str = "") -> dict:
+    """Kullanıcı geri bildirimi (👍/👎) — _search_log koleksiyonuna type=feedback
+    kaydı olarak yazılır. Analitik panosu bunları arama sayımından AYRI tutar.
+    Bu veri otomatik sıralama eğitimine DOĞRUDAN verilmez (dış analiz uyarısı:
+    dar veriyle overfit riski) — önce golden set büyütme için insan onaylı aday
+    kaynağı olarak kullanılır."""
+    if verdict not in ("up", "down"):
+        return {"error": "verdict 'up' veya 'down' olmalı"}
+    try:
+        if not cl.collection_exists(SEARCH_LOG_COLL):
+            cl.create_collection(SEARCH_LOG_COLL,
+                vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+        cl.upsert(SEARCH_LOG_COLL, points=[models.PointStruct(
+            id=str(uuid.uuid4()), vector=[0.0],
+            payload={"type": "feedback", "collection": collection, "chunk_id": id,
+                     "q": q[:300], "verdict": verdict, "name": name[:200],
+                     "date": datetime.now(timezone.utc).isoformat()})])
+        return {"ok": True}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
 def ensure_payload_indexes(collection: str):
     """unit/kind/name alanlarına keyword payload index — kind filtresi ve
     get_relations'ın unit scroll'u için. İdempotent (varsa hata yutulur)."""
@@ -244,6 +272,7 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
     priority_boost = {c: 1.0 + 0.08 * get_collection_priority(c) for c in collections} if len(collections) > 1 else {}
 
     all_scored: dict[tuple, tuple] = {}   # (collection, id) -> (score, (collection, point))
+    all_why: dict[tuple, dict] = {}       # (collection, id) -> sıralama açıklaması
     errors = {}
     for c in collections:
         try:
@@ -253,8 +282,11 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
             continue
         fused = _fuse_collection(c, sources, query_tokens)
         boost = priority_boost.get(c, 1.0)
-        for pid, (score, cp) in fused.items():
+        for pid, (score, cp, w) in fused.items():
             all_scored[(c, pid)] = (score * boost, cp)
+            if boost != 1.0:
+                w["priority_boost"] = round(boost, 2)
+            all_why[(c, pid)] = w
     if not all_scored:
         return {"error": "Hiçbir seçili koleksiyonda arama yapılamadı: " + json.dumps(errors, ensure_ascii=False)}
 
@@ -279,8 +311,9 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
             # birleşimle golden set MRR'ı 1.000'de kalırken cross-encoder, güçlü kanıt
             # gösterdiği adayları hâlâ öne çekebilir.
             scores = []
-            for i, (_s, (_c, p)) in enumerate(pool):
+            for i, (_s, (c_, p)) in enumerate(pool):
                 prob = 1.0 / (1.0 + math.exp(-rr[i]))
+                all_why.setdefault((c_, p.id), {})["rerank_prob"] = round(prob, 3)
                 name_tokens = _tokenize(p.payload.get("name") or "")
                 if query_tokens and query_tokens.issubset(name_tokens):
                     prob *= 3.0
@@ -309,7 +342,8 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
             "hits": [
         {"collection": c, "score": round(fscore, 4), "id": h.id,
          **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
-         "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr")} for fscore, (c, h) in page]}
+         "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr"),
+         "why": all_why.get((c, h.id), {})} for fscore, (c, h) in page]}
 
 PAYLOAD_CODE_CAP = 4000   # _run_index'in payload'a yazdığı üst sınır — bununla senkron
 
