@@ -1,13 +1,14 @@
-"""Koleksiyon profilleri (_index_profiles) ve indeksleme tarihçesi (_index_history)."""
+"""Koleksiyon profilleri (_index_profiles), indeksleme tarihçesi (_index_history),
+owner/group kayıt defterleri (_owners, _groups — Owner→Collection modeli)."""
 import uuid
 from datetime import datetime, timezone
 
 from qdrant_client import models
 
 try:
-    from .common import cl, HISTORY_COLL, PROFILE_COLL
+    from .common import cl, HISTORY_COLL, PROFILE_COLL, OWNER_COLL, GROUP_COLL
 except ImportError:
-    from services.common import cl, HISTORY_COLL, PROFILE_COLL
+    from services.common import cl, HISTORY_COLL, PROFILE_COLL, OWNER_COLL, GROUP_COLL
 
 def profile_id(collection: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, collection))
@@ -56,3 +57,61 @@ def get_history(collection: str | None = None) -> dict:
     for entries in out.values():
         entries.sort(key=lambda e: e["date"], reverse=True)
     return out
+
+# ---------------- owner / group kayıt defterleri ----------------
+# Owner→Collection modeli (GitHub'daki owner/repo, TMS gibi bir firmanın
+# Vendor→Ürün modeliyle aynı şekle iniyor). Koleksiyon profilindeki owner/group
+# alanları DÜZ METİN olarak kalıyor (şema değişmiyor) — bu kayıt defterleri
+# yalnızca Ayarlar'daki açılır listeyi besleyen bir KAYNAK; foreign-key
+# zorlaması yok, bir owner/group kaydı silinse bile onu zaten kullanmış
+# koleksiyonların profili bozulmaz (yalnızca gelecekteki seçim listesinden düşer).
+def _registry_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, name.strip().lower()))
+
+def _ensure_registry(coll: str):
+    if not cl.collection_exists(coll):
+        cl.create_collection(coll, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+
+def _registry_list(coll: str) -> list[dict]:
+    if not cl.collection_exists(coll):
+        return []
+    pts, _ = cl.scroll(coll, limit=500, with_payload=True)
+    return sorted((p.payload for p in pts), key=lambda x: (x.get("name") or "").lower())
+
+def _registry_upsert(coll: str, name: str, **fields) -> dict:
+    name = name.strip()
+    if not name:
+        raise ValueError("ad boş olamaz")
+    _ensure_registry(coll)
+    rid = _registry_id(name)
+    existing = {}
+    if cl.collection_exists(coll):
+        pts = cl.retrieve(coll, ids=[rid], with_payload=True)
+        existing = pts[0].payload if pts else {}
+    payload = {**existing, "name": name, **{k: v for k, v in fields.items() if v is not None},
+               "updated_at": datetime.now(timezone.utc).isoformat()}
+    payload.setdefault("created_at", payload["updated_at"])
+    cl.upsert(coll, points=[models.PointStruct(id=rid, vector=[0.0], payload=payload)])
+    return payload
+
+def _registry_delete(coll: str, name: str):
+    if cl.collection_exists(coll):
+        cl.delete(coll, points_selector=models.PointIdsList(points=[_registry_id(name)]))
+
+def list_owners() -> list[dict]:
+    return _registry_list(OWNER_COLL)
+
+def upsert_owner(name: str, url: str | None = None, note: str | None = None) -> dict:
+    return _registry_upsert(OWNER_COLL, name, url=url, note=note)
+
+def delete_owner(name: str):
+    _registry_delete(OWNER_COLL, name)
+
+def list_groups() -> list[dict]:
+    return _registry_list(GROUP_COLL)
+
+def upsert_group(name: str, description: str | None = None) -> dict:
+    return _registry_upsert(GROUP_COLL, name, description=description)
+
+def delete_group(name: str):
+    _registry_delete(GROUP_COLL, name)

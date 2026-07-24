@@ -17,13 +17,15 @@ try:
     from .. import retrieval
     from ..services.common import (cl, ROOT, OLLAMA, INTERNAL_COLLS, STATE, HISTORY_COLL, PROFILE_COLL,
                                     BACKUP_DIR, BACKUP_KEEP, BACKUP_AUTO_MAX_POINTS)
-    from ..services.profiles import profile_id, get_profile, set_profile, get_history
+    from ..services.profiles import (profile_id, get_profile, set_profile, get_history,
+                                      list_owners, upsert_owner, delete_owner, list_groups, upsert_group, delete_group)
     from ..services.collections_svc import _copy_all_points, _export_line_iter, _gzip_iter, _run_backup
 except ImportError:
     import retrieval
     from services.common import (cl, ROOT, OLLAMA, INTERNAL_COLLS, STATE, HISTORY_COLL, PROFILE_COLL,
                                   BACKUP_DIR, BACKUP_KEEP, BACKUP_AUTO_MAX_POINTS)
-    from services.profiles import profile_id, get_profile, set_profile, get_history
+    from services.profiles import (profile_id, get_profile, set_profile, get_history,
+                                    list_owners, upsert_owner, delete_owner, list_groups, upsert_group, delete_group)
     from services.collections_svc import _copy_all_points, _export_line_iter, _gzip_iter, _run_backup
 
 router = APIRouter()
@@ -65,21 +67,28 @@ class ProfileReq(BaseModel):
     path: str | None = None       # reindex'e gerek KALMADAN düzeltilebilsin diye (disk/klasör taşındığında)
     language: str | None = None   # otomatik etiketi elle düzeltebilmek için
     priority: int | None = None   # 0-5 yıldız — çoklu koleksiyon aramasında skor boost'u için
-    owner: str | None = None      # örn. "viniciussanchez" — bir kişinin/kuruluşun birden fazla kütüphanesini gruplamak için
-    group: str | None = None      # serbest metin ikinci seviye etiket — örn. "REST İstemcileri"
+    owner: str | None = None      # örn. "viniciussanchez" — Owner→Collection modeli, _owners kayıt defterinden seçilir
+    group: str | None = None      # fonksiyonel/konu etiketi — örn. "REST Library", "Şifreleme" — _groups kayıt defterinden seçilir
     auto_refresh: bool | None = None   # açıksa watcher kaynak klasörü periyodik tarayıp değişiklikte artımlı reindex tetikler
+    kaynak: str | None = None     # "git" | "ticari" | "yerel" | "diğer" — "Tümünü Güncelle" bunu filtreler
+    url: str | None = None        # git ise remote URL (otomatik doldurulur), değilse ürün/ana sayfa
 
 @router.get("/api/profile")
 def profile_get(collection: str):
     return get_profile(collection)
+
+VALID_KAYNAK = {"git", "ticari", "yerel", "diğer"}
 
 @router.post("/api/profile")
 def profile_set(r: ProfileReq):
     # yalnızca gönderilen alanlar güncellenir — None olanlara dokunulmaz (set_profile zaten filtreler)
     if r.priority is not None and not (0 <= r.priority <= 5):
         return JSONResponse({"error": "priority 0-5 aralığında olmalı"}, status_code=400)
+    # boş string ("—" seçeneği) bilinçli izinli — alanı TEMİZLEMEK için kullanılır
+    if r.kaynak and r.kaynak not in VALID_KAYNAK:
+        return JSONResponse({"error": f"kaynak şunlardan biri olmalı: {sorted(VALID_KAYNAK)}"}, status_code=400)
     set_profile(r.collection, version=r.version, path=r.path, language=r.language, priority=r.priority,
-                owner=r.owner, group=r.group, auto_refresh=r.auto_refresh)
+                owner=r.owner, group=r.group, auto_refresh=r.auto_refresh, kaynak=r.kaynak, url=r.url)
     return {"ok": True}
 
 # ---------------- koleksiyon silme (kendisi + geçmiş + profil kayıtları) ----------------
@@ -329,6 +338,8 @@ def indexes_get():
                 "priority": prof.get("priority", 0),
                 "owner": prof.get("owner", ""),
                 "group": prof.get("group", ""),
+                "kaynak": prof.get("kaynak", ""),
+                "url": prof.get("url", ""),
                 "auto_refresh": bool(prof.get("auto_refresh")),
                 "patterns": prof.get("patterns", "*.pas"),
                 "path": path,
@@ -520,6 +531,50 @@ def workspaces_delete(name: str):
     WC = retrieval.WORKSPACE_COLL
     if cl.collection_exists(WC):
         cl.delete(WC, points_selector=models.PointIdsList(points=[_ws_id(name.strip())]))
+    return {"ok": True}
+
+# ---------------- owner / group kayıt defterleri (Owner→Collection modeli) ----------------
+# GitHub'daki owner/repo, bir firmanın Vendor→Ürün modeliyle aynı şekle iniyor: Owner (kim
+# yayınlıyor) + Group (fonksiyonel/konu etiketi, owner'dan bağımsız çapraz-kesen — "REST
+# Library", "Şifreleme" gibi). Koleksiyon profilindeki owner/group alanları DÜZ METİN kalır
+# (şema değişmedi) — bu defterler yalnızca Ayarlar'daki açılır listeyi besleyen KAYNAKTIR,
+# foreign-key zorlaması yok (bir kayıt silinse bile onu zaten kullanmış koleksiyonlar bozulmaz).
+class OwnerReq(BaseModel):
+    name: str; url: str | None = None; note: str | None = None
+
+class GroupReq(BaseModel):
+    name: str; description: str | None = None
+
+@router.get("/api/owners")
+def owners_list():
+    return {"owners": list_owners()}
+
+@router.post("/api/owners")
+def owners_save(r: OwnerReq):
+    try:
+        return {"ok": True, "owner": upsert_owner(r.name, r.url, r.note)}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+@router.delete("/api/owners")
+def owners_delete(name: str):
+    delete_owner(name)
+    return {"ok": True}
+
+@router.get("/api/groups")
+def groups_list():
+    return {"groups": list_groups()}
+
+@router.post("/api/groups")
+def groups_save(r: GroupReq):
+    try:
+        return {"ok": True, "group": upsert_group(r.name, r.description)}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+@router.delete("/api/groups")
+def groups_delete(name: str):
+    delete_group(name)
     return {"ok": True}
 
 _VIEWABLE_EXT = {".md": "md", ".markdown": "md", ".html": "html", ".htm": "html", ".txt": "text"}

@@ -63,7 +63,8 @@ app = FastAPI(title="Code-Intel Panel")
 API_KEY = os.environ.get("CODEINTEL_API_KEY", "")
 LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 ADMIN_PREFIXES = ("/api/collection", "/api/index/start", "/api/backup/run",
-                   "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile")
+                   "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile",
+                   "/api/owners", "/api/groups", "/api/git-update-all", "/api/index/migrate-ids")
 RATE_WINDOW_SEC, RATE_MAX = 10, 300
 _rate: dict[str, deque] = {}
 _AUDIT_FILE = common.ROOT / "logs" / "admin-audit.log"

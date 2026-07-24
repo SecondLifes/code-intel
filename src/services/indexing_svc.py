@@ -274,6 +274,12 @@ def _run_index(r: IndexReq):
                       "commit": gi.get("commit", ""), "branch": gi.get("branch", ""), "git_dirty": gi.get("dirty", False)}
         if gi.get("commit"):
             set_profile(r.collection, last_commit=gi["commit"], git_root=gi.get("git_root", ""))
+        # kaynak/url İLK-DOKUNUŞTA otomatik doldurulur (Owner→Collection modelinin bir
+        # parçası — bkz. profiles.py registry'leri) — kullanıcı sonradan Ayarlar'dan elle
+        # düzeltirse bir SONRAKI reindex bunu ASLA ezmez (prof, bu koşunun BAŞINDA okunmuş
+        # eski durum; kaynak/url o zaman zaten boş değilse burası hiç dokunmaz).
+        if not prof.get("kaynak") and not prof.get("url") and gi.get("git_root"):
+            set_profile(r.collection, kaynak="git", url=gi.get("remote") or None)
         st.update(total=len(plan), phase="embedding", done=0,
                   skipped=n_unchanged, deleted=len(stale_ids))
         # plan boş değilse (gerçek içerik değişikliği) ya da silinen nokta varsa,
@@ -349,6 +355,58 @@ def _run_index(r: IndexReq):
             pass
 
 # ---------------- otomatik artımlı yenileme (watch mode) ----------------
+def _run_git_update_all():
+    """"Tümünü Güncelle": kaynak=git olan (ve git_root'u profilde kayıtlı) TÜM
+    koleksiyonları sırayla `git pull --ff-only` ile günceller, başarılı olanları
+    mevcut artımlı _run_index'le yeniden indeksler. --ff-only bilinçli seçildi:
+    asla merge/rebase yapmaz, sadece hızlı-ileri mümkünse günceller — yerelde
+    commit'lenmemiş değişiklik varsa (dirty) o koleksiyon ATLANIR (pull'a hiç
+    kalkışılmaz, git'in kendi reddine güvenmek yerine önden kontrol edilir —
+    "yıkıcı olabilecek eylemi önce kontrol et" ilkesi). Tek seferde bir
+    koleksiyon işlenir (aynı _run_index/STATE["index_job"] paylaşımı watcher'la
+    aynı desende — bkz. _watch_loop)."""
+    job = STATE["git_update_job"]
+    results = []
+    try:
+        cands = []
+        for c in cl.get_collections().collections:
+            if c.name in INTERNAL_COLLS:
+                continue
+            prof = get_profile(c.name)
+            if prof.get("kaynak") == "git" and prof.get("git_root"):
+                cands.append((c.name, prof))
+        job.update(phase="running", total=len(cands), done=0, results=[])
+        for i, (name, prof) in enumerate(cands):
+            job.update(current=name, done=i, results=results)
+            entry = {"collection": name, "pulled": False, "reindexed": False, "output": ""}
+            root = prof["git_root"]
+            gi = retrieval.git_info(root)
+            if gi.get("dirty"):
+                entry["output"] = "atlandı: yerel çalışma ağacında commit'lenmemiş değişiklik var"
+            else:
+                try:
+                    r = subprocess.run(["git", "-C", root, "pull", "--ff-only"],
+                                       capture_output=True, text=True, timeout=300)
+                    entry["output"] = ((r.stdout or "") + (r.stderr or ""))[-500:].strip()
+                    entry["pulled"] = r.returncode == 0
+                except Exception as e:
+                    entry["output"] = str(e)[:300]
+            if entry["pulled"]:
+                hist = get_history(name).get(name, [])
+                vectors = (hist[0].get("vectors") if hist else None) or ["dense", "sparse"]
+                req = IndexReq(collection=name, vectors=vectors, device="gpu" if gpu_available() else "cpu",
+                               patterns=prof.get("patterns", "*.pas"))
+                STATE["index_job"] = {"collection": name, "mode": "+".join(req.vectors) + " (git-update)",
+                                      "device": req.device, "total": 0, "done": 0, "rate": 0, "phase": "starting"}
+                _run_index(req)
+                entry["reindexed"] = STATE["index_job"].get("phase") == "done"
+                if not entry["reindexed"]:
+                    entry["output"] += f" | reindex hatası: {STATE['index_job'].get('error', '')}"
+            results.append(entry)
+        job.update(phase="done", done=len(cands), results=results)
+    except Exception as e:
+        job.update(phase="error", error=str(e)[:300], results=results)
+
 def migrate_ids_v2(collection: str) -> dict:
     """Chunker v2'nin repo-kimlikli ID'sine GPU'SUZ geçiş: her noktanın yeni ID'si
     mevcut payload'dan hesaplanır (lib:unit:kind_key:code[:160] — payload code'u

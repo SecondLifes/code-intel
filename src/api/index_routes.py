@@ -8,11 +8,11 @@ from fastapi.responses import JSONResponse
 try:
     from .. import retrieval
     from ..services.common import cl, ROOT, INTERNAL_COLLS, STATE
-    from ..services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan, migrate_ids_v2
+    from ..services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan, migrate_ids_v2, _run_git_update_all
 except ImportError:
     import retrieval
     from services.common import cl, ROOT, INTERNAL_COLLS, STATE
-    from services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan, migrate_ids_v2
+    from services.indexing_svc import IndexReq, DupScanReq, _run_index, _run_dup_scan, migrate_ids_v2, _run_git_update_all
 
 router = APIRouter()
 
@@ -64,11 +64,26 @@ def duplicates_report(collection: str):
     return json.loads(f.read_text(encoding="utf-8"))
 
 @router.get("/api/impact")
-def impact(collection: str, base: str = ""):
-    result = retrieval.analyze_impact(collection, base)
+def impact(collection: str, base: str = "", head: str = "HEAD"):
+    result = retrieval.analyze_impact(collection, base, head)
     if "error" in result:
         return JSONResponse(result, status_code=400)
     return result
+
+# ---------------- Tümünü Güncelle (git pull + reindex, kaynak=git olan koleksiyonlar) ----------------
+@router.post("/api/git-update-all")
+def git_update_all():
+    if STATE.get("git_update_job") and STATE["git_update_job"].get("phase") == "running":
+        return JSONResponse({"error": "zaten çalışan bir güncelleme var"}, status_code=409)
+    if STATE.get("index_job") and STATE["index_job"].get("phase") in ("starting", "chunking", "diffing", "embedding", "linking"):
+        return JSONResponse({"error": "indeksleme sürerken toplu güncelleme başlatılamaz"}, status_code=409)
+    STATE["git_update_job"] = {"phase": "starting"}
+    threading.Thread(target=_run_git_update_all, daemon=True).start()
+    return {"ok": True}
+
+@router.get("/api/git-update-status")
+def git_update_status():
+    return STATE.get("git_update_job") or {"phase": "idle"}
 
 # ---------------- sembol grafiği uçları ----------------
 @router.post("/api/symbols/rebuild")

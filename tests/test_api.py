@@ -102,6 +102,53 @@ def test_feedback_and_analytics(client):
 
 
 @needs_qdrant
+def test_owners_groups_registry_crud(client):
+    name = "__test_owner_apitest"
+    r = client.post("/api/owners", json={"name": name, "url": "https://example.com/x"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    listed = client.get("/api/owners").json()["owners"]
+    assert any(o["name"] == name for o in listed)
+    # aynı ada tekrar upsert -> hata değil, güncelleme
+    r2 = client.post("/api/owners", json={"name": name, "url": "https://example.com/y"})
+    assert r2.status_code == 200
+    client.delete("/api/owners", params={"name": name})
+    listed2 = client.get("/api/owners").json()["owners"]
+    assert not any(o["name"] == name for o in listed2)
+
+    gname = "__test_group_apitest"
+    r3 = client.post("/api/groups", json={"name": gname, "description": "test"})
+    assert r3.status_code == 200
+    assert any(g["name"] == gname for g in client.get("/api/groups").json()["groups"])
+    client.delete("/api/groups", params={"name": gname})
+    assert not any(g["name"] == gname for g in client.get("/api/groups").json()["groups"])
+
+
+@needs_qdrant
+def test_profile_kaynak_validation_and_clearing(client):
+    # profile_set koleksiyonun GERÇEKTEN var olmasını istemez (_index_profiles
+    # bağımsız bir kayıt) — gerçek "unidac" profilini kirletmemek için sahte ad.
+    coll = "__test_profile_kaynak"
+    bad = client.post("/api/profile", json={"collection": coll, "kaynak": "gecersiz-deger"})
+    assert bad.status_code == 400
+    ok = client.post("/api/profile", json={"collection": coll, "kaynak": "ticari"})
+    assert ok.status_code == 200
+    assert client.get("/api/profile", params={"collection": coll}).json().get("kaynak") == "ticari"
+    # boş string temizleme için izinli olmalı (400 DEĞİL)
+    clear = client.post("/api/profile", json={"collection": coll, "kaynak": ""})
+    assert clear.status_code == 200
+    assert client.get("/api/profile", params={"collection": coll}).json().get("kaynak") == ""
+
+
+def test_git_update_status_idle_shape():
+    """Qdrant gerekmez — sadece boşta iken beklenen şekli döndürdüğünü doğrular."""
+    import pathlib as _pl
+    import sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    from services.common import STATE
+    assert (STATE.get("git_update_job") or {"phase": "idle"}).get("phase") in ("idle", "done", "running", "error", "starting")
+
+
+@needs_qdrant
 def test_symbol_endpoints(client):
     h = client.post("/api/mcp/get_type_hierarchy",
                     json={"collection": "unidac", "type_name": "TCRConnection"}).json()

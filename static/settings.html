@@ -148,11 +148,13 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
       <h3 id="t-colls" style="margin:0">İndeksler</h3>
       <div>
         <input type="file" id="import-file" accept=".gz" style="display:none" onchange="importCollection(this.files[0])">
+        <button type="button" onclick="startGitUpdateAll()" id="btn-gitupdate" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:7px 14px;font-size:12.5px" title="kaynak=git olan tüm koleksiyonları git pull + reindex eder">⤓ <span id="t-gitupdate">Tümünü Güncelle</span></button>
         <button type="button" onclick="toggleMergeMode()" id="btn-mergemode" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:7px 14px;font-size:12.5px">🔀 <span id="t-mergemode">Birleştir</span></button>
         <button type="button" onclick="document.getElementById('import-file').click()" id="btn-import" style="background:var(--card);border:1px solid var(--line2);color:var(--dim);padding:7px 14px;font-size:12.5px">📥 <span id="t-import">İçe Aktar</span></button>
       </div>
     </div>
     <div class="note" id="t-collhint" style="margin:0 0 10px">Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.</div>
+    <div class="note" id="git-update-status" style="display:none;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--line2);border-radius:10px"></div>
     <div class="row" id="mergebar" style="display:none;align-items:center;margin:0 0 10px;padding:10px 12px;background:var(--card);border:1px solid var(--line2);border-radius:10px">
       <div class="field" style="margin:0;flex:1"><label id="l-mergetarget" style="margin:0 0 3px 1px">Hedef ad (yeni veya mevcut)</label><input id="merge-target" placeholder="ör. birlesik-kutuphane"></div>
       <button type="button" onclick="doMerge()" id="btn-domerge" style="align-self:flex-end">🔀 <span id="t-domerge">Seçilenleri Birleştir</span></button>
@@ -177,14 +179,36 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
         <div class="field"><label id="l-detprio">Öncelik</label><div id="det-stars" class="stars"></div></div>
       </div>
       <div class="row">
-        <div class="field"><label id="l-detowner">Sahip</label><input id="det-owner" style="width:180px" placeholder="ör. viniciussanchez"></div>
-        <div class="field"><label id="l-detgroup">Grup</label><input id="det-group" style="width:220px" placeholder="ör. REST İstemcileri"></div>
+        <div class="field"><label id="l-detowner">Sahip</label>
+          <div class="row" style="gap:4px;align-items:center;flex-wrap:nowrap">
+            <select id="det-owner" style="width:180px" onchange="onOwnerSelect()"></select>
+            <button type="button" onclick="deleteOwnerSel()" title="Kayıtlı sahibi sil" style="padding:6px 9px;font-size:12px;background:var(--card);border:1px solid var(--line2);color:var(--faint)">🗑</button>
+          </div>
+        </div>
+        <div class="field"><label id="l-detgroup">Grup</label>
+          <div class="row" style="gap:4px;align-items:center;flex-wrap:nowrap">
+            <select id="det-group" style="width:200px" onchange="onGroupSelect()"></select>
+            <button type="button" onclick="deleteGroupSel()" title="Kayıtlı grubu sil" style="padding:6px 9px;font-size:12px;background:var(--card);border:1px solid var(--line2);color:var(--faint)">🗑</button>
+          </div>
+        </div>
         <div class="field"><label id="l-detauto">Oto-yenile</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 2px;font-size:13px;color:var(--txt)">
             <input type="checkbox" id="det-auto" style="accent-color:var(--amber)">
             <span id="t-detauto">Kaynak değişince otomatik indeksle</span>
           </label>
         </div>
+      </div>
+      <div class="row">
+        <div class="field"><label id="l-detkaynak">Kaynak</label>
+          <select id="det-kaynak" style="width:140px">
+            <option value="">—</option>
+            <option value="git">git</option>
+            <option value="ticari">ticari</option>
+            <option value="yerel">yerel</option>
+            <option value="diğer">diğer</option>
+          </select>
+        </div>
+        <div class="field" style="flex:1;min-width:260px"><label id="l-deturl">URL</label><input id="det-url" style="width:100%" placeholder="https://github.com/owner/repo"></div>
       </div>
       <div class="field">
         <label id="l-detpath">Kaynak klasör</label>
@@ -262,6 +286,7 @@ function applyLang(){
   $('l-path').textContent=T('Kaynak klasör (boş = kayıtlı yol veya mevcut chunk dosyası kullanılır)','Source folder (empty = saved path or existing chunks are reused)');
   $('l-name').textContent=T('İndeks adı','Index name');$('l-dev').textContent=T('Donanım (Türkçe/anlamsal için)','Device (for Turkish/semantic)');
   $('l-pattern').textContent=T('Dosya deseni (virgülle birden fazla)','File pattern (comma for multiple)');
+  $('t-gitupdate').textContent=T('Tümünü Güncelle','Update All');
   $('t-mergemode').textContent=T('Birleştir','Merge');$('l-mergetarget').textContent=T('Hedef ad (yeni veya mevcut)','Target name (new or existing)');
   $('t-domerge').textContent=T('Seçilenleri Birleştir','Merge Selected');$('t-rename').textContent=T('Yeniden Adlandır','Rename');
   $('btn-pick').textContent=T('📁 Klasör Seç','📁 Choose Folder');
@@ -277,6 +302,7 @@ function applyLang(){
   $('t-collhint').textContent=T('Bir indekse tıklayın: ayrıntılarını ve geçmişini görün.','Click an index to see its details and history.');
   $('l-detver').textContent=T('Versiyon','Version');$('l-detlang').textContent=T('Dil','Language');$('l-detpath').textContent=T('Kaynak klasör','Source folder');$('l-detprio').textContent=T('Öncelik','Priority');
   $('l-detowner').textContent=T('Sahip','Owner');$('l-detgroup').textContent=T('Grup','Group');
+  $('l-detkaynak').textContent=T('Kaynak','Source');$('l-deturl').textContent=T('URL','URL');
   $('t-detsave').textContent=T('Kaydet','Save');$('t-detdelete').textContent=T('Sil','Delete');
   $('t-import').textContent=T('İçe Aktar','Import');$('t-detexport').textContent=T('Dışa Aktar','Export');
   $('t-detpathnote').textContent=T('Klasörü buradan düzeltmek (örn. disk/klasör taşındıysa) yeniden indekslemez — sadece kayıtlı yolu günceller.','Correcting the folder here (e.g. after moving disks/folders) does not reindex — it only updates the saved path.');
@@ -376,6 +402,56 @@ async function renameCollection(){
     await loadIndexes(true);
   }catch(e){alert(e);}
 }
+// ---- owner / group kayıt defterleri (Owner→Collection modeli) ----
+let OWNERS=[], GROUPS=[];
+const NEW_OPT='__new__';
+async function loadOwners(){try{OWNERS=(await(await fetch('/api/owners')).json()).owners||[];}catch(e){OWNERS=[];}}
+async function loadGroups(){try{GROUPS=(await(await fetch('/api/groups')).json()).groups||[];}catch(e){GROUPS=[];}}
+function renderRegistrySelect(sel,list,current){
+  // Eski (kayıt defterine hiç girmemiş) serbest-metin değerler kaybolmasın diye
+  // mevcut değer listede yoksa geçici bir seçenek olarak eklenir.
+  const names=list.map(x=>x.name);
+  const extra=current&&!names.includes(current)?[current]:[];
+  sel.innerHTML=`<option value="">—</option>`+extra.map(n=>`<option value="${esc(n)}">${esc(n)} (${T('kayıtsız','unregistered')})</option>`).join('')+
+    list.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join('')+
+    `<option value="${NEW_OPT}">+ ${T('Yeni ekle…','Add new…')}</option>`;
+  sel.value=current||'';
+}
+async function onOwnerSelect(){
+  const sel=$('det-owner');
+  if(sel.value!==NEW_OPT)return;
+  const name=prompt(T('Yeni sahip adı:','New owner name:'));
+  if(!name||!name.trim()){sel.value='';return;}
+  const url=prompt(T('URL (opsiyonel, ör. https://github.com/kullanici):','URL (optional, e.g. https://github.com/user):'),'');
+  const r=await(await fetch('/api/owners',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name.trim(),url:(url||'').trim()||null})})).json();
+  if(r.error){alert(r.error);sel.value='';return;}
+  await loadOwners();renderRegistrySelect(sel,OWNERS,name.trim());
+}
+async function onGroupSelect(){
+  const sel=$('det-group');
+  if(sel.value!==NEW_OPT)return;
+  const name=prompt(T('Yeni grup adı (ör. REST Library, Şifreleme):','New group name (e.g. REST Library, Encryption):'));
+  if(!name||!name.trim()){sel.value='';return;}
+  const r=await(await fetch('/api/groups',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name.trim()})})).json();
+  if(r.error){alert(r.error);sel.value='';return;}
+  await loadGroups();renderRegistrySelect(sel,GROUPS,name.trim());
+}
+async function deleteOwnerSel(){
+  const name=$('det-owner').value;
+  if(!name||name===NEW_OPT)return;
+  if(!confirm(T(`"${name}" sahip kaydı silinsin mi? (bu koleksiyonların owner alanını DEĞİŞTİRMEZ, yalnızca gelecekteki seçim listesinden düşer)`,`Delete owner "${name}"? (does not change any collection's owner field, only removes it from future selection)`)))return;
+  await fetch('/api/owners?name='+encodeURIComponent(name),{method:'DELETE'});
+  await loadOwners();renderRegistrySelect($('det-owner'),OWNERS,'');
+}
+async function deleteGroupSel(){
+  const name=$('det-group').value;
+  if(!name||name===NEW_OPT)return;
+  if(!confirm(T(`"${name}" grup kaydı silinsin mi? (koleksiyonların group alanını DEĞİŞTİRMEZ, yalnızca gelecekteki seçim listesinden düşer)`,`Delete group "${name}"? (does not change any collection's group field, only removes it from future selection)`)))return;
+  await fetch('/api/groups?name='+encodeURIComponent(name),{method:'DELETE'});
+  await loadGroups();renderRegistrySelect($('det-group'),GROUPS,'');
+}
 let DET_PRIORITY=0;
 function renderStars(n){
   DET_PRIORITY=n;
@@ -389,7 +465,8 @@ async function saveDetail(){
   try{
     await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       collection:SELECTED, version:$('det-ver').value, language:$('det-lang').value, path:$('det-path').value, priority:DET_PRIORITY,
-      owner:$('det-owner').value, group:$('det-group').value, auto_refresh:$('det-auto').checked})});
+      owner:$('det-owner').value, group:$('det-group').value, auto_refresh:$('det-auto').checked,
+      kaynak:$('det-kaynak').value, url:$('det-url').value})});
     await loadIndexes(true);
   }catch(e){}
   $('btn-detsave').disabled=false;
@@ -450,6 +527,38 @@ async function importCollection(file){
   $('btn-import').disabled=false;$('btn-import').innerHTML=orig;
   $('import-file').value='';
 }
+// ---- Tümünü Güncelle (kaynak=git koleksiyonlar: git pull + reindex) ----
+let gitUpdateTimer=null;
+async function startGitUpdateAll(){
+  const gitColls=Object.values(INDEXES).filter(ix=>ix.kaynak==='git');
+  if(!gitColls.length){alert(T('kaynak="git" olarak işaretli koleksiyon yok — Ayrıntılar\'dan bir koleksiyona kaynak atayın.','No collections marked kaynak="git" — set it from a collection\'s Details.'));return;}
+  if(!confirm(T(`${gitColls.length} git koleksiyonu güncellenecek (git pull + reindex). Yerel değişikliği olanlar atlanır. Devam?`,`${gitColls.length} git collections will be updated (git pull + reindex). Ones with local changes are skipped. Continue?`)))return;
+  const r=await(await fetch('/api/git-update-all',{method:'POST'})).json();
+  if(r.error){alert(r.error);return;}
+  if(gitUpdateTimer)clearInterval(gitUpdateTimer);
+  gitUpdateTimer=setInterval(loadGitUpdateStatus,2000);
+  loadGitUpdateStatus();
+}
+async function loadGitUpdateStatus(){
+  try{
+    const s=await(await fetch('/api/git-update-status')).json();
+    const box=$('git-update-status');
+    if(!s.phase||s.phase==='idle'){box.style.display='none';return;}
+    box.style.display='block';
+    const rows=(s.results||[]).map(r=>
+      `<div style="padding:2px 0">${r.reindexed?'✅':r.pulled?'🟡':'⬜'} <b>${esc(r.collection)}</b> ${r.output?`— <span style="color:var(--faint);font-size:11.5px">${esc(r.output.slice(0,140))}</span>`:''}</div>`).join('');
+    if(s.phase==='running'){
+      box.innerHTML=`<span class="spin"></span>${T('güncelleniyor','updating')} ${(s.done||0)}/${(s.total||0)} — <b>${esc(s.current||'')}</b><br>${rows}`;
+    }else if(s.phase==='done'){
+      clearInterval(gitUpdateTimer);gitUpdateTimer=null;
+      box.innerHTML=`✅ ${T('tamamlandı','done')} (${s.total||0} ${T('koleksiyon','collections')})<br>${rows}`;
+      loadIndexes();
+    }else if(s.phase==='error'){
+      clearInterval(gitUpdateTimer);gitUpdateTimer=null;
+      box.innerHTML=`❌ ${esc(s.error||'')}<br>${rows}`;
+    }
+  }catch(e){}
+}
 async function refreshVector(name,type){
   const body={collection:name,vectors:[type],device:$('idx-dev').value};
   const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
@@ -486,8 +595,10 @@ function renderDetail(name){
   $('det-ver').value=ix.version||'';
   $('det-lang').value=ix.language||'';
   $('det-path').value=ix.path||'';
-  $('det-owner').value=ix.owner||'';
-  $('det-group').value=ix.group||'';
+  renderRegistrySelect($('det-owner'),OWNERS,ix.owner||'');
+  renderRegistrySelect($('det-group'),GROUPS,ix.group||'');
+  $('det-kaynak').value=ix.kaynak||'';
+  $('det-url').value=ix.url||'';
   $('det-auto').checked=!!ix.auto_refresh;
   renderStars(ix.priority||0);
   const warnEl=$('det-pathwarn');
@@ -659,7 +770,8 @@ async function runBackup(){
     const t=setInterval(async()=>{const d=await(await fetch('/api/backup/status')).json();loadBackups();if((d.job||{}).phase!=='running'&&(d.job||{}).phase!=='starting'){clearInterval(t);$('btn-backup').disabled=false;}},2500);
   }catch(e){alert(e);$('btn-backup').disabled=false;}
 }
-health();loadModels();loadIndexes().then(fillDupColls);loadAnalytics();loadBackups();setInterval(health,10000);setInterval(()=>{loadIndexes(false).then(fillDupColls);},10000);
+health();loadModels();loadOwners();loadGroups();loadIndexes().then(fillDupColls);loadAnalytics();loadBackups();loadGitUpdateStatus();
+setInterval(health,10000);setInterval(()=>{loadIndexes(false).then(fillDupColls);},10000);
 
 let jobTimer=null;
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
