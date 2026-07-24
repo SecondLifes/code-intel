@@ -40,7 +40,20 @@ DOMAIN_MODELS = {k: v for k, v in CFG.get("domain_models", {}).items() if not k.
 
 mcp = FastMCP("code-intel")
 
-@mcp.tool()
+# ---------------- TOOL REGISTRY (tek kayıt kaynağı) ----------------
+# Her tool @tool ile TEK kez tanımlanır: hem FastMCP'ye (stdio MCP client'ları)
+# hem TOOLS sözlüğüne kaydolur. api/mcp_routes.py REST test uçlarını bu
+# sözlükten OTOMATİK üretir — eskiden her tool 4 yerde elle çoğaltılıyordu
+# (mcp_server + panel pydantic modeli + endpoint + api.html), tanım kayması
+# riski dış analizde P2 borç olarak işaretlenmişti. Parite artık yapısal olarak
+# garantili; tests/test_api.py'deki sözleşme testi güvence olarak duruyor.
+TOOLS: dict[str, object] = {}
+
+def tool(fn):
+    TOOLS[fn.__name__] = fn
+    return mcp.tool()(fn)
+
+@tool
 def search_code(query: str, collections: list[str] | None = None, mode: str = "hybrid", top_k: int = 8,
                  offset: int = 0, kind: str = "", unit: str = "", rerank: bool = False) -> dict:
     """Delphi kod tabanında hibrit (anlamsal+kelime, ağırlıklı RRF + isim-eşleşme
@@ -63,7 +76,7 @@ def search_code(query: str, collections: list[str] | None = None, mode: str = "h
     return retrieval.search(query, collections or DEFAULT_COLLECTIONS, mode, top_k, offset,
                             kind=kind, unit=unit, rerank=rerank)
 
-@mcp.tool()
+@tool
 def find_similar(collection: str, id: int, top_k: int = 8) -> dict:
     """Verilen chunk'a anlamsal olarak EN BENZER diğer kod parçalarını bulur —
     "buna benzer başka implementasyon var mı?", tekrarlanan/kopyalanmış mantık
@@ -71,7 +84,7 @@ def find_similar(collection: str, id: int, top_k: int = 8) -> dict:
     kullanılır (yeniden embedding hesaplanmaz), kendisi sonuçlardan çıkarılır."""
     return retrieval.find_similar(collection, id, top_k)
 
-@mcp.tool()
+@tool
 def read_unit(collection: str, unit: str) -> dict:
     """Bir dosyanın (unit, tam göreli yol — örn. "Source/Utils.pas") indekslenmiş
     TÜM chunk'larını satır sırasına dizip birleştirilmiş kodu döndürür — dosyanın
@@ -81,14 +94,14 @@ def read_unit(collection: str, unit: str) -> dict:
     ile derinleşmek için kullanılabilir."""
     return retrieval.read_unit(collection, unit)
 
-@mcp.tool()
+@tool
 def get_chunk(collection: str, id: int) -> dict:
     """Belirli bir chunk'ın TAM (kısaltılmamış) kaynak kodunu ve tüm meta verisini getirir.
     search_code bir sonucu kısaltarak döndürür — bu tool tam metni ister."""
     result = retrieval.get_chunk(collection, id, full_code=True)
     return result or {"error": f"chunk bulunamadı: {collection}/{id}"}
 
-@mcp.tool()
+@tool
 def get_relations(collection: str, id: int) -> dict:
     """Bir kod parçasının çağrı ilişkilerini döndürür: calls (bu parçanın çağırdığı
     metodlar), called_by (bu parçayı çağıran metodlar), same_unit (aynı dosyadaki
@@ -98,7 +111,7 @@ def get_relations(collection: str, id: int) -> dict:
     yüzden "kesin çağrı grafiği" değil, "olası ilişkiler" olarak değerlendirilmeli."""
     return retrieval.get_relations(collection, id)
 
-@mcp.tool()
+@tool
 def explain_chunk(collection: str, id: int, depth: str = "fast") -> dict:
     """Bir kod parçasını Türkçe açıklar. depth="fast": kısa (varsa /// doc özetinin
     doğrudan çevirisi, ucuz/hızlı). depth="deep": kodun tam mantık akışı, kenar
@@ -107,7 +120,7 @@ def explain_chunk(collection: str, id: int, depth: str = "fast") -> dict:
     model = FAST_MODEL if depth == "fast" else DEEP_MODEL
     return retrieval.explain_chunk(collection, id, depth, model)
 
-@mcp.tool()
+@tool
 def review_code(collection: str, id: int) -> dict:
     """Mevcut bir kod parçasını hata/risk için inceler (code review) — bellek
     sızıntısı, nil/null kontrolü eksikliği, exception güvenliği, kaynak kapatma,
@@ -115,7 +128,7 @@ def review_code(collection: str, id: int) -> dict:
     (otonom/arka plan DEĞİL), YENİ KOD ÜRETMEZ — sadece mevcut kodu değerlendirir."""
     return retrieval.review_chunk(collection, id, DEEP_MODEL)
 
-@mcp.tool()
+@tool
 def ask_domain_model(question: str, domain: str, code_context: str = "") -> dict:
     """Belirli bir alanda (örn. "sql") özel olarak eğitilmiş, ayrıca kurulu bir
     Ollama modeline doğrudan soru sorar — varsayılan model o alanda zayıf kalırsa
@@ -130,7 +143,7 @@ def ask_domain_model(question: str, domain: str, code_context: str = "") -> dict
     txt = retrieval.ollama_generate(model, prompt, num_predict=700)
     return {"model": model, "domain": domain, "answer": txt}
 
-@mcp.tool()
+@tool
 def get_type_hierarchy(collection: str, type_name: str) -> dict:
     """Bir Delphi tipinin kalıtım hiyerarşisini döndürür: ancestors (üst sınıf
     zinciri, köke doğru), descendants (alt sınıflar, 2 seviye), implements (bu
@@ -140,7 +153,7 @@ def get_type_hierarchy(collection: str, type_name: str) -> dict:
     isim tabanlıdır, chunk_id'lerle get_chunk'a derinleşilebilir."""
     return retrieval.get_type_hierarchy(collection, type_name)
 
-@mcp.tool()
+@tool
 def find_references(collection: str, name: str, top_k: int = 30) -> dict:
     """Bir sembol adının korpustaki izlerini üç grupta döndürür: definitions
     (adı birebir taşıyan chunk'lar), callers (bu tanımları çağıran metodlar,
@@ -149,7 +162,7 @@ def find_references(collection: str, name: str, top_k: int = 30) -> dict:
     tip hiyerarşisi için ayrıca get_type_hierarchy kullanın."""
     return retrieval.find_references(collection, name, top_k)
 
-@mcp.tool()
+@tool
 def analyze_impact(collection: str, base: str = "") -> dict:
     """Değişiklik etki analizi: koleksiyonun kaynak deposunda base commit'ten
     (verilmezse SON İNDEKSLENEN commit'ten) bu yana değişen dosyaları bulur ve
@@ -160,12 +173,12 @@ def analyze_impact(collection: str, base: str = "") -> dict:
     diff + isim-sezgili graf — kesin statik analiz değildir."""
     return retrieval.analyze_impact(collection, base)
 
-@mcp.tool()
+@tool
 def list_domain_models() -> dict:
     """mcp-config.json'da tanımlı alan-özel (domain) modelleri listeler (örn. sql -> sqlcoder:15b)."""
     return {"domain_models": DOMAIN_MODELS}
 
-@mcp.tool()
+@tool
 def list_collections() -> dict:
     """Kurulu (aranabilir) indeksleri ve nokta sayılarını listeler. İç sistem
     koleksiyonları (_index_history, _index_profiles) hariç tutulur."""
