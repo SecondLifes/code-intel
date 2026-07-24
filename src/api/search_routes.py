@@ -29,11 +29,12 @@ class SearchReq(BaseModel):
     kind: str = ""      # "" | method | decl | type
     unit: str = ""      # dosya yolu alt-dizesi filtresi (örn. "Providers/")
     rerank: bool = False
+    lang: str = ""      # "" | pascal | python | csharp | ... (Sıra 10 çok dil filtresi)
 
 @router.post("/api/search")
 def search(r: SearchReq):
     result = retrieval.search(r.q, r.collections, r.mode, r.top_k, r.offset,
-                              kind=r.kind, unit=r.unit, rerank=r.rerank)
+                              kind=r.kind, unit=r.unit, rerank=r.rerank, lang=r.lang)
     if "error" in result:
         return JSONResponse(result, status_code=400)
     return result

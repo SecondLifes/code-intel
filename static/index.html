@@ -182,6 +182,19 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
       <option value="type">type</option>
     </select>
     <input class="mini" id="f-unit" placeholder="dosya süzgeci" style="width:110px" title="unit yolu alt-dizesi, örn. Providers/">
+    <select class="mini" id="f-lang" title="Programlama dili">
+      <option value="">Tüm diller</option>
+      <option value="pascal">Pascal/Delphi</option>
+      <option value="python">Python</option>
+      <option value="csharp">C#</option>
+      <option value="cpp">C++</option>
+      <option value="c">C</option>
+      <option value="java">Java</option>
+      <option value="javascript">JavaScript</option>
+      <option value="typescript">TypeScript</option>
+      <option value="go">Go</option>
+      <option value="rust">Rust</option>
+    </select>
     <label class="mini" id="rr-label" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Cross-encoder ile yeniden sıralama — daha isabetli, biraz daha yavaş">
       <input type="checkbox" id="rr-toggle" style="accent-color:var(--amber)">
       <span id="t-rr">🎯 Hassas sıra</span>
@@ -238,6 +251,7 @@ function applyLang(){
   $('t-rr').textContent=T('🎯 Hassas sıra','🎯 Precise rank');
   $('f-kind').options[0].textContent=T('Tümü','All kinds');
   $('f-unit').placeholder=T('dosya süzgeci','file filter');
+  $('f-lang').options[0].textContent=T('Tüm diller','All languages');
 }
 function pick(el){$('q').value=el.textContent;run();}
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
@@ -333,7 +347,7 @@ async function loadWorkspaces(){
 }
 function currentConfig(){
   return {collections:SELECTED_COLLS, mode:MODE, kind:$('f-kind').value, unit:$('f-unit').value.trim(),
-          rerank:$('rr-toggle').checked, group:GROUP_MODE};
+          rerank:$('rr-toggle').checked, group:GROUP_MODE, lang:$('f-lang').value};
 }
 async function saveWorkspace(){
   const name=prompt(T('Çalışma alanı adı:','Workspace name:'), $('ws-select').value||'');
@@ -359,7 +373,7 @@ function applyWorkspace(){
     localStorage.setItem('ci-colls',JSON.stringify(SELECTED_COLLS));renderCollPicker();
   }
   if(c.mode){MODE=c.mode;[...$('seg-mode').children].forEach(x=>x.classList.toggle('on',x.dataset.m===MODE));}
-  $('f-kind').value=c.kind||'';$('f-unit').value=c.unit||'';$('rr-toggle').checked=!!c.rerank;
+  $('f-kind').value=c.kind||'';$('f-unit').value=c.unit||'';$('rr-toggle').checked=!!c.rerank;$('f-lang').value=c.lang||'';
   if(typeof c.group==='boolean'){GROUP_MODE=c.group;$('group-toggle').checked=c.group;localStorage.setItem('ci-groupmode',c.group?'1':'0');}
 }
 function citeFmt(t){return esc(t).replace(/\[(\d+)\]/g,'<b class="cite">[$1]</b>');}
@@ -389,6 +403,7 @@ function srcCard(h,i){return `
       <span class="idx">[${i+1}]</span>
       <span class="n">${esc(h.name)}</span>
       <span class="collbadge">${esc(h.collection)}</span>
+      ${h.lang?`<span class="collbadge" style="color:var(--amber)">${esc(h.lang)}</span>`:''}
       <span class="m">${esc(h.unit)} · L${h.line_start}-${h.line_end}</span>
       ${whyText(h.why)?`<span class="m" style="cursor:help" title="${esc(whyText(h.why))}">ⓘ</span>`:''}
       <span class="sc">${h.score}</span>
@@ -445,7 +460,7 @@ function renderHitList(hits){
 }
 function searchBody(offset){
   return {q:LAST_Q,collections:SELECTED_COLLS,mode:MODE,top_k:PAGE_SIZE,offset,
-          kind:$('f-kind').value,unit:$('f-unit').value.trim(),rerank:$('rr-toggle').checked};
+          kind:$('f-kind').value,unit:$('f-unit').value.trim(),rerank:$('rr-toggle').checked,lang:$('f-lang').value};
 }
 // Çok turlu sohbet geçmişi — sunucu stateless; geçmiş artık localStorage'da
 // KALICI (sayfa yenilense de sürer), "🧹" temizler, "⬇" markdown indirir.

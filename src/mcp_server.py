@@ -56,9 +56,11 @@ def tool(fn):
 @tool
 def search_code(query: str, collections: list[str] | None = None, mode: str = "hybrid", top_k: int = 8,
                  offset: int = 0, kind: str = "", unit: str = "", rerank: bool = False,
-                 expand: bool = False) -> dict:
-    """Delphi kod tabanında hibrit (anlamsal+kelime, ağırlıklı RRF + isim-eşleşme
-    boost'uyla birleştirilmiş) arama yapar.
+                 expand: bool = False, lang: str = "") -> dict:
+    """Kod tabanında hibrit (anlamsal+kelime, ağırlıklı RRF + isim-eşleşme
+    boost'uyla birleştirilmiş) arama yapar. Delphi/Pascal ile başladı; artık
+    Python/C#/C-C++/Java/Go/Rust'ta da tam derinlikte (doc, çağrı grafiği,
+    kalıtım), ~45 başka dilde temel seviyede (chunk+isim+arama) çalışır.
 
     query: Türkçe veya İngilizce doğal dil sorgusu (örn. "bağlantı stringi nasıl parse edilir").
     collections: aranacak indeks adları (boşsa yapılandırmadaki varsayılan(lar) kullanılır).
@@ -66,16 +68,18 @@ def search_code(query: str, collections: list[str] | None = None, mode: str = "h
     top_k: kaç sonuç döndürülsün. offset: sayfalama için kaç sonuç atlanacak.
     kind: "method" (sadece gövdeler) | "decl" (sadece bildirimler) | "type" (sadece
     tip tanımları) | "" (hepsi). unit: dosya yolu alt-dize filtresi (örn. "Providers/").
+    lang: "" (hepsi) | "pascal" | "python" | "csharp" | "cpp" | "java" | "go" | "rust" | ...
+    (list_collections'daki koleksiyon karışıksa aramayı tek dile daraltmak için).
     rerank: True ise en iyi 50 aday cross-encoder ile yeniden sıralanır — daha
     isabetli sıra, biraz daha yavaş (ilk çağrıda model yüklenir).
 
     Döndürür: total (bu çalıştırmada elenen aday sayısı), has_more, ve her biri
     collection, score, id, unit (dosya), name (method/tip adı), line_start/line_end,
-    code (kısaltılmış), doc (varsa /// özeti) içeren hit listesi. Aynı rutinin
-    decl+method kopyaları tekilleştirilir (method tutulur).
+    lang, code (kısaltılmış), doc (varsa doc özeti) içeren hit listesi. Aynı
+    rutinin decl+method kopyaları tekilleştirilir (method tutulur).
     """
     return retrieval.search(query, collections or DEFAULT_COLLECTIONS, mode, top_k, offset,
-                            kind=kind, unit=unit, rerank=rerank, expand=expand)
+                            kind=kind, unit=unit, rerank=rerank, expand=expand, lang=lang)
 
 @tool
 def find_similar(collection: str, id: int, top_k: int = 8) -> dict:

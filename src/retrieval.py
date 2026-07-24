@@ -235,9 +235,9 @@ def log_feedback(collection: str, id: int, q: str, verdict: str, name: str = "")
         return {"error": str(e)[:200]}
 
 def ensure_payload_indexes(collection: str):
-    """unit/kind/name alanlarına keyword payload index — kind filtresi ve
-    get_relations'ın unit scroll'u için. İdempotent (varsa hata yutulur)."""
-    for field in ("unit", "kind", "name"):
+    """unit/kind/name/lang alanlarına keyword payload index — kind/lang filtresi
+    ve get_relations'ın unit scroll'u için. İdempotent (varsa hata yutulur)."""
+    for field in ("unit", "kind", "name", "lang"):
         try:
             cl.create_payload_index(collection, field_name=field,
                                      field_schema=models.PayloadSchemaType.KEYWORD)
@@ -246,7 +246,7 @@ def ensure_payload_indexes(collection: str):
 
 def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8, offset: int = 0,
            kind: str = "", unit: str = "", rerank: bool = False, log: bool = True,
-           expand: bool = False, diversify: bool = True) -> dict:
+           expand: bool = False, diversify: bool = True, lang: str = "") -> dict:
     """Hibrit (dense+sparse, kendi ağırlıklı RRF'imiz + isim-eşleşme boost'u ile
     birleştirilmiş) arama. Birden fazla koleksiyon verilirse aralarında da aynı
     füzyon uygulanır. Uyumsuz bir koleksiyon (örn. dense/sparse şeması yok)
@@ -289,7 +289,16 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
     # yeterli ve ek gecikmesi ölçülebilir değil.
     per_coll_limit = max(200, offset + top_k)
     query_tokens = _tokenize(q_sparse)   # genişletilmiş EN terimler isim-boost'a da girer
-    flt = models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value=kind))]) if kind else None
+    flt_conds = []
+    if kind:
+        flt_conds.append(models.FieldCondition(key="kind", match=models.MatchValue(value=kind)))
+    if lang:
+        # 'pascal' özel: v1/v2 Pascal payload'ında lang alanı hiç yazılmaz (dil
+        # tablosu Pascal'ı kapsamıyor) — bu yüzden "IsEmpty" ile eşleniyor.
+        flt_conds.append(models.IsEmptyCondition(is_empty=models.PayloadField(key="lang"))
+                         if lang.lower() == "pascal" else
+                         models.FieldCondition(key="lang", match=models.MatchValue(value=lang.lower())))
+    flt = models.Filter(must=flt_conds) if flt_conds else None
 
     # Koleksiyon önceliği (yıldız) yalnızca birden fazla koleksiyon birlikte
     # arandığında anlamlıdır — tek koleksiyonda hepsi aynı çarpanı alır, sıralama
@@ -383,7 +392,7 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
             **({"expanded": expanded_kw} if expanded_kw else {}),
             "hits": [
         {"collection": c, "score": round(fscore, 4), "id": h.id,
-         **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
+         **{k: h.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc", "lang")},
          "code": h.payload.get("code", "")[:1800], "tr": h.payload.get("tr"),
          "why": all_why.get((c, h.id), {})} for fscore, (c, h) in page]}
 
@@ -519,7 +528,7 @@ def find_similar(collection: str, id: int, top_k: int = 8) -> dict:
     res = cl.query_points(collection_name=collection, query=id, using="dense",
                            limit=top_k + 1, with_payload=True).points
     hits = [{"collection": collection, "score": round(p.score, 4), "id": p.id,
-             **{k: p.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc")},
+             **{k: p.payload.get(k) for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "doc", "lang")},
              "code": p.payload.get("code", "")[:1800]}
             for p in res if p.id != id][:top_k]
     return {"source": {"id": id, "name": pts[0].payload.get("name")}, "hits": hits}
@@ -591,9 +600,28 @@ def build_symbol_graph(collection: str, st: dict | None = None) -> dict:
     next_page = None
     while True:
         batch, next_page = cl.scroll(collection, limit=5000, offset=next_page,
-            with_payload=["code", "unit", "kind"],
+            with_payload=["code", "unit", "kind", "name", "lang", "extends"],
             scroll_filter=models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value="type"))]))
         for p in batch:
+            lang = p.payload.get("lang")   # yoksa Pascal (v1/v2 Pascal payload'ında bu alan hiç yok)
+            if lang:
+                # ÇOK DİLLİ (Sıra 10): chunker zaten extends listesini çıkarmış —
+                # burada regex YOK. Sözleşme Pascal'la aynı: ilk öğe kalıtım
+                # (inherits), kalanlar interface (implements) — dil-özel çıkarıcılar
+                # (chunker.py:_extract_extends) bu sırayı üretecek şekilde yazıldı.
+                child = p.payload.get("name") or ""
+                plist = p.payload.get("extends") or []
+                if not child or not plist:
+                    if child:
+                        n_types += 1
+                        type_ids.setdefault(child.lower(), []).append(p.id)
+                    continue
+                n_types += 1
+                type_ids.setdefault(child.lower(), []).append(p.id)
+                for i, parent in enumerate(plist):
+                    edge = "inherits" if i == 0 else "implements"
+                    edges.append((child, parent, edge, p.payload.get("unit"), p.id))
+                continue
             code = p.payload.get("code", "")
             m = _TYPE_DECL_RE.search(code[:400])
             if not m:

@@ -5,6 +5,8 @@ bağımlılığı yok; hepsi geçici, kendi kendine yeten Pascal parçacıkları
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 from chunker import chunk_file  # noqa: E402
 
@@ -152,3 +154,176 @@ def test_v2_id_is_repo_scoped(tmp_path):
     a = {ch["name"] + ch["kind"]: ch["id"] for ch in chunk_file(p, "libA")}
     b = {ch["name"] + ch["kind"]: ch["id"] for ch in chunk_file(p, "libB")}
     assert a and all(a[k] != b[k] for k in a)
+
+
+# ---------------- Sıra 10: çok dilli motor ----------------
+from chunker import chunker_for, LANG_TABLE  # noqa: E402
+
+
+PY_SRC = '''import os
+from collections import OrderedDict
+
+
+class Base:
+    pass
+
+
+class Widget(Base, Mixin):
+    """A widget that does things."""
+
+    def render(self, ctx):
+        """Renders the widget into the given context."""
+        return helper_render(ctx)
+'''
+
+CS_SRC = '''using System;
+using System.Collections.Generic;
+
+namespace MyApp
+{
+    public interface IShape { }
+
+    /// <summary>Represents a rectangle.</summary>
+    public class Rectangle : Shape, IShape
+    {
+        /// <summary>Computes the area.</summary>
+        public double Area()
+        {
+            return ComputeArea(Width, Height);
+        }
+    }
+}
+'''
+
+JAVA_SRC = '''package com.example;
+import java.util.List;
+
+/** A service that does things. */
+public class MyService extends BaseService implements Runnable {
+    /** Runs the service. */
+    public void run() {
+        doWork();
+    }
+}
+'''
+
+GO_SRC = '''package main
+
+import (
+    "fmt"
+)
+
+// Greeter greets people.
+type Greeter struct{}
+
+// Greet prints a greeting.
+func Greet(name string) string {
+    return formatGreeting(name)
+}
+'''
+
+RUST_SRC = '''use std::fmt;
+
+/// A point in 2D space.
+struct Point { x: i32, y: i32 }
+
+trait Shape { fn area(&self) -> f64; }
+
+impl Shape for Point {
+    fn area(&self) -> f64 { compute_area(self.x, self.y) }
+}
+'''
+
+RUBY_SRC = '''require "set"
+
+class Widget
+  def render(ctx)
+    helper_render(ctx)
+  end
+end
+'''
+
+
+def test_dispatch_picks_correct_chunker_by_extension(tmp_path):
+    assert chunker_for(pathlib.Path("x.py")).lang == "python"
+    assert chunker_for(pathlib.Path("x.cs")).lang == "csharp"
+    assert chunker_for(pathlib.Path("x.rs")).lang == "rust"
+    assert chunker_for(pathlib.Path("x.unknown_ext_xyz")) is None
+
+
+def test_python_full_support_doc_calls_extends(tmp_path):
+    p = write(tmp_path, "widget.py", PY_SRC)
+    chunks = list(chunk_file(p, "test"))
+    methods = [c for c in chunks if c["kind"] == "method"]
+    types = [c for c in chunks if c["kind"] == "type"]
+    heads = [c for c in chunks if c["kind"] == "unithead"]
+    assert any(c["name"] == "render" for c in methods)
+    render = next(c for c in methods if c["name"] == "render")
+    assert "Renders the widget" in render["doc"]
+    assert "helper_render" in render["calls_raw"]
+    widget = next(c for c in types if c["name"] == "Widget")
+    assert widget["extends"][0] == "Base"   # ilk taban sınıf
+    assert heads and "collections" in heads[0]["uses"]
+    assert all(c.get("lang") == "python" for c in chunks)
+
+
+def test_csharp_doc_and_interface_extraction(tmp_path):
+    p = write(tmp_path, "Rectangle.cs", CS_SRC)
+    chunks = list(chunk_file(p, "test"))
+    rect = next(c for c in chunks if c["kind"] == "type" and c["name"] == "Rectangle")
+    assert "Shape" in rect["extends"] and "IShape" in rect["extends"]
+    area = next(c for c in chunks if c["kind"] == "method" and c["name"] == "Area")
+    assert "Computes the area" in area["doc"]
+    # calls_raw kasıtlı olarak küçük harfe normalize edilir (Pascal'la aynı sözleşme —
+    # link_call_graph çözümlemesi de bare adı lower() ile eşleştirir)
+    assert "computearea" in area["calls_raw"]
+
+
+def test_java_extends_implements_order(tmp_path):
+    p = write(tmp_path, "MyService.java", JAVA_SRC)
+    chunks = list(chunk_file(p, "test"))
+    svc = next(c for c in chunks if c["kind"] == "type" and c["name"] == "MyService")
+    assert svc["extends"][0] == "BaseService"
+    assert "Runnable" in svc["extends"][1:]
+
+
+def test_go_functions_and_uses(tmp_path):
+    p = write(tmp_path, "greet.go", GO_SRC)
+    chunks = list(chunk_file(p, "test"))
+    greet = next(c for c in chunks if c["kind"] == "method" and c["name"] == "Greet")
+    assert "prints a greeting" in greet["doc"]
+    head = next(c for c in chunks if c["kind"] == "unithead")
+    assert "fmt" in head["uses"]
+
+
+def test_rust_impl_for_trait(tmp_path):
+    p = write(tmp_path, "point.rs", RUST_SRC)
+    chunks = list(chunk_file(p, "test"))
+    impls = [c for c in chunks if c["kind"] == "type" and c.get("extends")]
+    assert any(c["name"] == "Point" and "Shape" in c["extends"] for c in impls)
+
+
+def test_generic_layer_ruby_finds_method_without_full_support(tmp_path):
+    """Ruby jenerik katmanda (full=False) — doc/calls/extends YOK ama chunk +
+    isim + arama tam çalışmalı (Katman-2 sözleşmesi)."""
+    p = write(tmp_path, "widget.rb", RUBY_SRC)
+    chunks = list(chunk_file(p, "test"))
+    assert any(c["kind"] == "method" and c["name"] == "render" for c in chunks)
+    render = next(c for c in chunks if c["name"] == "render")
+    assert render.get("lang") == "ruby"
+    assert render["calls_raw"] == []   # full=False: çağrı çıkarımı yapılmaz
+
+
+def test_lang_table_extensions_are_unique_across_full_support_langs():
+    """Tam-destek dillerin uzantıları birbiriyle (ve Pascal'la) çakışmamalı —
+    çakışma sessizce yanlış dile yönlendirir."""
+    seen: dict[str, str] = {".pas": "pascal", ".dpr": "pascal", ".dpk": "pascal", ".inc": "pascal"}
+    for lang, cfg in LANG_TABLE.items():
+        for ext in cfg["exts"]:
+            assert ext not in seen, f"{ext} hem {seen.get(ext)} hem {lang} tablosunda"
+            seen[ext] = lang
+
+
+def test_lang_table_has_at_least_40_generic_entries():
+    generic = [l for l, c in LANG_TABLE.items() if not c.get("full")]
+    assert len(generic) >= 35, f"jenerik katman beklenenden dar: {len(generic)}"

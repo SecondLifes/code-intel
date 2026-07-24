@@ -88,6 +88,7 @@ pre.out.err{color:var(--err)}
       <div class="field" style="max-width:130px"><label>kind</label>
         <select id="sc-kind"><option value="">(hepsi)</option><option value="method">method</option><option value="decl">decl</option><option value="type">type</option></select></div>
       <div class="field" style="max-width:180px"><label>unit (alt-dize)</label><input id="sc-unit" placeholder="Providers/"></div>
+      <div class="field" style="max-width:130px"><label>lang</label><input id="sc-lang" placeholder="python"></div>
       <div class="field" style="max-width:110px"><label>rerank</label>
         <select id="sc-rerank"><option value="false">false</option><option value="true">true</option></select></div>
       <div class="field" style="max-width:110px"><label>expand</label>
@@ -282,7 +283,7 @@ const TOOLS={
     collections:$('sc-colls').value.trim()?$('sc-colls').value.split(',').map(s=>s.trim()):null,
     mode:$('sc-mode').value, top_k:parseInt($('sc-topk').value)||8,
     kind:$('sc-kind').value, unit:$('sc-unit').value.trim(), rerank:$('sc-rerank').value==='true',
-    expand:$('sc-expand').value==='true'
+    expand:$('sc-expand').value==='true', lang:$('sc-lang').value.trim()
   })},
   find_similar:{method:'POST',url:'/api/mcp/find_similar',body:()=>({collection:$('fs-coll').value,id:parseInt($('fs-id').value),top_k:parseInt($('fs-topk').value)||8})},
   read_unit:{method:'POST',url:'/api/mcp/read_unit',body:()=>({collection:$('ru-coll').value,unit:$('ru-unit').value.trim()})},

@@ -324,7 +324,9 @@ def _run_index(r: IndexReq):
                     payload={k: x[k] for k in ("lib", "unit", "kind", "name", "line_start", "line_end", "hash")}
                              | {"code": x["code"][:4000], "doc": x.get("doc", ""), "calls_raw": x.get("calls_raw", [])}
                              | ({"uses": x["uses"]} if x.get("uses") else {})      # unithead: uses-graf girdisi
-                             | ({"huge": True} if x.get("huge") else {})))         # dev metod: kod kırpık, tam hali diskte
+                             | ({"huge": True} if x.get("huge") else {})           # dev metod: kod kırpık, tam hali diskte
+                             | ({"lang": x["lang"]} if x.get("lang") else {})      # çok dilli (Sıra 10): Pascal'da yok
+                             | ({"extends": x["extends"]} if x.get("extends") else {})))  # kalıtım/interface kenarları
             cl.upsert(r.collection, points=pts)   # her batch TEK çağrı — hem yeni hem değişen noktalar için
             st.update(done=i + len(b), rate=round((i + len(b)) / (time.time() - t0), 1))
         # yeni/değişen içerik güvenle yazıldıktan SONRA eskiler silinir (yukarıdaki not)
