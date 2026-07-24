@@ -502,8 +502,12 @@ function renderDetail(name){
   }
   const entries=HISTORY[name]||[];
   $('hist-rows').innerHTML=entries.length?entries.map(e=>
-    `<div class="histentry"><span class="p">${esc(e.path)}</span>`+
+    e.status==='error'
+    ?`<div class="histentry" style="border-color:#6b3a26"><span class="p" style="color:var(--err)">❌ ${esc(e.error||T('bilinmeyen hata','unknown error'))}</span>`+
+      `<span class="d">${fmtDate(e.date)}</span></div>`
+    :`<div class="histentry"><span class="p">${esc(e.path)}</span>`+
     `<span class="v">${(e.vectors||[]).join('+')}</span>`+
+    (e.commit?`<span class="v" title="${esc(e.branch||'')}${e.git_dirty?' · '+T('kirli çalışma ağacı','dirty worktree'):''}">⎇ ${esc(e.commit.slice(0,7))}${e.git_dirty?'*':''}</span>`:'')+
     `<span class="c">${(e.chunks||0).toLocaleString('tr')} chunk</span>`+
     `<span class="d">${fmtDate(e.date)}</span>`+
     `<button onclick="useHistPath('${esc(e.path).replace(/'/g,"\\'")}')">${T('Bu klasörü kullan','Use this folder')}</button></div>`

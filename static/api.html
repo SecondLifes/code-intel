@@ -65,7 +65,7 @@ pre.out.err{color:var(--err)}
 
   <div class="panelcard">
     <h3 id="t-mcp">MCP Tool'ları<span class="badge">canlı test</span></h3>
-    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 12 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
+    <p class="desc" id="t-mcpdesc">Bir MCP client'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 13 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.</p>
   </div>
 
   <div class="panelcard">
@@ -179,6 +179,16 @@ pre.out.err{color:var(--err)}
     <pre class="out" id="out-find_references"></pre>
   </div>
 
+  <div class="panelcard" id="tool-analyze_impact">
+    <h3>analyze_impact</h3>
+    <div class="row">
+      <div class="field"><label>collection</label><input id="ai-coll" list="coll-list" placeholder="unidac"></div>
+      <div class="field"><label>base (commit, boş = son indekslenen)</label><input id="ai-base" placeholder=""></div>
+    </div>
+    <button onclick="runTool('analyze_impact')">▶ Çalıştır</button>
+    <pre class="out" id="out-analyze_impact"></pre>
+  </div>
+
   <div class="panelcard" id="tool-ask_domain_model">
     <h3>ask_domain_model</h3>
     <div class="row">
@@ -215,7 +225,7 @@ function applyLang(){
   $('t-rest').textContent=T('REST API','REST API');
   $('t-restdesc').textContent=T('Panelin kullandığı tüm /api/* uçları — canlı, interaktif dokümantasyon ve deneme burada.','Every /api/* endpoint the panel itself uses — live, interactive docs and try-it-out here.');
   $('t-mcp').innerHTML=T('MCP Tool\'ları','MCP Tools')+'<span class="badge">'+T('canlı test','live test')+'</span>';
-  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 12 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 12 tools — just triggered from here instead of stdio.');
+  $('t-mcpdesc').textContent=T('Bir MCP client\'ın (Claude Code, Codex CLI, Gemini CLI...) çağırdığı 13 tool ile birebir aynı kod yolu — sadece stdio yerine buradan tetiklenir.','The exact same code path a real MCP client (Claude Code, Codex CLI, Gemini CLI...) calls, all 13 tools — just triggered from here instead of stdio.');
   $('t-viewer').textContent=T('Dosya Görüntüleyici','File Viewer');
   $('t-viewerdesc').textContent=T('Diskteki bir .md/.html/.txt dosyasını panelde (karanlık temayla) görüntüler.','Renders a .md/.html/.txt file from disk inside the panel (dark theme).');
   $('t-vwopen').textContent=T('Görüntüle','View');
@@ -240,6 +250,7 @@ const TOOLS={
   find_similar:{method:'POST',url:'/api/mcp/find_similar',body:()=>({collection:$('fs-coll').value,id:parseInt($('fs-id').value),top_k:parseInt($('fs-topk').value)||8})},
   read_unit:{method:'POST',url:'/api/mcp/read_unit',body:()=>({collection:$('ru-coll').value,unit:$('ru-unit').value.trim()})},
   get_type_hierarchy:{method:'POST',url:'/api/mcp/get_type_hierarchy',body:()=>({collection:$('th-coll').value,type_name:$('th-type').value.trim()})},
+  analyze_impact:{method:'POST',url:'/api/mcp/analyze_impact',body:()=>({collection:$('ai-coll').value,base:$('ai-base').value.trim()})},
   find_references:{method:'POST',url:'/api/mcp/find_references',body:()=>({collection:$('fr-coll').value,name:$('fr-name').value.trim(),top_k:parseInt($('fr-topk').value)||30})},
   get_chunk:{method:'POST',url:'/api/mcp/get_chunk',body:()=>({collection:$('gc-coll').value,id:parseInt($('gc-id').value)})},
   explain_chunk:{method:'POST',url:'/api/mcp/explain_chunk',body:()=>({collection:$('ec-coll').value,id:parseInt($('ec-id').value),depth:$('ec-depth').value})},

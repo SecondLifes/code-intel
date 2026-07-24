@@ -1,7 +1,7 @@
 """Code-Intel MCP sunucusu — stdio üzerinden Claude Code, Codex CLI, Gemini CLI
 gibi MCP-uyumlu ajanlara Delphi kod tabanı arama/açıklama/inceleme araçları sunar.
-12 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
-get_type_hierarchy, find_references, explain_chunk, review_code,
+13 tool: search_code, get_chunk, get_relations, find_similar, read_unit,
+get_type_hierarchy, find_references, analyze_impact, explain_chunk, review_code,
 ask_domain_model, list_domain_models, list_collections.
 
 Çalıştır:  .venv/Scripts/python.exe -m src.mcp_server
@@ -148,6 +148,17 @@ def find_references(collection: str, name: str, top_k: int = 30) -> dict:
     diğer chunk'lar — yorum/string içi olabilir). TAM statik analiz değildir;
     tip hiyerarşisi için ayrıca get_type_hierarchy kullanın."""
     return retrieval.find_references(collection, name, top_k)
+
+@mcp.tool()
+def analyze_impact(collection: str, base: str = "") -> dict:
+    """Değişiklik etki analizi: koleksiyonun kaynak deposunda base commit'ten
+    (verilmezse SON İNDEKSLENEN commit'ten) bu yana değişen dosyaları bulur ve
+    "bu değişiklik neyi etkiler?" sorusunu yanıtlar: changed_units (değişen
+    dosyalar), chunks_changed, impacted_callers (değişen koda değişiklik kümesi
+    DIŞINDAN çağrı yapan metodlar), impacted_subtypes (değişen tiplerin alt
+    sınıfları). Kaynak klasör git deposu değilse zarif hata döner. Dosya-düzeyi
+    diff + isim-sezgili graf — kesin statik analiz değildir."""
+    return retrieval.analyze_impact(collection, base)
 
 @mcp.tool()
 def list_domain_models() -> dict:

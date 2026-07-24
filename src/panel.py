@@ -102,7 +102,8 @@ def get_history(collection: str | None = None) -> dict:
         batch, next_page = cl.scroll(HISTORY_COLL, scroll_filter=flt, limit=1000, offset=next_page, with_payload=True)
         for p in batch:
             out.setdefault(p.payload["collection"], []).append(
-                {k: p.payload.get(k) for k in ("path", "vectors", "chunks", "date", "new", "changed", "unchanged", "deleted", "language")})
+                {k: p.payload.get(k) for k in ("path", "vectors", "chunks", "date", "new", "changed", "unchanged", "deleted",
+                                                 "language", "commit", "branch", "git_dirty", "status", "error")})
         if next_page is None:
             break
     for entries in out.values():
@@ -1058,7 +1059,14 @@ def _run_index(r: IndexReq):
                 plan.append((x, pid, need_dense, need_sparse, before_dense, before_sparse))
 
         language = detect_language(src_path) if pathlib.Path(src_path).exists() else ""
-        hist_extra = {"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids), "language": language}
+        # Git provenance: bu indeks nesli HANGİ commit'ten üretildi — etki analizi
+        # (analyze_impact) son indekslenen commit'i base alır. Depo değilse boş kalır.
+        gi = retrieval.git_info(src_path) if pathlib.Path(src_path).exists() else {}
+        hist_extra = {"new": n_new, "changed": n_changed, "unchanged": n_unchanged, "deleted": len(stale_ids),
+                      "language": language, "status": "ok",
+                      "commit": gi.get("commit", ""), "branch": gi.get("branch", ""), "git_dirty": gi.get("dirty", False)}
+        if gi.get("commit"):
+            set_profile(r.collection, last_commit=gi["commit"], git_root=gi.get("git_root", ""))
         st.update(total=len(plan), phase="embedding", done=0,
                   skipped=n_unchanged, deleted=len(stale_ids))
         # plan boş değilse (gerçek içerik değişikliği) ya da silinen nokta varsa,
@@ -1120,6 +1128,14 @@ def _run_index(r: IndexReq):
         st.update(phase="done", sec=round(time.time() - t0, 1))
     except Exception as e:
         st.update(phase="error", error=str(e)[:300])
+        # KALICI iş kaydı: hatalar da tarihçeye yazılır — eskiden yalnız başarılı
+        # koşular kaydediliyordu, panel yeniden başlayınca hata bağlamı kayboluyordu
+        # (dış analizde işaret edilen "iş geçmişi bellekte" sorununun ucuz yarısı).
+        try:
+            record_history(r.collection, r.path or "", r.vectors, 0,
+                           extra={"status": "error", "error": str(e)[:300]})
+        except Exception:
+            pass
 
 @app.post("/api/index/start")
 def index_start(r: IndexReq):
@@ -1461,6 +1477,21 @@ class McpUnitReq(BaseModel):
 @app.post("/api/mcp/read_unit")
 def mcp_read_unit(r: McpUnitReq):
     return mcp_server.read_unit(r.collection, r.unit)
+
+# ---------------- değişiklik etki analizi (Faz 3) ----------------
+@app.get("/api/impact")
+def impact(collection: str, base: str = ""):
+    result = retrieval.analyze_impact(collection, base)
+    if "error" in result:
+        return JSONResponse(result, status_code=400)
+    return result
+
+class McpImpactReq(BaseModel):
+    collection: str; base: str = ""
+
+@app.post("/api/mcp/analyze_impact")
+def mcp_analyze_impact(r: McpImpactReq):
+    return mcp_server.analyze_impact(r.collection, r.base)
 
 # ---------------- sembol grafiği uçları ----------------
 @app.post("/api/symbols/rebuild")

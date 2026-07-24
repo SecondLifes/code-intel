@@ -8,6 +8,7 @@ import math
 import os
 import pathlib
 import re
+import subprocess
 import time
 import urllib.request
 import uuid
@@ -678,6 +679,111 @@ def find_references(collection: str, name: str, top_k: int = 30) -> dict:
     return {"name": name, "collection": collection,
             "definitions": definitions[:top_k], "callers": callers[:top_k],
             "textual": textual[:top_k]}
+
+# ---------------- Git provenance + değişiklik etki analizi (Faz 3) ----------------
+def git_info(path: str) -> dict:
+    """Verilen klasörün içinde bulunduğu git deposunun kimliği: kök, commit,
+    branch, kirli mi (commit'lenmemiş değişiklik var mı), origin URL'i.
+    Git deposu değilse / git yoksa boş dict — çağıran taraf zarifçe düşer
+    (provenance alanları boş kalır, özellik hata üretmez)."""
+    try:
+        def g(*args):
+            r = subprocess.run(["git", "-C", path, *args], capture_output=True, text=True, timeout=15)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        root = g("rev-parse", "--show-toplevel")
+        if not root:
+            return {}
+        return {"git_root": root, "commit": g("rev-parse", "HEAD"),
+                "branch": g("rev-parse", "--abbrev-ref", "HEAD"),
+                "dirty": bool(g("status", "--porcelain")),
+                "remote": g("remote", "get-url", "origin")}
+    except Exception:
+        return {}
+
+def _git_changed_files(git_root: str, base: str) -> list[str] | None:
+    """base..HEAD arası + çalışma ağacındaki (commit'lenmemiş, untracked dahil)
+    değişen dosyaların git-köküne göre yolları. Hata halinde None."""
+    try:
+        def g(*args):
+            r = subprocess.run(["git", "-C", git_root, *args], capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                raise RuntimeError(r.stderr.strip()[:200] or "git hatası")
+            return r.stdout
+        changed: set[str] = set()
+        if base:
+            changed.update(l.strip() for l in g("diff", "--name-only", base, "HEAD").splitlines() if l.strip())
+        changed.update(l.strip() for l in g("diff", "--name-only", "HEAD").splitlines() if l.strip())
+        changed.update(l.strip() for l in g("ls-files", "--others", "--exclude-standard").splitlines() if l.strip())
+        return sorted(changed)
+    except Exception:
+        return None
+
+def analyze_impact(collection: str, base: str = "", max_items: int = 100) -> dict:
+    """Değişiklik etki analizi: kaynak depoda base'ten (verilmezse SON İNDEKSLENEN
+    commit'ten) bu yana değişen dosyaları bulur ve indeksteki izdüşümünü çıkarır —
+    hangi chunk'lar değişti, onları KİM çağırıyor (called_by), değişen tiplerin
+    ALT SINIFLARI neler (sembol grafiği). "Bu değişiklik neyi kırar?" sorusunun
+    ilk yanıtı. Kaynak klasör bir git deposu değilse zarifçe hata döner.
+
+    Sınırlar: isim-sezgili çağrı grafiği ve tip kenarları ne kadar iyiyse etki
+    listesi o kadar iyidir; satır-düzeyi değil DOSYA-düzeyi değişiklik izlenir."""
+    prof = get_profile_payload(collection)
+    src = prof.get("path")
+    if not src or not pathlib.Path(src).exists():
+        return {"error": "koleksiyonun kayıtlı kaynak klasörü yok ya da diskte bulunamadı"}
+    gi = git_info(src)
+    if not gi:
+        return {"error": f"kaynak klasör bir git deposunda değil: {src} (etki analizi git gerektirir)"}
+    base_ref = base or prof.get("last_commit") or ""
+    if base_ref == gi.get("commit") and not gi.get("dirty"):
+        return {"base": base_ref[:12], "head": gi["commit"][:12], "dirty": False,
+                "changed_units": [], "impacted_callers": [], "impacted_subtypes": [],
+                "note": "son indekslemeden bu yana değişiklik yok"}
+    files = _git_changed_files(gi["git_root"], base_ref)
+    if files is None:
+        return {"error": f"git diff başarısız — base geçerli mi: {base_ref!r}"}
+
+    # git-kökü göreli yol -> kaynak-kökü göreli unit yolu (indeksin 'unit' alanı)
+    src_p, root_p = pathlib.Path(src).resolve(), pathlib.Path(gi["git_root"]).resolve()
+    pats = [p.strip().lstrip("*").lower() for p in (prof.get("patterns") or "*.pas").split(",") if p.strip()]
+    units = []
+    for f in files:
+        full = root_p / f
+        if not any(f.lower().endswith(suf) for suf in pats):
+            continue
+        try:
+            units.append(full.resolve().relative_to(src_p).as_posix())
+        except ValueError:
+            continue   # kaynak kökün dışındaki dosya (depoda ama indekslenmeyen bölge)
+
+    changed_chunks, callers, subtypes = [], {}, {}
+    changed_ids = set()
+    for unit in units:
+        pts, _ = cl.scroll(collection, limit=500, with_payload=["name", "kind", "line_start", "called_by"],
+            scroll_filter=models.Filter(must=[models.FieldCondition(key="unit", match=models.MatchValue(value=unit))]))
+        for p in pts:
+            changed_ids.add(p.id)
+            changed_chunks.append({"id": p.id, "unit": unit, "name": p.payload.get("name"),
+                                    "kind": p.payload.get("kind")})
+    for ch in changed_chunks:
+        if ch["kind"] == "type":
+            h = get_type_hierarchy(collection, (ch["name"] or "").split("=")[0].strip())
+            for d in h.get("descendants", []):
+                subtypes.setdefault(d["name"], d)
+        # called_by tekrar çekmek yerine ilk scroll'da alındı — ama changed_chunks'a
+        # koymadık; ucuz ikinci erişim yerine retrieve ile toplu al
+    for i in range(0, len(changed_chunks), 500):
+        ids = [c["id"] for c in changed_chunks[i:i + 500]]
+        for p in cl.retrieve(collection, ids=ids, with_payload=["called_by"]):
+            for c in (p.payload.get("called_by") or []):
+                if c["id"] not in changed_ids:   # değişen kümenin DIŞINDAN çağıranlar = gerçek etki
+                    callers.setdefault(c["id"], c)
+    return {"base": (base_ref or "(yok)")[:12], "head": gi["commit"][:12], "branch": gi.get("branch"),
+            "dirty": gi.get("dirty"),
+            "changed_units": units[:max_items], "chunks_changed": len(changed_chunks),
+            "impacted_callers": list(callers.values())[:max_items],
+            "impacted_subtypes": list(subtypes.values())[:max_items],
+            "note": "etki listesi isim-sezgili çağrı grafiği + tip kenarlarına dayanır (dosya-düzeyi diff)"}
 
 def list_collections() -> list[dict]:
     out = []
