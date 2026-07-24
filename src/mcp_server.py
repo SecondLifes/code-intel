@@ -13,11 +13,27 @@ mevcut kodu eleştirir, yeni kod yazmaz.
 
 Ayarlar mcp-config.json'dan okunur (proje kökü) — model isimleri, Qdrant/Ollama
 adresleri, alan-özel (domain) model eşlemesi.
+
+---- Sıra 11b: LAN'a HTTP transport (opsiyonel — varsayılan hâlâ stdio) ----
+CODEINTEL_MCP_TRANSPORT=streamable-http ortam değişkeni ayarlanırsa sunucu
+stdio yerine ağ üzerinden (Qdrant client kütüphanesi mcp==1.28.1, Context7'den
+doğrulanmış API) açılır — LAN'daki başka makinelerden de bu araçlara erişilebilir.
+CODEINTEL_MCP_HOST (varsayılan 127.0.0.1) / CODEINTEL_MCP_PORT (varsayılan 8765).
+Host localhost DIŞINDaysa (gerçek LAN açılışı) CODEINTEL_MCP_ALLOWED_HOSTS
+ZORUNLUDUR — mcp kütüphanesinin DNS-rebinding koruması yalnız host tam olarak
+127.0.0.1/localhost/::1 iken OTOMATİK devreye giriyor (Context7 dokümanı +
+kurulu sürümün gerçek kaynağı karşılaştırılarak doğrulandı); başka bir host'a
+transport_security VERİLMEZSE middleware korumayı SESSİZCE TAMAMEN KAPATIYOR
+(“backwards compatibility” için) — yani yanlış varsayılan ya "hep engeller" ya
+"hiç korumaz" olurdu, bu yüzden burada SESSİZCE bir varsayılan ÜRETİLMİYOR,
+eksikse süreç açık bir hatayla başlamayı REDDEDİYOR.
 """
 import json
+import os
 import pathlib
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 try:
     from . import retrieval
@@ -38,7 +54,41 @@ FAST_MODEL = CFG.get("fast_model", "gemma4:12b")
 DEEP_MODEL = CFG.get("deep_model", "qwen3.6")
 DOMAIN_MODELS = {k: v for k, v in CFG.get("domain_models", {}).items() if not k.startswith("$")}
 
-mcp = FastMCP("code-intel")
+MCP_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+def _csv_env(name: str) -> list[str]:
+    return [h.strip() for h in os.environ.get(name, "").split(",") if h.strip()]
+
+def resolve_http_settings(env: dict | None = None) -> dict:
+    """CODEINTEL_MCP_* ortam değişkenlerinden FastMCP kurucusuna verilecek
+    host/port/transport_security'i üretir — saf fonksiyon (env dict enjekte
+    edilebilir), gerçek başlatmadan bağımsız test edilebilsin diye ayrıldı.
+    Host localhost değilse ve allowed_hosts boşsa ValueError fırlatır (sessiz
+    "korumasız LAN" veya sessiz "her isteği reddet" yerine — bkz. modül docstring'i)."""
+    e = env if env is not None else os.environ
+    host = e.get("CODEINTEL_MCP_HOST", "127.0.0.1")
+    port = int(e.get("CODEINTEL_MCP_PORT", "8765"))
+    allowed_hosts = [h.strip() for h in e.get("CODEINTEL_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    allowed_origins = [o.strip() for o in e.get("CODEINTEL_MCP_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    transport_security = None
+    if host not in MCP_LOCAL_HOSTS:
+        if not allowed_hosts:
+            raise ValueError(
+                f"CODEINTEL_MCP_HOST={host!r} localhost değil (LAN'a açılıyor) ama "
+                "CODEINTEL_MCP_ALLOWED_HOSTS ayarlanmamış — DNS rebinding koruması için "
+                "gerekli (örn. '192.168.1.50:8765'), yoksa mcp kütüphanesi korumayı "
+                "SESSİZCE tamamen kapatır. Bilerek/güvenli bir varsayılan üretilemez.")
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts, allowed_origins=allowed_origins or allowed_hosts)
+    return {"host": host, "port": port, "transport_security": transport_security}
+
+MCP_TRANSPORT = os.environ.get("CODEINTEL_MCP_TRANSPORT", "stdio")
+if MCP_TRANSPORT == "http":
+    MCP_TRANSPORT = "streamable-http"   # kısayol — kullanıcı 'http' yazarsa da çalışsın
+_http_kwargs = resolve_http_settings() if MCP_TRANSPORT != "stdio" else {}
+
+mcp = FastMCP("code-intel", **_http_kwargs)
 
 # ---------------- TOOL REGISTRY (tek kayıt kaynağı) ----------------
 # Her tool @tool ile TEK kez tanımlanır: hem FastMCP'ye (stdio MCP client'ları)
@@ -221,4 +271,4 @@ def list_collections() -> dict:
     return {"collections": retrieval.list_collections()}
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run(transport=MCP_TRANSPORT)

@@ -192,6 +192,45 @@ def test_run_index_clears_checkpoint_on_handled_error(client):
     assert _isvc.load_pending_job() is None
 
 
+def test_mcp_http_transport_settings_pure():
+    """Sıra 11b: resolve_http_settings() — localhost varsayılanı dokunulmaz
+    kalmalı; LAN host + eksik ALLOWED_HOSTS AÇIKÇA reddedilmeli (mcp
+    kütüphanesinin kendisi transport_security verilmezse korumayı SESSİZCE
+    kapatıyor — canlı doğrulamada teyit edildi, bkz. mcp_server.py docstring'i);
+    doğru LAN yapılandırması geçerli TransportSecuritySettings üretmeli."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    import mcp_server as ms
+
+    r = ms.resolve_http_settings({"CODEINTEL_MCP_HOST": "127.0.0.1", "CODEINTEL_MCP_PORT": "9999"})
+    assert r == {"host": "127.0.0.1", "port": 9999, "transport_security": None}
+
+    with pytest.raises(ValueError, match="ALLOWED_HOSTS"):
+        ms.resolve_http_settings({"CODEINTEL_MCP_HOST": "0.0.0.0"})
+
+    r2 = ms.resolve_http_settings({"CODEINTEL_MCP_HOST": "192.168.1.50", "CODEINTEL_MCP_PORT": "8765",
+                                    "CODEINTEL_MCP_ALLOWED_HOSTS": "192.168.1.50:8765,localhost:8765"})
+    ts = r2["transport_security"]
+    assert ts.enable_dns_rebinding_protection is True
+    assert ts.allowed_hosts == ["192.168.1.50:8765", "localhost:8765"]
+    assert ts.allowed_origins == ts.allowed_hosts   # origin boşsa hosts'a düşer
+
+    r3 = ms.resolve_http_settings({"CODEINTEL_MCP_HOST": "192.168.1.50",
+                                    "CODEINTEL_MCP_ALLOWED_HOSTS": "192.168.1.50:8765",
+                                    "CODEINTEL_MCP_ALLOWED_ORIGINS": "http://192.168.1.50:8765"})
+    assert r3["transport_security"].allowed_origins == ["http://192.168.1.50:8765"]
+
+
+def test_mcp_server_default_import_stays_stdio():
+    """Ortam değişkeni verilmezse davranış BUGÜNKÜYLE (stdio) aynı kalmalı —
+    modül import'unun kendisi bir yan etki olarak ağ soketi AÇMAMALI."""
+    import pathlib as _pl, sys as _sys
+    _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent / "src"))
+    import mcp_server as ms
+    assert ms.MCP_TRANSPORT == "stdio"
+    assert len(ms.TOOLS) == 16
+
+
 def test_middleware_role_gate_pure():
     """Middleware'in host-farkında rol kapısını (_presented_key_role + admin-yolu
     kısıtı) gerçek HTTP olmadan doğrular — TestClient host'u hep 'testclient' (yerel
