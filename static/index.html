@@ -129,6 +129,8 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
 .sp-body{flex:1;overflow:auto;padding:0}
 .sp-body pre{margin:0;padding:16px 20px;font:12.5px/1.6 var(--mono);color:#d8cbb0;white-space:pre;overflow-x:auto}
 .sp-body pre .kw{color:var(--amber)}
+.sp-body pre span[data-ln]{display:block;padding-left:8px;border-left:2px solid transparent}
+.sp-body pre span.hlline{background:rgba(224,162,74,.16);border-left-color:var(--amber)}
 .sp-err{padding:20px;color:#e0704a}
 
 .hero{text-align:center;padding-top:9vh;color:var(--dim)}
@@ -417,7 +419,7 @@ function srcCard(h,i){return `
       <button onclick="showRelations('${h.id}','${h.collection}',this,'${h.kind}','${esc((h.name||'').split('=')[0].trim())}')">🔗 ${T('İlişkiler','Relations')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
-      <button onclick="showInBrowser('${h.id}','${h.collection}',this)">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
+      <button onclick="showInBrowser('${h.id}','${h.collection}',this,${h.line_start||0})">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
       <button title="${T('İyi sonuç','Good result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','up',this)">👍</button>
       <button title="${T('Alakasız sonuç','Irrelevant result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','down',this)">👎</button>
       <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
@@ -622,7 +624,18 @@ async function reveal(id,collection,mode,btn){
 }
 
 let SP_CONTENT='';
-async function showInBrowser(id,collection,btn){
+// hl() ile vurgulanmış tam-dosya HTML'ini satır satır <span>'lere böler ve hedef
+// satırı işaretler — anahtar kelime regex'i tek satır içinde kaldığından (asla
+// \n'i geçmez) hl() çıktısını '\n' ile bölmek güvenli. Span'lar display:block
+// olduğu için satır arası ayraç EKLENMEZ (join('') — aksi halde her satırda
+// hem span'ın kendi satır sonu hem de bizim eklediğimiz '\n' olur, çift boşluk).
+function wrapLinesWithTarget(highlightedHtml, targetLine){
+  return highlightedHtml.split('\n').map((line,i)=>{
+    const n=i+1, isTarget=n===targetLine;
+    return `<span data-ln="${n}"${isTarget?' id="hl-target" class="hlline"':''}>${line||' '}</span>`;
+  }).join('');
+}
+async function showInBrowser(id,collection,btn,lineStart){
   const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
     const r=await(await fetch('/api/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,mode:'browser'})})).json();
@@ -631,9 +644,18 @@ async function showInBrowser(id,collection,btn){
       $('sp-body').innerHTML=`<div class="sp-err">⚠️ ${esc(r.error)}</div>`;
       SP_CONTENT='';
     }else{
-      $('sp-fname').textContent=r.name||r.path;
-      $('sp-body').innerHTML=`<pre><code>${hl(r.content)}</code></pre>`;
+      $('sp-fname').textContent=(r.name||r.path)+(lineStart?` · L${lineStart}`:'');
+      $('sp-body').innerHTML=`<pre><code>${wrapLinesWithTarget(hl(r.content),lineStart)}</code></pre>`;
       SP_CONTENT=r.content;
+      if(lineStart){
+        // requestAnimationFrame'e BAĞIMLI DEĞİL — arka plandaki/görünmeyen
+        // sekmelerde rAF askıya alınabiliyor (canlı testte doğrulandı: panel
+        // kompozit edilmeden rAF hiç tetiklenmiyordu). scrollIntoView düzen
+        // hesaplaması için boyanmaya/kompozisyona ihtiyaç duymaz, senkron
+        // çağrı yeterli ve daha güvenilir.
+        const el=document.getElementById('hl-target');
+        if(el)el.scrollIntoView({block:'center'});
+      }
     }
     $('sidepanel').classList.add('show');
   }catch(x){alert(x);}
