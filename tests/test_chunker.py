@@ -147,6 +147,63 @@ def test_v2_huge_method_included_with_flag(tmp_path):
     assert methods[0]["line_end"] > 400   # gerçek satır aralığı korunur
 
 
+def test_v2_huge_method_split_into_logical_parts(tmp_path):
+    """Sıra 25: dev metod artık yalnız kırpılmıp bırakılmıyor — gövdesi STATEMENT
+    sınırlarında (asla bir ifadenin ortasından değil) mantıksal parçalara
+    bölünüp kind="method_part" chunk'ları olarak da indeksleniyor. Böylece 400.
+    satırdan SONRAKİ kod da aranabilir (öncesinde yalnız ilk 400 satır vardı)."""
+    body = "function Big: Integer;\nbegin\n" + "".join(f"  DoThing{i}(i);\n" for i in range(900)) + "end;\n"
+    p = write(tmp_path, "big.pas", "unit Big;\ninterface\nfunction Big: Integer;\nimplementation\n" + body + "end.\n")
+    chunks = list(chunk_file(p, "test"))
+    method = next(c for c in chunks if c["kind"] == "method")
+    parts = [c for c in chunks if c["kind"] == "method_part"]
+    assert method["child_count"] == len(parts) and len(parts) >= 2
+    assert all(c["parent_id"] == method["id"] for c in parts)
+    # parçalar ARDIŞIK satır aralıklarını kapsamalı (boşluk/örtüşme yok) ve
+    # 900. çağrı (400. satırın çok ötesinde) MUTLAKA bir parçada bulunmalı —
+    # eskiden bu kod tamamen kırpılıp kaybolurdu.
+    parts.sort(key=lambda c: c["part_index"])
+    assert all(parts[i]["line_end"] < parts[i + 1]["line_start"] for i in range(len(parts) - 1))
+    assert any("DoThing899(" in c["code"] for c in parts)
+    # her parçanın kendi çağrı grafiği çıkarımı olmalı (yalnız gövdedeki isimler)
+    assert any("dothing0" in c["calls_raw"] for c in parts if c["part_index"] == 0)
+
+
+def test_huge_method_without_recognizable_body_falls_back_to_line_windows(tmp_path):
+    """Gövde düğümü bulunamazsa (tek dev ifade — hiç statement sınırı yok) satır
+    penceresine düşülür — hiç bölmemekten iyi, kod yine de aranabilir kalır."""
+    import chunker as _ch
+    huge_lines = ["x" + str(i) for i in range(900)]
+    text = "one_giant_expr(" + " + ".join(huge_lines) + ")"
+
+    class FakeNode:
+        def __init__(self, start_byte, end_byte, start_row, end_row):
+            self.start_byte, self.end_byte = start_byte, end_byte
+            self.start_point, self.end_point = (start_row, 0), (end_row, 0)
+            self.children, self.named_children = [], []
+
+    code = text.encode()
+    node = FakeNode(0, len(code), 0, 5)
+    parts = _ch._split_huge_node(node, code, max_lines=400)
+    assert len(parts) >= 1
+    assert "".join(p[2] for p in parts) == text   # satır-penceresi birleşimi orijinal metnin AYNISI (kayıp/tekrar yok)
+
+
+def test_go_huge_function_body_wrapper_unwrapped(tmp_path):
+    """Go grameri gövdeyi TEK bir sarmalayıcı düğüme (statement_list) koyar —
+    _find_body_node bu sarmalayıcıyı atlayıp GERÇEK ifadelere inmeli, yoksa
+    bölme hiç gerçekleşmez (tek 'çocuk' olarak görünen tüm gövde asla parçalanmaz)."""
+    body = "".join(f"\tdoThing{i}()\n" for i in range(900))
+    src = "package main\n\nfunc Big() {\n" + body + "}\n"
+    p = write(tmp_path, "big.go", src)
+    chunks = list(chunk_file(p, "test"))
+    method = next(c for c in chunks if c["kind"] == "method" and c["name"] == "Big")
+    parts = [c for c in chunks if c["kind"] == "method_part"]
+    assert method.get("huge") is True
+    assert len(parts) >= 2, "Go statement_list sarmalayıcısı atlanmadıysa bölme hiç gerçekleşmez"
+    assert any("doThing899(" in c["code"] for c in parts)
+
+
 def test_v2_id_is_repo_scoped(tmp_path):
     """Aynı dosya farklı lib ile chunk'lanınca ID'ler FARKLI olmalı — merge'de
     kütüphaneler arası sessiz ID çakışmasını bitiren repo-kimlikli ID."""

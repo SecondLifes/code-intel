@@ -28,6 +28,56 @@ from tree_sitter_language_pack import get_language, get_parser
 HUGE_LINES = 400        # bu satır sayısını aşan düğümler "huge" — ilk HUGE_LINES satırla indekslenir
 MIN_CHARS = 40          # gürültü filtresi: doc'suz minik bildirimler atlanır
 
+# ---- Sıra 25: dev metodlar için parent/child AST bölmesi ----
+# Gramer isimleri standart değil (block/body/compound_statement/statement_block/
+# suite/body_statement...) — ilk eşleşen doğrudan çocuk gövde sayılır.
+_BODY_HINTS = ("block", "body", "compound_statement", "statement_block", "suite")
+
+def _find_body_node(node):
+    """Fonksiyon/metod düğümünün mantıksal gövdesini bulur — parçalama sınırı
+    STATEMENT düzeyinde kesilsin diye (asla bir ifadenin ortasından değil).
+    Bazı gramerler (örn. Go) gövdeyi TEK bir sarmalayıcı düğüme (statement_list)
+    koyar, asıl ifadeler onun ALTINDA — canlı doğrulamada bulunan bir durum;
+    tek-çocuklu sarmalayıcılar bu yüzden atlanır."""
+    body = None
+    for c in node.children:
+        if any(h in c.type for h in _BODY_HINTS):
+            body = c
+            break
+    if body is None:
+        return None
+    while len(body.named_children) == 1 and len(body.named_children[0].named_children) > 1:
+        body = body.named_children[0]
+    return body
+
+def _split_huge_node(node, code: bytes, max_lines: int = HUGE_LINES) -> list[tuple[int, int, str]]:
+    """Dev (>max_lines satır) bir düğümü mantıksal alt-bloklara böler — gövdenin
+    DOĞRUDAN çocuklarının (ifade düzeyi) sınırlarında keser, asla bir ifadenin
+    ortasından değil. Gövde düğümü tanınamazsa (bilinmeyen gramer şekli veya tek
+    dev ifade) satır-penceresiyle düşer — ifade ortası kesilebilir ama en azından
+    tüm kod aranabilir hale gelir (hiç bölmemekten iyi).
+    Döner: [(başlangıç_satır_1idx, bitiş_satır_1idx, metin), ...]"""
+    body = _find_body_node(node)
+    if body is None or len(body.named_children) < 2:
+        full_text = code[node.start_byte:node.end_byte].decode("utf-8", "replace")
+        lines = full_text.splitlines()
+        start0 = node.start_point[0]
+        return [(start0 + i + 1, min(start0 + i + max_lines, node.end_point[0] + 1),
+                 "\n".join(lines[i:i + max_lines]))
+                for i in range(0, len(lines), max_lines)]
+    parts: list[tuple[int, int, str]] = []
+    group = []
+    for child in body.named_children:
+        group.append(child)
+        if child.end_point[0] - group[0].start_point[0] + 1 >= max_lines:
+            parts.append((group[0].start_point[0] + 1, group[-1].end_point[0] + 1,
+                          code[group[0].start_byte:group[-1].end_byte].decode("utf-8", "replace")))
+            group = []
+    if group:
+        parts.append((group[0].start_point[0] + 1, group[-1].end_point[0] + 1,
+                      code[group[0].start_byte:group[-1].end_byte].decode("utf-8", "replace")))
+    return parts
+
 
 class PascalChunker:
     """Delphi/Pascal (.pas/.dpr/.dpk/.inc) — tree-sitter tabanlı."""
@@ -138,7 +188,20 @@ class PascalChunker:
                        "code": full_text, "doc": doc, "calls_raw": calls_raw}
                 if huge:
                     out["huge"] = True
+                    if kind_key == "impl":
+                        parts = _split_huge_node(n, code)
+                        out["child_count"] = len(parts)
                 yield out
+                if huge and kind_key == "impl":
+                    for i, (ls, le, ptext) in enumerate(parts):
+                        pname = f"{name} [{i + 1}/{len(parts)}]"
+                        ptext_full = f"// {name} — parça {i + 1}/{len(parts)}\n{ptext}"
+                        pid = xxhash.xxh3_64(f"{lib}:{unit}:method_part:{cid}:{i}:{ptext_full[:160]}".encode()).hexdigest()
+                        yield {"id": pid, "lib": lib, "unit": unit, "kind": "method_part", "name": pname,
+                               "line_start": ls, "line_end": le,
+                               "hash": xxhash.xxh3_64(ptext_full.encode()).hexdigest()[:12],
+                               "code": ptext_full, "doc": "", "calls_raw": self.extract_calls(ptext, name),
+                               "parent_id": cid, "part_index": i, "parts_total": len(parts)}
 
 
 # ================== ÇOK DİLLİ JENERİK MOTOR (Sıra 10) ==================
@@ -364,6 +427,9 @@ class GenericChunker:
                    "calls_raw": self.extract_calls(text, name) if (is_func and full_support) else []}
             if huge:
                 out["huge"] = True
+                if is_func:
+                    parts = _split_huge_node(node, code)
+                    out["child_count"] = len(parts)
             if is_type and full_support:
                 ext = _extract_extends(self.lang, text.split("{")[0][:400] if "{" in text[:400] else text[:400])
                 if self.lang == "rust" and node.type == "impl_item":
@@ -374,6 +440,17 @@ class GenericChunker:
                 if ext:
                     out["extends"] = ext
             yield out
+            if huge and is_func:
+                for i, (ls, le, ptext) in enumerate(parts):
+                    pname = f"{name} [{i + 1}/{len(parts)}]"
+                    ptext_full = f"// {name} — parça {i + 1}/{len(parts)}\n{ptext}"
+                    pid = xxhash.xxh3_64(f"{lib}:{unit}:method_part:{cid}:{i}:{ptext_full[:160]}".encode()).hexdigest()
+                    yield {"id": pid, "lib": lib, "unit": unit, "kind": "method_part", "name": pname,
+                           "line_start": ls, "line_end": le, "lang": self.lang,
+                           "hash": xxhash.xxh3_64(ptext_full.encode()).hexdigest()[:12],
+                           "code": ptext_full, "doc": "",
+                           "calls_raw": self.extract_calls(ptext, name) if full_support else [],
+                           "parent_id": cid, "part_index": i, "parts_total": len(parts)}
 
 
 # ---- dil tablosu: TAM DESTEK (full=True) + jenerik uzun kuyruk ----
