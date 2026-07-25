@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 import urllib.request
@@ -340,6 +341,60 @@ def research_stream(r: ResearchReq):
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+# ---------------- Stabilite/Performans karşılaştırma tablosu (kullanıcı isteği) ----------------
+# Cevap kutusunda gösterilen kaynaklar (>=2 fonksiyon) BÜYÜK modele TEK bir prompt'ta
+# gönderilir; model her biri için 1-10 stabilite/performans puanı + kısa gerekçe
+# tahmin eder (GERÇEK ölçüm/profiling DEĞİL — kullanıcının netleştirdiği gibi
+# "varsayım" düzeyinde bir LLM değerlendirmesi). İstemci zaten hits'lerin kodunu
+# elinde tuttuğu için (meta olayından) ek bir arama/Qdrant çağrısı GEREKMEZ.
+class CompareReq(BaseModel):
+    q: str; hits: list[dict]; model: str = ""; lang: str = "tr"; ollama_url: str = ""
+
+@router.post("/api/compare")
+def compare(r: CompareReq):
+    if len(r.hits) < 2:
+        return JSONResponse({"error": "Karşılaştırma için en az 2 fonksiyon gerekir." if r.lang == "tr"
+                             else "At least 2 functions are needed to compare."}, status_code=400)
+    mdl = r.model or retrieval._CFG.get("fast_model", "gemma4:12b")
+    items = "\n\n".join(
+        f"[{i + 1}] {h.get('name', '')} ({h.get('unit', '')} L{h.get('line_start', '?')}) [{h.get('collection', '')}]:\n{str(h.get('code', ''))[:1500]}"
+        for i, h in enumerate(r.hits[:10]))   # prompt şişmesin diye üst 10 ile sınırlı
+    if r.lang == "tr":
+        prompt = ("Sen kidemli bir kod kalitesi degerlendiricisisin. Asagida ayni/benzer isi yapan birden "
+                  "fazla fonksiyon var. HER biri icin ayri ayri: (a) hata/istisna/bellek sizintisi riski "
+                  "acisindan STABILITE puani (1-10, 10=en stabil), (b) hiz/verimlilik acisindan PERFORMANS "
+                  "puani (1-10, 10=en performansli), (c) TEK cumlelik kisa gerekce ver. Bu puanlar gercek "
+                  "olcum degil, kod okumaya dayali tahminindir. SADECE gecerli bir JSON dizisi dondur, "
+                  "baska hicbir aciklama/metin yazma. Format: "
+                  '[{"i":1,"name":"...","stability":8,"performance":6,"reason":"..."}]'
+                  f"\n\nSORU: {r.q}\n\nFONKSIYONLAR:\n{items}")
+    else:
+        prompt = ("You are a senior code quality reviewer. Below are multiple functions doing the same/"
+                  "similar job. For EACH one give: (a) a STABILITY score (1-10, 10=most stable) based on "
+                  "error/exception/leak risk, (b) a PERFORMANCE score (1-10, 10=most performant), (c) a "
+                  "one-sentence reason. These are estimates from reading the code, not real measurements. "
+                  "Return ONLY a valid JSON array, no other text. Format: "
+                  '[{"i":1,"name":"...","stability":8,"performance":6,"reason":"..."}]'
+                  f"\n\nQUESTION: {r.q}\n\nFUNCTIONS:\n{items}")
+    body = json.dumps({"model": mdl, "prompt": prompt, "stream": False,
+                       "options": {"num_predict": 1500}, "think": False}).encode()
+    try:
+        txt = json.loads(urllib.request.urlopen(
+            urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
+            timeout=180).read()).get("response", "").strip()
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:200]}, status_code=502)
+    m = re.search(r"\[.*\]", txt, re.S)   # model bazen ```json ... ``` bloguna sarar — ayikla
+    if not m:
+        return JSONResponse({"error": "Model gecerli bir tablo uretemedi." if r.lang == "tr"
+                             else "Model did not return a valid table.", "raw": txt[:500]}, status_code=502)
+    try:
+        rows = json.loads(m.group(0))
+    except Exception:
+        return JSONResponse({"error": "Model gecerli bir tablo uretemedi." if r.lang == "tr"
+                             else "Model did not return a valid table.", "raw": txt[:500]}, status_code=502)
+    return {"rows": rows, "model": mdl}
 
 # ---------------- arama sonucu geri bildirimi (👍/👎) ----------------
 class FeedbackReq(BaseModel):

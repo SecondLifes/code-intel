@@ -538,6 +538,84 @@ def test_research_stream_uses_custom_ollama_url_when_provided(client, monkeypatc
     assert captured["url"] == search_routes.OLLAMA + "/api/generate"   # boşsa sunucu varsayılanı
 
 
+# ---------------- 1g) Stabilite/Performans karşılaştırma tablosu (kullanıcı isteği)
+# ---------------- Cevap kutusundaki kaynaklardan (>=2) tek bir LLM çağrısıyla
+# stabilite/performans puanı + gerekçe istenir — Ollama'ya hiç gitmeden, sahte
+# bir /api/generate yanıtı taklit edilerek.
+@needs_qdrant
+def test_compare_requires_at_least_two_hits(client):
+    r = client.post("/api/compare", json={"q": "split", "hits": [{"name": "Split", "code": "x"}]})
+    assert r.status_code == 400
+    assert "error" in r.json()
+
+
+@needs_qdrant
+def test_compare_returns_parsed_rows_from_llm_json(client, monkeypatch):
+    from src.api import search_routes
+
+    class _FakeResp:
+        def read(self):
+            import json as _json
+            fake_llm_output = ('Ise yarayacak tablo:\n```json\n' + _json.dumps([
+                {"i": 1, "name": "Split", "stability": 8, "performance": 6, "reason": "try/except var"},
+                {"i": 2, "name": "SplitFast", "stability": 5, "performance": 9, "reason": "bounds check yok"},
+            ]) + '\n```')
+            return _json.dumps({"response": fake_llm_output}).encode()
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+
+    hits = [
+        {"name": "Split", "unit": "StrUtils.pas", "collection": "unidac", "line_start": 10, "code": "function Split..."},
+        {"name": "SplitFast", "unit": "FastStr.pas", "collection": "Jedi", "line_start": 20, "code": "function SplitFast..."},
+    ]
+    r = client.post("/api/compare", json={"q": "string split", "hits": hits})
+    assert r.status_code == 200
+    rows = r.json()["rows"]
+    assert len(rows) == 2
+    assert rows[0]["name"] == "Split" and rows[0]["stability"] == 8
+    assert rows[1]["performance"] == 9
+
+
+@needs_qdrant
+def test_compare_returns_502_when_model_output_is_not_json(client, monkeypatch):
+    from src.api import search_routes
+
+    class _FakeResp:
+        def read(self):
+            import json as _json
+            return _json.dumps({"response": "üzgünüm, bir tablo üretemedim"}).encode()
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+
+    hits = [{"name": "A", "unit": "a.pas", "collection": "c", "code": "x"},
+            {"name": "B", "unit": "b.pas", "collection": "c", "code": "y"}]
+    r = client.post("/api/compare", json={"q": "test", "hits": hits})
+    assert r.status_code == 502
+    assert "error" in r.json()
+
+
+@needs_qdrant
+def test_compare_uses_custom_ollama_url_when_provided(client, monkeypatch):
+    from src.api import search_routes
+    captured = {}
+
+    class _FakeResp:
+        def read(self):
+            import json as _json
+            return _json.dumps({"response": "[]"}).encode()
+
+    def _fake_urlopen(req, timeout=180):
+        captured["url"] = req.full_url
+        return _FakeResp()
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", _fake_urlopen)
+
+    hits = [{"name": "A", "unit": "a.pas", "collection": "c", "code": "x"},
+            {"name": "B", "unit": "b.pas", "collection": "c", "code": "y"}]
+    client.post("/api/compare", json={"q": "test", "hits": hits, "ollama_url": "http://10.0.0.5:11500"})
+    assert captured["url"] == "http://10.0.0.5:11500/api/generate"
+
+    client.post("/api/compare", json={"q": "test", "hits": hits})
+    assert captured["url"] == search_routes.OLLAMA + "/api/generate"
+
+
 # ---------------- 2) SÖZLEŞME: MCP <-> REST paritesi ----------------
 def test_mcp_rest_parity():
     """Her MCP tool'unun /api/mcp/<ad> REST test ucu olmalı (ve tersi) — tool
