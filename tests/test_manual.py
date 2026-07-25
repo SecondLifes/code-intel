@@ -28,11 +28,11 @@ FAKE_MODEL = {
     "chapters": [{
         "title": "src", "slug": "src",
         "sections": [
-            {"title": "UnitA.pas", "slug": "unita-pas", "unit": "src/UnitA.pas", "lang": "pascal",
+            {"title": "UnitA.pas", "slug": "unita-pas", "unit": "src/UnitA.pas", "lang": "pascal", "chunk_id": 123456,
              "body_md": "## Amaç\nBu birim TFoo sınıfını tanımlar ve TBar temel sınıfından türer.\n\n"
                         "```\nTFoo = class(TBar)\n```\n\n- Madde bir\n- Madde iki"},
             {"title": "UnitB.pas", "slug": "unitb-pas", "unit": "src/UnitB.pas", "lang": "pascal",
-             "body_md": "## Amaç\nTemel sınıf TBar burada."},
+             "body_md": "## Amaç\nTemel sınıf TBar burada."},   # chunk_id YOK -> eski manual.json geriye uyum testi
         ],
     }],
 }
@@ -43,6 +43,22 @@ def test_chapter_key_and_slug():
     assert manual._chapter_key("Foo.pas") == "Genel"
     assert manual._slug("RESTRequest4D.Request.Client.pas") == "restrequest4d-request-client-pas"
     assert manual._slug("Ç ö ş İ") != ""   # Türkçe karakterler çökertmemeli
+
+
+def test_topo_order_puts_foundations_first():
+    """Sıra 6 (kullanıcı): sol menü dosya sırası bağımlılığa göre olmalı —
+    kullanılan (temel) dosya, onu kullanandan ÖNCE gelmeli."""
+    # C, B'yi kullanır; B, A'yı kullanır -> beklenen sıra: A, B, C
+    order = manual._topo_order(["C.pas", "A.pas", "B.pas"], {"C.pas": {"B.pas"}, "B.pas": {"A.pas"}, "A.pas": set()})
+    assert sorted(order, key=order.get) == ["A.pas", "B.pas", "C.pas"]
+
+    # bağımsız dosyalar alfabetik sırada kalmalı
+    order2 = manual._topo_order(["Z.pas", "M.pas", "A.pas"], {})
+    assert sorted(order2, key=order2.get) == ["A.pas", "M.pas", "Z.pas"]
+
+    # çevrim (A<->B) -> çökmemeli, ikisi de bir şekilde sıralanmalı
+    order3 = manual._topo_order(["A.pas", "B.pas"], {"A.pas": {"B.pas"}, "B.pas": {"A.pas"}})
+    assert set(order3) == {"A.pas", "B.pas"}
 
 
 def test_cross_link_skips_code_and_self():
@@ -70,6 +86,15 @@ def test_render_html_index_and_chapter():
     assert 'id="unita-pas"' in ch and 'id="unitb-pas"' in ch
     assert "[TBar]" not in ch and '<a href="/manual/test-coll/src.html#unitb-pas">TBar</a>' in ch   # cross-link uygulanmış
 
+    # Sıra 7 (kullanıcı): Aç + Tarayıcıda Göster — YALNIZ chunk_id'si olan bölümde (UnitA)
+    assert "manualOpen('test-coll',123456,this)" in ch
+    assert "manualShowInBrowser('test-coll',123456,'unita-pas',this)" in ch
+    # chunk_id'si OLMAYAN eski-model bölümü (UnitB) için düğme HİÇ üretilmemeli — çökmemeli;
+    # test fixture'ında tek chunk_id var, bu yüzden onclick çağrısı tam bir kez görünmeli
+    # ("manualOpen(" kendisi ayrıca <script> içindeki fonksiyon TANIMINDA da geçiyor,
+    # o yüzden tam çağrı imzasıyla (tırnaklı argümanlarla) sayıyoruz)
+    assert ch.count("manualOpen('test-coll',") == 1
+
     missing = manual.render_manual_html(FAKE_MODEL, "hic-yok")
     assert "404" in missing
 
@@ -90,6 +115,8 @@ def test_render_html_links_are_absolute_not_relative():
     for href in hrefs:
         if href.startswith(("http://", "https://")):
             continue   # dış kaynak linki (ör. "Kaynak: <url>") — gezinme linki değil
+        if href == "/manual/test-coll":
+            continue   # koleksiyon KÖKÜNE (indekse) mutlak-yol linki — trailing slash sorunundan bağımsız güvenli
         resolved = urljoin(page_url_no_trailing_slash, href)
         assert resolved.startswith("http://x/manual/test-coll/"), \
             f"{href!r} göreceli çözüldü ve koleksiyon adını kaybetti: {resolved}"

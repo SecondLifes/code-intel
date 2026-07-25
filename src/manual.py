@@ -44,6 +44,24 @@ def _slug(*parts: str) -> str:
     return s or "bolum"
 
 
+def _topo_order(unit_paths: list[str], deps: dict[str, set[str]]) -> dict[str, int]:
+    """Kahn algoritması — TEMEL (başkalarınca kullanılan/bağımlılığı az) dosyalar
+    ÖNCE gelsin diye: `deps[u]` = u'nun (aynı bölüm içinde) bağımlı olduğu
+    dosyalar. Bir dosya, TÜM bağımlılıkları zaten sıralanana kadar bekler.
+    Çevrimli/çözülemeyen kalanlar en sona, alfabetik eklenir. Döner:
+    {unit_path: sıra_indexi} — sections listesini bununla sort etmek için."""
+    remaining = set(unit_paths)
+    order: list[str] = []
+    while remaining:
+        ready = sorted(u for u in remaining if not (deps.get(u, set()) & remaining))
+        if not ready:   # çevrim — kalanları alfabetik ekleyip çık
+            order.extend(sorted(remaining))
+            break
+        order.extend(ready)
+        remaining -= set(ready)
+    return {u: i for i, u in enumerate(order)}
+
+
 def build_manual(collection: str, scope: str = "", force: bool = False, st: dict | None = None) -> dict:
     """Koleksiyon için manual modelini kurar ve `data/manuals/<collection>.json`
     olarak kalıcı yazar. `force=True` document_unit önbelleğini de atlayıp
@@ -57,17 +75,42 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
     next_page = None
     while True:
         batch, next_page = cl.scroll(collection, limit=2000, offset=next_page,
-            with_payload=["unit", "lang"],
+            with_payload=["unit", "lang", "name", "uses"],
             scroll_filter=models.Filter(must=[models.FieldCondition(key="kind", match=models.MatchValue(value="unithead"))]))
         for p in batch:
             u = p.payload.get("unit") or ""
             if not scope or u.replace("\\", "/").startswith(scope):
-                units.append({"unit": u, "lang": p.payload.get("lang") or "pascal"})
+                units.append({"unit": u, "lang": p.payload.get("lang") or "pascal", "chunk_id": p.id,
+                              "name": p.payload.get("name") or "", "uses": p.payload.get("uses") or []})
         if next_page is None:
             break
     units.sort(key=lambda x: x["unit"])
     if not units:
         return {"error": f"kapsamda dosya bulunamadı (scope={scope!r}) — koleksiyon unithead içermiyor olabilir (v1 chunker ile indekslenmiş olabilir, yeniden indeksleyin)"}
+
+    # ---- Sıra: "dosya sıralaması kullanım bağımlılıklarına göre olmalı" — TEMEL
+    # (başkalarınca kullanılan) dosyalar önce, onları kullananlar sonra. `uses`
+    # ADLARLA (unit adı/import string'i) geliyor — yalnız BU KAPSAMDAKİ diğer
+    # unit'lerle eşleşenler gerçek kenar sayılır (dış bağımlılıklar sıralamayı
+    # etkilemez, zaten çözülemez). Adlar hem TAM hem SON-NOKTALI-SEGMENT ile
+    # eşleştirilir (Pascal "System.SysUtils" tam eşleşir; jenerik dillerde
+    # import genelde son segmentle örtüşür, ör. "./utils" -> "utils.py")."""
+    name_to_path: dict[str, str] = {}
+    for u in units:
+        if u["name"]:
+            name_to_path.setdefault(u["name"].lower(), u["unit"])
+        stem = pathlib.Path(u["unit"]).stem.lower()
+        name_to_path.setdefault(stem, u["unit"])
+    deps: dict[str, set[str]] = {}
+    for u in units:
+        resolved = set()
+        for used in u["uses"]:
+            used_l = str(used).strip().lower()
+            target = name_to_path.get(used_l) or name_to_path.get(used_l.split(".")[-1]) or name_to_path.get(used_l.split("/")[-1])
+            if target and target != u["unit"]:
+                resolved.add(target)
+        deps[u["unit"]] = resolved
+    dep_order = _topo_order([u["unit"] for u in units], deps)
 
     if st is not None:
         st.update(phase="building", total=len(units), done=0)
@@ -100,8 +143,10 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
         chapters.setdefault(ch_key, {"title": ch_key, "slug": _slug(ch_key), "sections": []})
         chapters[ch_key]["sections"].append({
             "title": pathlib.Path(u["unit"]).name, "slug": _slug(u["unit"]),
-            "unit": u["unit"], "lang": u["lang"], "body_md": doc["md"],
+            "unit": u["unit"], "lang": u["lang"], "body_md": doc["md"], "chunk_id": u["chunk_id"],
         })
+    for ch in chapters.values():
+        ch["sections"].sort(key=lambda s: dep_order.get(s["unit"], len(dep_order)))
 
     model = {
         "collection": collection, "scope": scope,
@@ -205,13 +250,17 @@ MANUAL_CSS = """
 }
 *{box-sizing:border-box;margin:0}
 body{background:var(--bg);color:var(--txt);font:15px/1.7 'Segoe UI',system-ui,sans-serif;display:flex;min-height:100vh}
-nav{width:280px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:22px 18px;overflow-y:auto;position:sticky;top:0;height:100vh}
+nav{width:300px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:22px 18px;overflow-y:auto;overflow-x:hidden;position:sticky;top:0;height:100vh}
 nav h1{font-family:var(--serif);font-size:18px;color:var(--amber);margin-bottom:4px;line-height:1.3}
+nav h1 a{color:inherit;text-decoration:none}
+nav h1 a:hover{color:var(--teal)}
+nav .home{display:inline-block;font-size:11.5px;color:var(--faint);text-decoration:none;margin-bottom:10px}
+nav .home:hover{color:var(--amber)}
 nav .meta{font-size:11.5px;color:var(--faint);margin-bottom:16px;font-family:var(--mono)}
 nav input{width:100%;background:var(--card);border:1px solid var(--line2);border-radius:8px;color:var(--txt);padding:8px 10px;font-size:13px;margin-bottom:14px}
 nav .chapter{margin-bottom:4px}
-nav .chapter>a{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);padding:6px 4px;text-decoration:none;font-weight:600}
-nav .chapter a.sec{display:block;font-size:13px;color:var(--txt);padding:4px 4px 4px 14px;text-decoration:none;border-left:2px solid transparent}
+nav .chapter>a{display:block;font-size:12.5px;letter-spacing:.2px;color:var(--dim);padding:6px 4px;text-decoration:none;font-weight:700;overflow-wrap:anywhere}
+nav .chapter a.sec{display:block;font-size:13px;color:var(--txt);padding:4px 4px 4px 14px;text-decoration:none;border-left:2px solid transparent;overflow-wrap:anywhere;line-height:1.35}
 nav .chapter a.sec:hover{color:var(--amber);border-left-color:var(--amber-d)}
 nav a.active{color:var(--amber)!important;border-left-color:var(--amber)!important}
 main{flex:1;max-width:840px;margin:0 auto;padding:48px 40px 100px}
@@ -233,6 +282,13 @@ main pre code{background:none;border:0;padding:0}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .stat b{display:block;font-size:22px;color:var(--amber);font-family:var(--serif)}
 .stat span{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+.sec-actions{display:inline-flex;gap:6px;margin-left:10px;vertical-align:middle}
+.sec-actions button{font-size:11px;padding:3px 9px;background:var(--card);border:1px solid var(--line2);color:var(--dim);border-radius:6px;cursor:pointer;font-family:inherit}
+.sec-actions button:hover{border-color:var(--amber-d);color:var(--amber)}
+.sec-actions button:disabled{opacity:.5;cursor:wait}
+.sec-code{display:none;margin-top:10px}
+.sec-code.show{display:block}
+.sec-code pre{max-height:480px;overflow:auto}
 """
 
 
@@ -249,7 +305,9 @@ def render_manual_html(model: dict, page: str = "index") -> str:
     manual.json dosyaları (type_home içinde hâlâ göreli yol saklıyor)
     YENİDEN ÜRETİLMEDEN çalışsın diye düzeltme RENDER anında yapılıyor."""
     base = f"/manual/{model['collection']}/"
-    nav_html = [f'<h1>{_esc(model["title"])}</h1>',
+    index_url = f"/manual/{model['collection']}"
+    nav_html = ([f'<a class="home" href="{index_url}">← İndeks / Kapak</a>'] if page != "index" else []) + [
+                f'<h1><a href="{index_url}">{_esc(model["title"])}</a></h1>',
                 f'<div class="meta">{_esc(model.get("version",""))} '
                 f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
                 '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
@@ -281,8 +339,19 @@ def render_manual_html(model: dict, page: str = "index") -> str:
         parts = [f'<h1>{_esc(ch["title"])}</h1>']
         for sec in ch["sections"]:
             linked = _cross_link(sec["body_md"], type_home_abs, f'{base}{ch["slug"]}.html#{sec["slug"]}')
+            # "Aç" (kayıtlı varsayılan uygulamada) + "Tarayıcıda Göster" (sayfa içi
+            # aç-kapa, gerçek kaynak) — YALNIZ chunk_id varsa (eski manual.json'lar
+            # bu alanı henüz taşımıyor olabilir, yeniden üretilmeden de çökmesin).
+            actions = ""
+            if sec.get("chunk_id") is not None:
+                cid = sec["chunk_id"]
+                actions = (f'<span class="sec-actions">'
+                          f'<button type="button" onclick="manualOpen(\'{_esc(model["collection"])}\',{cid},this)" title="Kayıtlı varsayılan uygulamada aç">📂 Aç</button>'
+                          f'<button type="button" onclick="manualShowInBrowser(\'{_esc(model["collection"])}\',{cid},\'{sec["slug"]}\',this)">🖥️ Tarayıcıda Göster</button>'
+                          f'</span>')
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
-                         f'<span class="badge">{_esc(sec["lang"])}</span></h2>{_md_to_html_fragment(linked)}</div>')
+                         f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
+                         f'{_md_to_html_fragment(linked)}<div class="sec-code" id="code-{sec["slug"]}"></div></div>')
         body = "\n".join(parts)
 
     return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
@@ -292,6 +361,29 @@ def render_manual_html(model: dict, page: str = "index") -> str:
 function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
   var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
   ch.style.display=(!q||any)?'':'none';}});}}
+async function manualOpen(collection,id,btn){{
+  var old=btn.textContent;btn.disabled=true;btn.textContent='…';
+  try{{
+    var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'file'}})}})).json();
+    if(r.error)alert(r.error);
+  }}catch(e){{alert(e);}}
+  btn.disabled=false;btn.textContent=old;
+}}
+async function manualShowInBrowser(collection,id,secSlug,btn){{
+  var box=document.getElementById('code-'+secSlug);
+  if(box.classList.contains('show')){{box.classList.remove('show');return;}}
+  if(!box.dataset.loaded){{
+    btn.disabled=true;
+    try{{
+      var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'browser'}})}})).json();
+      var esc=function(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}};
+      box.innerHTML=r.error?('<p style="color:#e0704a">'+esc(r.error)+'</p>'):('<pre><code>'+esc(r.content)+'</code></pre>');
+      box.dataset.loaded='1';
+    }}catch(e){{box.innerHTML='<p style="color:#e0704a">'+e+'</p>';}}
+    btn.disabled=false;
+  }}
+  box.classList.add('show');
+}}
 </script></body></html>"""
 
 
