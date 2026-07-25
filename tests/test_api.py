@@ -9,6 +9,7 @@
 
 Çalıştır: .venv/Scripts/python.exe -m pytest tests/test_api.py -q
 """
+import json
 import pathlib
 import sys
 
@@ -504,6 +505,43 @@ def test_research_stream_no_truncation_flag_on_natural_stop(client, monkeypatch)
     r = client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"]})
     assert r.status_code == 200
     assert '"truncated": false' in r.text
+
+
+# ---------------- 1e-2) Kullanıcı (ekran görüntüsü): kaynak kartında fonksiyon
+# adının yanında gereksiz "(unit.pas)" yazıyordu ----------------
+# get_context_pack() section title'ı LLM prompt bağlamı İÇİN "isim (unit)"
+# kurar (retrieval.py add() çağrıları) — bu title'ın UI'ya giden "name" alanına
+# BİREBİR kopyalanması hataydı, çünkü unit zaten meta satırında ayrıca
+# gösteriliyor (srcCard). meta_hits'teki "name" artık bilinen " (unit)" son
+# ekini soymalı; unit alanının KENDİSİ (ayrı gösterilen) etkilenmemeli.
+@needs_qdrant
+def test_research_stream_meta_name_strips_redundant_unit_suffix(client, monkeypatch):
+    from src.api import search_routes
+
+    def _fake_pack(*a, **kw):
+        return {"task": "x", "collections": [], "sections": [
+            {"kind": "primary", "title": "Split (SynPDF/SynCommons.pas)", "text": "code",
+             "collection": "c", "id": 1, "unit": "SynPDF/SynCommons.pas", "line_start": 1},
+            # unit boş / title unit'le bitmiyorsa DOKUNULMAMALI (yanlış pozitif kırpma olmasın)
+            {"kind": "related", "title": "özel bölüm başlığı", "text": "code2",
+             "collection": "c", "id": 2, "unit": "", "line_start": 1},
+        ], "omitted": []}
+    monkeypatch.setattr(search_routes.retrieval, "get_context_pack", _fake_pack)
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self):
+            yield b'{"response":"x","done":true,"done_reason":"stop"}\n'
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+
+    r = client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"]})
+    assert r.status_code == 200
+    meta_line = next(line for line in r.text.split("\n") if line.startswith("data: ") and '"hits"' in line)
+    hits = json.loads(meta_line[len("data: "):])["hits"]
+    assert hits[0]["name"] == "Split"                       # " (SynPDF/SynCommons.pas)" soyuldu
+    assert hits[0]["unit"] == "SynPDF/SynCommons.pas"        # unit alanı KENDİSİ etkilenmedi
+    assert hits[1]["name"] == "özel bölüm başlığı"           # unit boşsa dokunulmadı
 
 
 # ---------------- 1f) 3. tur, Madde 6 (kullanıcı): sohbet uçları için Ollama

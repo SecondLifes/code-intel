@@ -280,7 +280,18 @@ def research_stream(r: ResearchReq):
             yield f"event: error\ndata: {json.dumps(pack, ensure_ascii=False)}\n\n"
             return
         secs = pack.get("sections", [])
-        meta_hits = [{"collection": s.get("collection"), "id": s.get("id"), "name": s.get("title"),
+        # Kullanıcı (ekran görüntüsü): kaynak kartında fonksiyon adının yanında
+        # "(unit.pas)" yazıyordu — halbuki unit zaten meta satırında ayrıca
+        # gösteriliyor (srcCard). Kök neden: get_context_pack() section title'ı
+        # LLM prompt bağlamı İÇİN "isim (unit)" olarak kuruyor (add() çağrıları,
+        # bkz. retrieval.py) — bu title BURADA "name" olarak birebir kopyalanmış.
+        # Prompt tarafı böyle kalmalı (LLM için faydalı); yalnız burada, UI'ya
+        # giden isimden bilinen " (unit)" son eki soyuluyor.
+        def _bare_name(s: dict) -> str:
+            title, unit = s.get("title", "") or "", s.get("unit", "") or ""
+            suffix = f" ({unit})"
+            return title[:-len(suffix)] if unit and title.endswith(suffix) else title
+        meta_hits = [{"collection": s.get("collection"), "id": s.get("id"), "name": _bare_name(s),
                        "unit": s.get("unit", ""), "kind": s["kind"], "line_start": s.get("line_start", 0),
                        "line_end": s.get("line_start", 0), "score": s.get("score", ""),
                        "code": s["text"][:1200], "why": {}}
@@ -366,7 +377,9 @@ def compare(r: CompareReq):
                   "acisindan STABILITE puani (1-10, 10=en stabil), (b) hiz/verimlilik acisindan PERFORMANS "
                   "puani (1-10, 10=en performansli), (c) TEK cumlelik kisa gerekce ver. Bu puanlar gercek "
                   "olcum degil, kod okumaya dayali tahminindir. SADECE gecerli bir JSON dizisi dondur, "
-                  "baska hicbir aciklama/metin yazma. Format: "
+                  "baska hicbir aciklama/metin yazma. JSON alan ADLARI (i, name, stability, performance, "
+                  "reason) AYNEN ingilizce kalsin, ama \"reason\" alaninin DEGERI (metni) MUTLAKA TURKCE "
+                  "olmali — Ingilizce gerekce YAZMA. Format: "
                   '[{"i":1,"name":"...","stability":8,"performance":6,"reason":"..."}]'
                   f"\n\nSORU: {r.q}\n\nFONKSIYONLAR:\n{items}")
     else:

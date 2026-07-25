@@ -755,11 +755,14 @@ async function compareFunctions(){
     const r=await(await fetch('/api/compare',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({q:CMP_Q,hits:CMP_HITS,lang:LANG,ollama_url:localStorage.getItem('ci-ollama-url')||''})})).json();
     if(r.error){await ciError(r.error);btn.disabled=false;btn.innerHTML=orig;return;}
-    // unit/collection modelin echo'suna güvenmeden ASIL hit'ten alınır — model
-    // bazen ismi kısaltıp/değiştirebilir, kaynak yolu böyle güvenilir kalır.
+    // name/unit/collection modelin echo'suna HİÇ güvenmeden ASIL hit'ten alınır.
+    // Canlı testte görüldü: model "name" alanına bazen dosya/satır bilgisini de
+    // ekliyor (örn. "Split (mORMot/SynCommons.pas L3193)") — bu, meta_hits'teki
+    // "(unit)" sonekiyle AYNI kökten gelen bir sorun; tek düzeltme model
+    // çıktısını hiç kullanmamak, her zaman CMP_HITS'teki temiz isme dönmek.
     const rows=(r.rows||[]).map(x=>{
       const h=CMP_HITS[(+x.i||0)-1];
-      return h?{...x,name:x.name||h.name,unit:h.unit,collection:h.collection}:x;
+      return h?{...x,name:h.name,unit:h.unit,collection:h.collection}:x;
     });
     $('cmpwrap').innerHTML=renderCompareTable(rows);
   }catch(e){await ciError(e);btn.disabled=false;btn.innerHTML=orig;}
