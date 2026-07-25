@@ -393,9 +393,20 @@ main pre code{background:none;border:0;padding:0}
 .sec-actions button{font-size:11px;padding:3px 9px;background:var(--card);border:1px solid var(--line2);color:var(--dim);border-radius:6px;cursor:pointer;font-family:inherit}
 .sec-actions button:hover{border-color:var(--amber-d);color:var(--amber)}
 .sec-actions button:disabled{opacity:.5;cursor:wait}
-.sec-code{display:none;margin-top:10px}
-.sec-code.show{display:block}
-.sec-code pre{max-height:480px;overflow:auto}
+#sidepanel{position:fixed;top:0;right:0;width:min(640px,92vw);height:100%;background:var(--panel);border-left:1px solid var(--line2);box-shadow:-12px 0 32px rgba(0,0,0,.4);z-index:30;transform:translateX(100%);transition:transform .25s ease;display:flex;flex-direction:column}
+#sidepanel.show{transform:translateX(0)}
+#sidepanel.dragging{transition:none}
+#sp-resize{position:absolute;left:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:31}
+#sp-resize:hover,#sp-resize.dragging{background:rgba(224,162,74,.18)}
+.sp-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--card)}
+.sp-fname{font-family:var(--mono);font-size:13px;color:var(--amber);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.sp-close{background:none;border:0;color:var(--faint);font-size:16px;cursor:pointer;padding:2px 8px}
+.sp-close:hover{color:var(--amber)}
+.sp-body{flex:1;overflow:auto;padding:0}
+.sp-body pre{margin:0;padding:16px 20px;font:12.5px/1.6 var(--mono);color:#d8cbb0;white-space:pre;overflow-x:auto}
+.sp-err{padding:20px;color:var(--err)}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line2);border-top-color:var(--amber);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:7px}
+@keyframes sp{to{transform:rotate(360deg)}}
 .langsw{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .langsw a{font-size:11.5px;padding:3px 9px;border-radius:99px;border:1px solid var(--line2);color:var(--dim);text-decoration:none}
 .langsw a:hover{border-color:var(--amber-d);color:var(--amber)}
@@ -500,7 +511,13 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
         ch = next((c for c in display_model["chapters"] if c["slug"] == page), None)
         if ch is None:
             return "<h1>404</h1>"
-        type_home_abs = {k: base + v + qs for k, v in model.get("type_home", {}).items()}
+        # BUG (kullanıcı, canlı doğrulamada bulundu): `v` zaten "{slug}.html#{section}"
+        # biçiminde (FRAGMENT dahil) — qs SONA eklenirse "...html#section?lang=tr" çıkıyordu;
+        # bu GEÇERSİZ bir URL'dir, çünkü "?query" HER ZAMAN "#fragment"TAN ÖNCE gelmeli.
+        # Tarayıcı bunu "...html" + fragment="section?lang=tr" diye yorumluyordu — sonuç:
+        # dil parametresi tamamen KAYBOLUYOR (hedef sayfa baz/İngilizce dilde açılıyordu) VE
+        # kaydırma da çalışmıyordu (öyle bir id yok). qs artık "#" DAN ÖNCE ekleniyor.
+        type_home_abs = {k: base + (v.replace("#", qs + "#", 1) if qs else v) for k, v in model.get("type_home", {}).items()}
         parts = [f'<h1>{_esc(ch["title"])}</h1>']
         for sec in ch["sections"]:
             linked = _cross_link(sec["body_md"], type_home_abs, f'{base}{ch["slug"]}.html{qs}#{sec["slug"]}')
@@ -514,11 +531,15 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
                 actions = (f'<span class="sec-actions">'
                           f'<button type="button" onclick="manualOpen(\'{coll_esc}\',{cid},this)" title="Kayıtlı varsayılan uygulamada aç">📂 Aç</button>'
                           f'<button type="button" onclick="manualOpenFolder(\'{coll_esc}\',{cid},this)" title="Dosya gezgininde, seçili olarak göster">🗂️ Klasörde Aç</button>'
-                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{sec["slug"]}\',this)">🖥️ Tarayıcıda Göster</button>'
+                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{_esc(sec["title"])}\',this)">🖥️ Tarayıcıda Göster</button>'
                           f'</span>')
+            # madde 2. tur, 2 (kullanıcı): "browserde aç" bölümün İÇİNE gömülü render
+            # ediyordu, mantıksız — artık index.html'deki #sidepanel ile AYNI sağdan
+            # kayan panelde açılıyor (bkz. manualShowInBrowser); bölüm içine gömülü
+            # .sec-code div'i KALDIRILDI.
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
                          f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
-                         f'{_md_to_html_fragment(linked)}<div class="sec-code" id="code-{sec["slug"]}"></div></div>')
+                         f'{_md_to_html_fragment(linked)}</div>')
         body = "\n".join(parts)
 
     html_lang = active_lang if active_lang in ("tr", "en") else "en"
@@ -526,6 +547,15 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
 <title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style>
 <script src="/static/vendor/sweetalert2.min.js"></script></head>
 <body><nav id="manualnav">{nav}<div id="navresize"></div></nav><main>{body}</main>
+<div id="sidepanel">
+  <div id="sp-resize"></div>
+  <div class="sp-head">
+    <span class="sp-fname" id="sp-fname">…</span>
+    <button class="sp-close" onclick="copySidePanel()" id="sp-copy" title="Kopyala">📋</button>
+    <button class="sp-close" onclick="closeSidePanel()">✕</button>
+  </div>
+  <div class="sp-body" id="sp-body"></div>
+</div>
 <script>
 var MANUAL_COLLECTION={json.dumps(model["collection"])}, MANUAL_PAGE={json.dumps(page)};
 (function(){{
@@ -543,6 +573,38 @@ var MANUAL_COLLECTION={json.dumps(model["collection"])}, MANUAL_PAGE={json.dumps
     if(!dragging)return;
     dragging=false;nav.classList.remove('dragging');handle.classList.remove('dragging');
     localStorage.setItem('ci-manual-navw',parseInt(nav.style.width));
+  }});
+}})();
+// madde 2. tur, 2 (kullanıcı): "browserde aç" sağdan kayan panelde açılmalı —
+// index.html'deki #sidepanel/#sp-resize deseniyle AYNI (sürükle-genişlet dahil).
+var SP_CONTENT='';
+function closeSidePanel(){{document.getElementById('sidepanel').classList.remove('show');}}
+async function copySidePanel(){{
+  if(!SP_CONTENT)return;
+  try{{
+    await navigator.clipboard.writeText(SP_CONTENT);
+    var b=document.getElementById('sp-copy'),old=b.textContent;b.textContent='✅';
+    setTimeout(function(){{b.textContent=old;}},1200);
+  }}catch(e){{}}
+}}
+document.addEventListener('keydown',function(e){{
+  if(e.key==='Escape'&&document.getElementById('sidepanel').classList.contains('show'))closeSidePanel();
+}});
+(function(){{
+  var panel=document.getElementById('sidepanel'),handle=document.getElementById('sp-resize');
+  var saved=parseInt(localStorage.getItem('ci-manual-spwidth'));
+  if(saved)panel.style.width=saved+'px';
+  var dragging=false;
+  handle.addEventListener('mousedown',function(e){{dragging=true;panel.classList.add('dragging');handle.classList.add('dragging');e.preventDefault();}});
+  window.addEventListener('mousemove',function(e){{
+    if(!dragging)return;
+    var w=Math.min(window.innerWidth*0.95,Math.max(340,window.innerWidth-e.clientX));
+    panel.style.width=w+'px';
+  }});
+  window.addEventListener('mouseup',function(){{
+    if(!dragging)return;
+    dragging=false;panel.classList.remove('dragging');handle.classList.remove('dragging');
+    localStorage.setItem('ci-manual-spwidth',parseInt(panel.style.width));
   }});
 }})();
 var SWAL_BASE={{background:undefined,customClass:{{popup:'ci-swal',confirmButton:'ci-swal-btn',cancelButton:'ci-swal-btn-cancel'}},buttonsStyling:false}};
@@ -596,21 +658,23 @@ async function manualOpenFolder(collection,id,btn){{
   }}catch(e){{ciError(e);}}
   btn.disabled=false;btn.textContent=old;
 }}
-async function manualShowInBrowser(collection,id,secSlug,btn){{
-  var box=document.getElementById('code-'+secSlug);
-  if(box.classList.contains('show')){{box.classList.remove('show');return;}}
-  if(!box.dataset.loaded){{
-    btn.disabled=true;var oldTxt=btn.textContent;btn.textContent='⏳ Yükleniyor…';
-    try{{
-      var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'browser'}})}})).json();
-      var esc=function(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}};
-      box.innerHTML=r.error?('<p style="color:var(--err)">'+esc(r.error)+'</p>'):('<pre><code>'+esc(r.content)+'</code></pre>');
-      box.dataset.loaded='1';
-    }}catch(e){{box.innerHTML='<p style="color:var(--err)">'+e+'</p>';}}
-    btn.disabled=false;btn.textContent=oldTxt;
-  }}
-  box.classList.add('show');
-  box.scrollIntoView({{block:'nearest',behavior:'smooth'}});
+async function manualShowInBrowser(collection,id,secTitle,btn){{
+  var old=btn.textContent;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+  var esc=function(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}};
+  try{{
+    var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'browser'}})}})).json();
+    if(r.error){{
+      document.getElementById('sp-fname').textContent='Hata';
+      document.getElementById('sp-body').innerHTML='<div class="sp-err">⚠️ '+esc(r.error)+'</div>';
+      SP_CONTENT='';
+    }}else{{
+      document.getElementById('sp-fname').textContent=r.name||r.path||secTitle;
+      document.getElementById('sp-body').innerHTML='<pre><code>'+esc(r.content)+'</code></pre>';
+      SP_CONTENT=r.content;
+    }}
+    document.getElementById('sidepanel').classList.add('show');
+  }}catch(e){{ciError(e);}}
+  btn.disabled=false;btn.textContent=old;
 }}
 </script></body></html>"""
 
@@ -676,20 +740,31 @@ def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str
             code_html = ""
             src_text = _read_source_for_static(src_root, sec["unit"]) if src_root and sec.get("chunk_id") is not None else None
             if src_text is not None:
+                # madde 2. tur, 2 (kullanıcı): canlı sistemdeki gibi SAĞ PANELDE açılsın
+                # (aşağıdaki #sidepanel) — fetch YOK, kaynak <template> içine üretim
+                # anında GÖMÜLÜ, panel onu oradan okuyup gösteriyor (offline çalışır).
                 actions = (f'<span class="sec-actions">'
-                          f'<button type="button" onclick="var b=document.getElementById(\'code-{sec["slug"]}\');'
-                          f"b.classList.toggle('show');b.scrollIntoView({{block:'nearest',behavior:'smooth'}});"
-                          f'">🖥️ Kaynağı Göster/Gizle</button></span>')
-                code_html = f'<pre><code>{_esc(src_text)}</code></pre>'
+                          f'<button type="button" onclick="manualShowSource(\'code-{sec["slug"]}\',\'{_esc(sec["title"])}\')">🖥️ Kaynağı Göster</button>'
+                          f'</span>')
+                code_html = f'<template id="code-{sec["slug"]}">{_esc(src_text)}</template>'
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
                          f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
-                         f'{_md_to_html_fragment(linked)}<div class="sec-code" id="code-{sec["slug"]}">{code_html}</div></div>')
+                         f'{_md_to_html_fragment(linked)}{code_html}</div>')
         body = "\n".join(parts)
 
     html_lang = lang if lang in ("tr", "en") else "en"
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
 <title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style></head>
 <body><nav id="manualnav">{nav}<div id="navresize"></div></nav><main>{body}</main>
+<div id="sidepanel">
+  <div id="sp-resize"></div>
+  <div class="sp-head">
+    <span class="sp-fname" id="sp-fname">…</span>
+    <button class="sp-close" onclick="copySidePanel()" id="sp-copy" title="Kopyala">📋</button>
+    <button class="sp-close" onclick="closeSidePanel()">✕</button>
+  </div>
+  <div class="sp-body" id="sp-body"></div>
+</div>
 <script>
 function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
   var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
@@ -709,6 +784,46 @@ function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter
     if(!dragging)return;
     dragging=false;nav.classList.remove('dragging');handle.classList.remove('dragging');
     localStorage.setItem('ci-manual-navw',parseInt(nav.style.width));
+  }});
+}})();
+var SP_CONTENT='';
+function manualShowSource(tplId,title){{
+  var t=document.getElementById(tplId);
+  if(!t)return;
+  var text=t.content.textContent;
+  document.getElementById('sp-fname').textContent=title;
+  document.getElementById('sp-body').innerHTML='<pre><code></code></pre>';
+  document.querySelector('#sp-body code').textContent=text;
+  SP_CONTENT=text;
+  document.getElementById('sidepanel').classList.add('show');
+}}
+function closeSidePanel(){{document.getElementById('sidepanel').classList.remove('show');}}
+async function copySidePanel(){{
+  if(!SP_CONTENT)return;
+  try{{
+    await navigator.clipboard.writeText(SP_CONTENT);
+    var b=document.getElementById('sp-copy'),old=b.textContent;b.textContent='✅';
+    setTimeout(function(){{b.textContent=old;}},1200);
+  }}catch(e){{}}
+}}
+document.addEventListener('keydown',function(e){{
+  if(e.key==='Escape'&&document.getElementById('sidepanel').classList.contains('show'))closeSidePanel();
+}});
+(function(){{
+  var panel=document.getElementById('sidepanel'),handle=document.getElementById('sp-resize');
+  var saved=parseInt(localStorage.getItem('ci-manual-spwidth'));
+  if(saved)panel.style.width=saved+'px';
+  var dragging=false;
+  handle.addEventListener('mousedown',function(e){{dragging=true;panel.classList.add('dragging');handle.classList.add('dragging');e.preventDefault();}});
+  window.addEventListener('mousemove',function(e){{
+    if(!dragging)return;
+    var w=Math.min(window.innerWidth*0.95,Math.max(340,window.innerWidth-e.clientX));
+    panel.style.width=w+'px';
+  }});
+  window.addEventListener('mouseup',function(){{
+    if(!dragging)return;
+    dragging=false;panel.classList.remove('dragging');handle.classList.remove('dragging');
+    localStorage.setItem('ci-manual-spwidth',parseInt(panel.style.width));
   }});
 }})();
 </script></body></html>"""

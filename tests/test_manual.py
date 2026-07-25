@@ -104,7 +104,13 @@ def test_render_html_index_and_chapter():
     # Sıra 7 (kullanıcı): Aç + Klasörde Aç + Tarayıcıda Göster — YALNIZ chunk_id'si olan bölümde (UnitA)
     assert "manualOpen('test-coll',123456,this)" in ch
     assert "manualOpenFolder('test-coll',123456,this)" in ch
-    assert "manualShowInBrowser('test-coll',123456,'unita-pas',this)" in ch
+    assert "manualShowInBrowser('test-coll',123456,'UnitA.pas',this)" in ch
+
+    # madde 2. tur, 2 (kullanıcı): "browserde aç" artık İÇE gömülü değil, sağ
+    # panelde (index.html'deki #sidepanel deseniyle aynı) açılıyor
+    assert 'id="sidepanel"' in ch and 'id="sp-body"' in ch and 'id="sp-resize"' in ch
+    assert "ci-manual-spwidth" in ch
+    assert 'class="sec-code"' not in ch   # eski, bölüm-içi gömülü render KALDIRILDI
 
     # madde 2. tur (kullanıcı): manuel sayfasında da SweetAlert2 kullanılmalı — native
     # alert()/prompt() kalmamalı, self-hosted script dahil edilmeli (offline-first)
@@ -151,11 +157,33 @@ def test_render_manual_zip_is_relative_and_navigable_without_server():
     assert "manualOpen(" not in src and "manualOpenFolder(" not in src
     # cross-link de göreli olmalı ("[TBar](src.html#unitb-pas)")
     assert 'href="src.html#unitb-pas"' in src
+    # madde 2. tur, 2 (kullanıcı): statik pakette de "Kaynağı Göster" sağ panelde
+    # açılır — ama fetch() YOK, kaynak <template> içine GÖMÜLÜ (offline çalışır)
+    assert 'id="sidepanel"' in src and "manualShowSource(" in src
+    assert "<template id=\"code-unita-pas\">" in src or "fetch(" not in src
 
 
 def test_render_html_missing_chapter_is_404():
     missing = manual.render_manual_html(FAKE_MODEL, "hic-yok")
     assert "404" in missing
+
+
+def test_cross_link_query_string_comes_before_fragment_not_after():
+    """Kullanıcı bulgusu: Türkçe görüntülerken bir çapraz-referansa (class/tip
+    adı) tıklayınca İngilizce (baz) sayfaya gidiyordu. Kök neden: type_home
+    değerleri zaten "{slug}.html#{section}" biçiminde (FRAGMENT dahil); qs
+    ("?lang=tr") SONA eklenince "...html#section?lang=tr" çıkıyordu — bu
+    GEÇERSİZ bir URL'dir ("?query" HER ZAMAN "#fragment"tan ÖNCE gelmeli),
+    tarayıcı "?lang=tr" kısmını fragment'ın PARÇASI sayıp query'yi tamamen
+    kaybediyordu. Doğrusu: "...html?lang=tr#section"."""
+    m = {**FAKE_MODEL, "translations": {"tr": {"label": "Türkçe", "sections": {
+        "src|unita-pas": "## Amaç\nBu birim TFoo sınıfını tanımlar ve TBar temel sınıfından türer.\n\n```\nTFoo = class(TBar)\n```",
+    }}}}
+    ch = manual.render_manual_html(m, "src", lang="tr")
+    # doğru sıra: ".html?lang=tr#slug" — YANLIŞ sıra (".html#slug?lang=tr") ASLA görünmemeli
+    assert '<a href="/manual/test-coll/src.html?lang=tr#unitb-pas">TBar</a>' in ch
+    assert "src.html#unitb-pas?lang=tr" not in ch
+    assert "?lang=tr#" in ch   # query HER ZAMAN fragment'tan önce
 
 
 def test_render_html_links_are_absolute_not_relative():
