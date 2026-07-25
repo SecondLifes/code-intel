@@ -96,7 +96,6 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 #out.compact .tools{padding:5px 12px}
 #compact-btn.on{background:var(--amber);color:#1a1305;border-color:var(--amber)}
 pre{background:var(--code);margin:0;padding:12px 16px;font:12.5px/1.55 var(--mono);color:#d8cbb0;overflow-x:auto}
-pre .kw{color:var(--amber)}
 pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding:0 1px}
 /* Sıra 1 (kullanıcı): "highlighting arama sayfasında kullanılmamış... heryerde
    kullanılacak" — manual.py'deki AYNI tema (self-hosted highlight.js) */
@@ -145,7 +144,6 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
 .sp-close:hover{color:var(--amber)}
 .sp-body{flex:1;overflow:auto;padding:0}
 .sp-body pre{margin:0;padding:16px 20px;font:12.5px/1.6 var(--mono);color:#d8cbb0;white-space:pre;overflow-x:auto}
-.sp-body pre .kw{color:var(--amber)}
 .sp-body pre span[data-ln]{display:block;padding-left:8px;border-left:2px solid transparent}
 .sp-body pre span.hlline{background:rgba(224,162,74,.16);border-left-color:var(--amber)}
 .sp-err{padding:20px;color:#e0704a}
@@ -393,7 +391,6 @@ async function jobPeek(){try{
 health();jobPeek();loadWorkspaces();setInterval(()=>{health();jobPeek();},8000);
 
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function hl(code){return esc(code).replace(/\b(procedure|function|begin|end|var|const|type|if|then|else|try|finally|except|for|while|do|class|record|nil|inherited|override|virtual)\b/g,'<span class="kw">$1</span>');}
 // Sıra 1 (kullanıcı): "highlighting arama sayfasında kullanılmamış... heryerde
 // kullanılacak" — manual.py'deki AYNI 3 bilinen istisna eşlemesi (dosya adları
 // static/vendor/highlightjs/languages'e göre doğrulandı).
@@ -525,7 +522,7 @@ function srcCard(h,i){
       <button onclick="showRelations('${h.id}','${h.collection}',this,'${h.kind}','${esc((h.name||'').split('=')[0].trim())}')">🔗 ${T('İlişkiler','Relations')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
       <button onclick="reveal('${h.id}','${h.collection}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
-      <button onclick="showInBrowser('${h.id}','${h.collection}',this,${h.line_start||0})">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
+      <button onclick="showInBrowser('${h.id}','${h.collection}',this,${h.line_start||0},'${hljsLang}')">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
       <button title="${T('İyi sonuç','Good result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','up',this)">👍</button>
       <button title="${T('Alakasız sonuç','Irrelevant result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','down',this)">👎</button>
       <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
@@ -764,18 +761,63 @@ async function reveal(id,collection,mode,btn){
 }
 
 let SP_CONTENT='';
-// hl() ile vurgulanmış tam-dosya HTML'ini satır satır <span>'lere böler ve hedef
-// satırı işaretler — anahtar kelime regex'i tek satır içinde kaldığından (asla
-// \n'i geçmez) hl() çıktısını '\n' ile bölmek güvenli. Span'lar display:block
-// olduğu için satır arası ayraç EKLENMEZ (join('') — aksi halde her satırda
-// hem span'ın kendi satır sonu hem de bizim eklediğimiz '\n' olur, çift boşluk).
-function wrapLinesWithTarget(highlightedHtml, targetLine){
-  return highlightedHtml.split('\n').map((line,i)=>{
-    const n=i+1, isTarget=n===targetLine;
+// Sıra 1, 2. tur (kullanıcı): sağ panel de highlight.js kullanmalı. Sorun:
+// hljs TÜM dosyayı TEK HTML string'i olarak tokenize ediyor; çok satırlı bir
+// token (ör. /* ... \n ... */ yorumu) '\n' ile NAİF bölünürse <span> etiketi
+// bir satırda AÇIK kalır, HTML bozulur. Aşağıdaki splitHighlightedHtmlByLines
+// bunu doğru yapar: '\n'e her rastladığında o an AÇIK olan <span>'leri kapatıp
+// satırı bitirir, sonraki satırın BAŞINDA AYNI etiketleri yeniden açar (kod
+// editörlerinin kullandığı standart teknik) — hljs çıktısı yalnız <span
+// class="..."> kullandığı için etiket adını izlemek gerekmez, YALNIZ '<span'
+// mi '</span>' mi diye bakmak yeterli.
+function splitHighlightedHtmlByLines(html){
+  const openTags=[];
+  const lines=[];
+  let current='';
+  let i=0;
+  while(i<html.length){
+    if(html[i]==='<'){
+      const close=html.indexOf('>',i);
+      if(close===-1){current+=html.slice(i);break;}
+      const tag=html.slice(i,close+1);
+      if(tag.slice(0,2)==='</')openTags.pop();
+      else if(tag.slice(0,5)==='<span')openTags.push(tag);
+      current+=tag;
+      i=close+1;
+    }else if(html[i]==='\n'){
+      lines.push(current+'</span>'.repeat(openTags.length));
+      current=openTags.join('');
+      i++;
+    }else{
+      current+=html[i];
+      i++;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+function renderLinesWithTarget(codeEl,html,targetLine){
+  codeEl.innerHTML=splitHighlightedHtmlByLines(html).map((line,i)=>{
+    const n=i+1,isTarget=n===targetLine;
     return `<span data-ln="${n}"${isTarget?' id="hl-target" class="hlline"':''}>${line||' '}</span>`;
   }).join('');
 }
-async function showInBrowser(id,collection,btn,lineStart){
+function hlApplyLineTargeted(codeEl,hljsLang,targetLine){
+  const raw=codeEl.textContent;
+  if(!hljsLang||typeof hljs==='undefined'){renderLinesWithTarget(codeEl,esc(raw),targetLine);return;}
+  const finish=()=>{
+    try{renderLinesWithTarget(codeEl,hljs.highlight(raw,{language:hljsLang}).value,targetLine);}
+    catch(e){renderLinesWithTarget(codeEl,esc(raw),targetLine);}
+  };
+  if(HLJS_LOADED[hljsLang]==='ok'){finish();return;}
+  if(HLJS_LOADED[hljsLang]==='error'){renderLinesWithTarget(codeEl,esc(raw),targetLine);return;}
+  const s=document.createElement('script');
+  s.src='/static/vendor/highlightjs/languages/'+hljsLang+'.min.js';
+  s.onload=()=>{HLJS_LOADED[hljsLang]='ok';finish();};
+  s.onerror=()=>{HLJS_LOADED[hljsLang]='error';renderLinesWithTarget(codeEl,esc(raw),targetLine);};
+  document.head.appendChild(s);
+}
+async function showInBrowser(id,collection,btn,lineStart,hljsLang){
   const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
     const r=await(await fetch('/api/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,mode:'browser'})})).json();
@@ -785,7 +827,10 @@ async function showInBrowser(id,collection,btn,lineStart){
       SP_CONTENT='';
     }else{
       $('sp-fname').textContent=(r.name||r.path)+(lineStart?` · L${lineStart}`:'');
-      $('sp-body').innerHTML=`<pre><code>${wrapLinesWithTarget(hl(r.content),lineStart)}</code></pre>`;
+      $('sp-body').innerHTML='<pre><code></code></pre>';
+      const codeEl=document.querySelector('#sp-body code');
+      codeEl.textContent=r.content;
+      hlApplyLineTargeted(codeEl,hljsLang,lineStart);
       SP_CONTENT=r.content;
       if(lineStart){
         // requestAnimationFrame'e BAĞIMLI DEĞİL — arka plandaki/görünmeyen
