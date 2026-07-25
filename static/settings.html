@@ -713,6 +713,11 @@ async function loadManualStatus(){
 async function exportManual(fmt){
   if(!SELECTED)return;
   const btn=$('btn-manual'+fmt);const orig=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
+  // Sıra 3 (kullanıcı, canlı testte doğrulanan gerçek hata): başarısızlık
+  // yolunda ("!r.ok") erken "return" buton-sıfırlama satırına HİÇ ULAŞMIYORDU
+  // — düğme SONSUZA DEK devre dışı+spinner'da kilitli kalıyordu (bir kere
+  // manuel üretilmemiş bir koleksiyonda denenince, sonraki tıklamalar bile
+  // hiç tepki vermiyordu). finally ile HER durumda sıfırlanması garanti edildi.
   try{
     const r=await fetch('/api/manual/export?collection='+encodeURIComponent(SELECTED)+'&format='+fmt);
     if(!r.ok){const j=await r.json().catch(()=>({}));await ciError(j.error||T('Dışa aktarma başarısız — önce manual üretilmiş olmalı.','Export failed — the manual must be built first.'));return;}
@@ -720,7 +725,7 @@ async function exportManual(fmt){
     const a=document.createElement('a');a.href=url;a.download=SELECTED+'-manual.'+fmt;
     document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }catch(e){await ciError(e);}
-  btn.disabled=false;btn.innerHTML=orig;
+  finally{btn.disabled=false;btn.innerHTML=orig;}
 }
 let manualAllTimer=null;
 async function startManualBuildAll(){
