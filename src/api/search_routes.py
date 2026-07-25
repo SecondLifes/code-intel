@@ -5,10 +5,11 @@ import pathlib
 import re
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -91,6 +92,32 @@ def reveal(r: RevealReq):
     return {"ok": True, "path": str(file_path)}
 
 # ---------------- RAG sohbet (chat) ----------------
+def _sanitize_ollama_url(url: str, trusted: bool) -> str:
+    """4. tur — dış analizde bulunan GERÇEK SSRF: istemciden gelen ollama_url hiç
+    doğrulanmadan sunucu tarafında urllib.request.urlopen()'e veriliyordu; "read"
+    rollü uzak bir API anahtarı (hatta anahtarsız bir kurulumda herkes) sunucuyu
+    keyfi bir iç ağ adresine (ör. bulut metadata servisi) istek yaptırabilirdi.
+    Artık İKİ savunma katmanı var:
+    1) `trusted` (panel.py security_guard'ın request.state.trusted_client'ı —
+       yalnız localhost veya rol=admin bir anahtar) değilse alan tamamen
+       YOK SAYILIR, sunucu kendi varsayılan OLLAMA'sını kullanır.
+    2) Güvenilir bir çağrı için bile: şema http/https olmalı, host boş olamaz,
+       bulut metadata/link-local (169.254.0.0/16, 0.0.0.0) hedeflenemez;
+       yalnızca scheme+netloc kullanılır — istemciden gelen yol/sorgu/parça
+       ASLA sunucu isteğine taşınmaz (yalnız kendi "+/api/generate" ekimiz gider)."""
+    if not url or not trusted:
+        return ""
+    try:
+        p = urllib.parse.urlsplit(url)
+    except Exception:
+        return ""
+    host = (p.hostname or "").lower()
+    if p.scheme not in ("http", "https") or not host:
+        return ""
+    if host == "0.0.0.0" or host.startswith("169.254."):
+        return ""
+    return f"{p.scheme}://{p.netloc}"
+
 class AskReq(BaseModel):
     q: str; collections: list[str] = ["unidac"]; mode: str = "hybrid"; model: str = "gemma4:12b"; lang: str = "tr"
     # çok turlu sohbet: istemci önceki turları [{"q":..., "a":...}, ...] olarak
@@ -162,7 +189,7 @@ def _ans_put(r, answer: str, hits: list, total: int):
         pass
 
 @router.post("/api/ask")
-def ask(r: AskReq):
+def ask(r: AskReq, request: Request):
     cached = _ans_get(r)
     if cached:
         return {"answer": cached["answer"], "cached": True, "model": cached.get("model"),
@@ -176,21 +203,23 @@ def ask(r: AskReq):
     prompt = _build_ask_prompt(r, hits)
     body = json.dumps({"model": r.model, "prompt": prompt, "stream": False,
                        "options": {"num_predict": 600}, "think": False}).encode()
+    ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
     t0 = time.time()
     txt = json.loads(urllib.request.urlopen(
-        urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
+        urllib.request.Request((ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
         timeout=600).read()).get("response", "").strip()
     _ans_put(r, txt, hits, sr.get("total", len(hits)))
     return {"answer": txt, "sec": round(time.time() - t0, 1), "model": r.model, "ms_search": sr["ms"],
             "total": sr.get("total", len(hits)), "hits": hits}
 
 @router.post("/api/ask/stream")
-def ask_stream(r: AskReq):
+def ask_stream(r: AskReq, request: Request):
     """SSE akışlı RAG sohbet — /api/ask ile aynı arama+prompt yolu, ama Ollama
     yanıtı token token akıtılır: önce `meta` olayı (kaynak hit'ler + arama süresi),
     sonra `data:` satırlarında {"t": parça}, en sonda `done` olayı. Panel arayüzü
     bunu kullanır; eski bloklayan /api/ask REST istemcileri için aynen durur.
     Önbellekli yanıtlar tek parça halinde anında akar (cached=true)."""
+    ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
     cached = _ans_get(r)
     if cached:
         def gen_cached():
@@ -224,7 +253,7 @@ def ask_stream(r: AskReq):
         full = []   # akan yanıt biriktirilir — sonda önbelleğe yazmak için
         try:
             with urllib.request.urlopen(
-                    urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
+                    urllib.request.Request((ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
                     timeout=600) as resp:
                 for line in resp:
                     if not line.strip():
@@ -258,8 +287,9 @@ class ResearchReq(BaseModel):
     ollama_url: str = ""   # 3. tur, Sıra 6 (kullanıcı) — bkz. AskReq.ollama_url'deki not
 
 @router.post("/api/research/stream")
-def research_stream(r: ResearchReq):
+def research_stream(r: ResearchReq, request: Request):
     mdl = r.model or retrieval._CFG.get("deep_model", "qwen3.6")
+    ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
 
     def gen():
         yield f"event: step\ndata: {json.dumps({'step': 'arama + bağlam paketi hazırlanıyor'}, ensure_ascii=False)}\n\n"
@@ -330,7 +360,7 @@ def research_stream(r: ResearchReq):
         done_reason = None
         try:
             with urllib.request.urlopen(
-                    urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
+                    urllib.request.Request((ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
                     timeout=600) as resp:
                 for line in resp:
                     if not line.strip():
@@ -363,7 +393,7 @@ class CompareReq(BaseModel):
     q: str; hits: list[dict]; model: str = ""; lang: str = "tr"; ollama_url: str = ""
 
 @router.post("/api/compare")
-def compare(r: CompareReq):
+def compare(r: CompareReq, request: Request):
     if len(r.hits) < 2:
         return JSONResponse({"error": "Karşılaştırma için en az 2 fonksiyon gerekir." if r.lang == "tr"
                              else "At least 2 functions are needed to compare."}, status_code=400)
@@ -392,9 +422,10 @@ def compare(r: CompareReq):
                   f"\n\nQUESTION: {r.q}\n\nFUNCTIONS:\n{items}")
     body = json.dumps({"model": mdl, "prompt": prompt, "stream": False,
                        "options": {"num_predict": 1500}, "think": False}).encode()
+    ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
     try:
         txt = json.loads(urllib.request.urlopen(
-            urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
+            urllib.request.Request((ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
             timeout=180).read()).get("response", "").strip()
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=502)

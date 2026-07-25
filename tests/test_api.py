@@ -576,6 +576,50 @@ def test_research_stream_uses_custom_ollama_url_when_provided(client, monkeypatc
     assert captured["url"] == search_routes.OLLAMA + "/api/generate"   # boşsa sunucu varsayılanı
 
 
+# ---------------- 1f-2) Codex dış analizi (2026-07-25): GERÇEK SSRF ----------------
+# ollama_url hiç doğrulanmadan sunucu tarafında urlopen()'e veriliyordu — "read"
+# rollü uzak bir API anahtarı (veya anahtarsız kurulumda herkes) sunucuyu keyfi
+# bir iç ağ adresine (ör. bulut metadata servisi) istek yaptırabilirdi. Artık
+# _sanitize_ollama_url() iki savunma katmanı uyguluyor: (1) yalnız localhost/
+# admin-rollü istekler (trusted_client) alanı geçerli sayar, (2) güvenilir bir
+# çağrı için bile şema http/https olmalı ve bulut metadata/link-local
+# (169.254.0.0/16, 0.0.0.0) hedeflenemez; yol/sorgu istemciden asla taşınmaz.
+# Saf fonksiyon testleri — Qdrant/Ollama'ya hiç gitmeden.
+def test_sanitize_ollama_url_ignored_when_client_not_trusted():
+    from src.api.search_routes import _sanitize_ollama_url
+    assert _sanitize_ollama_url("http://10.0.0.5:11500", trusted=False) == ""
+
+
+def test_sanitize_ollama_url_honored_when_client_trusted():
+    from src.api.search_routes import _sanitize_ollama_url
+    assert _sanitize_ollama_url("http://10.0.0.5:11500", trusted=True) == "http://10.0.0.5:11500"
+
+
+def test_sanitize_ollama_url_blocks_cloud_metadata_even_when_trusted():
+    from src.api.search_routes import _sanitize_ollama_url
+    assert _sanitize_ollama_url("http://169.254.169.254/latest/meta-data/", trusted=True) == ""
+    assert _sanitize_ollama_url("http://169.254.0.1:80", trusted=True) == ""
+    assert _sanitize_ollama_url("http://0.0.0.0:11434", trusted=True) == ""
+
+
+def test_sanitize_ollama_url_rejects_non_http_scheme():
+    from src.api.search_routes import _sanitize_ollama_url
+    assert _sanitize_ollama_url("file:///etc/passwd", trusted=True) == ""
+    assert _sanitize_ollama_url("ftp://internal-host/", trusted=True) == ""
+    assert _sanitize_ollama_url("gopher://internal-host/", trusted=True) == ""
+
+
+def test_sanitize_ollama_url_strips_client_supplied_path_and_query():
+    from src.api.search_routes import _sanitize_ollama_url
+    assert _sanitize_ollama_url("http://10.0.0.5:11500/../../admin?x=1", trusted=True) == "http://10.0.0.5:11500"
+
+
+def test_sanitize_ollama_url_empty_is_noop():
+    from src.api.search_routes import _sanitize_ollama_url
+    assert _sanitize_ollama_url("", trusted=True) == ""
+    assert _sanitize_ollama_url("", trusted=False) == ""
+
+
 # ---------------- 1g) Stabilite/Performans karşılaştırma tablosu (kullanıcı isteği)
 # ---------------- Cevap kutusundaki kaynaklardan (>=2) tek bir LLM çağrısıyla
 # stabilite/performans puanı + gerekçe istenir — Ollama'ya hiç gitmeden, sahte

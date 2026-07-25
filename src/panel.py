@@ -110,6 +110,13 @@ async def security_guard(request: Request, call_next):
         role, key_name = (None, "") if is_local else _presented_key_role(request.headers.get("x-api-key"))
         if API_KEY and not is_local and role is None:
             return JSONResponse({"error": "geçersiz veya eksik X-API-Key"}, status_code=401)
+        # Dış analizde bulunan gerçek SSRF: /api/ask, /api/research/stream, /api/compare
+        # istemciden bir ollama_url alıp sunucu tarafında ona istek atıyordu — "read"
+        # rollü uzak bir anahtar bile sunucuyu keyfi bir iç ağ adresine yönlendirebilirdi.
+        # Bu bayrak (search_routes.py'de okunur) o alanı yalnız localhost'tan veya
+        # rol=admin bir anahtarla gelen isteklerde geçerli sayar; diğerlerinde sunucu
+        # kendi varsayılan Ollama adresini kullanır.
+        request.state.trusted_client = is_local or role == "admin"
         is_admin = any(path.startswith(p) for p in ADMIN_PREFIXES)
         if is_admin and not is_local and role != "admin":
             return JSONResponse({"error": "yönetim uçları yalnız localhost'tan veya rol=admin bir API anahtarıyla erişilebilir "
