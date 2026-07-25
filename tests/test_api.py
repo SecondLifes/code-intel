@@ -401,6 +401,59 @@ def test_research_stream_sse_envelope_on_search_error(client):
     assert "event: error\ndata: " in r.text
 
 
+# ---------------- 1c) Sıra 8 (kullanıcı): derin araştırma pipeline karşılaştırması ----------------
+# ask_stream() vs research_stream() karşılaştırılırken (fonksiyonel akıl yürütme,
+# testten ÖNCE) bulunan GERÇEK asimetri: ask_stream arama adımını
+# ("isinstance(sr, JSONResponse)") kontrol ediyordu ama research_stream
+# get_context_pack()'i (4 ayrı qdrant çağrısı: search + get_relations +
+# get_type_hierarchy + get_unit_deps) ÇIPLAK çağırıyordu — bir istisna akışı
+# sessizce çökertirdi. Aşağıdaki test bunun GERİ GELMEDİĞİNİ kanıtlar
+# (stabilite: hata olasılığı — Ollama'ya hiç gitmeden, get_context_pack
+# taklit edilerek).
+@needs_qdrant
+def test_research_stream_sse_envelope_on_context_pack_exception(client, monkeypatch):
+    # ÖNEMLİ: search_routes.py `from .. import retrieval` ile YÜKLENİYOR (src.panel
+    # üstünden) — testin kendi `import retrieval`'ı (sys.path'e "src" eklenmiş)
+    # AYRI bir modül nesnesi olurdu (sys.modules'ta "retrieval" != "src.retrieval"),
+    # monkeypatch SESSİZCE etkisiz kalırdı (canlı testte ilk denemede tam bu oldu).
+    # Doğrusu: search_routes'un KENDİ bağladığı modül nesnesini yamalamak.
+    from src.api import search_routes
+
+    def _boom(*a, **kw):
+        raise RuntimeError("qdrant bağlantısı koptu (taklit)")
+    monkeypatch.setattr(search_routes.retrieval, "get_context_pack", _boom)
+    r = client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"]})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert "event: error\ndata: " in r.text
+    assert "qdrant bağlantısı koptu" in r.text
+    # akış YARIDA KESİLMEMİŞ, düzgün biten bir zarf — "event: done" hiç
+    # gelmemesi BEKLENİR (hata sonrası return), ama "event: meta" da gelmemeli
+    # (context pack hiç kurulamadı, sahte/eksik meta yayınlanmamalı)
+    assert "event: meta\ndata: " not in r.text
+    assert "event: done\ndata: " not in r.text
+
+
+# ---------------- 1d) Sıra 6 (kullanıcı): "derin"de ilgili kayıt sayısı ----------------
+# related_k'nin gerçekten get_context_pack'e ULAŞTIĞININ kanıtı (canlı curl
+# doğrulamasının otomatik testli karşılığı) — Ollama'ya gitmeden, get_context_pack
+# taklit edilip ÇAĞRI ARGÜMANLARI yakalanarak.
+@needs_qdrant
+def test_research_stream_passes_related_k_through(client, monkeypatch):
+    from src.api import search_routes
+    captured = {}
+
+    def _fake_pack(task, collections=None, token_budget=8000, include_relations=True, related_k=5):
+        captured["related_k"] = related_k
+        return {"task": task, "collections": collections or [], "sections": [], "omitted": []}
+    monkeypatch.setattr(search_routes.retrieval, "get_context_pack", _fake_pack)
+    r = client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"], "related_k": 12})
+    assert r.status_code == 200
+    assert captured["related_k"] == 12
+    # boş sections -> "eşleşme yok" mesajıyla düzgün biter (hata değil)
+    assert "event: done\ndata: " in r.text
+
+
 # ---------------- 2) SÖZLEŞME: MCP <-> REST paritesi ----------------
 def test_mcp_rest_parity():
     """Her MCP tool'unun /api/mcp/<ad> REST test ucu olmalı (ve tersi) — tool

@@ -256,7 +256,19 @@ def research_stream(r: ResearchReq):
 
     def gen():
         yield f"event: step\ndata: {json.dumps({'step': 'arama + bağlam paketi hazırlanıyor'}, ensure_ascii=False)}\n\n"
-        pack = retrieval.get_context_pack(r.q, r.collections, r.token_budget, related_k=r.related_k)
+        # Sıra 8 (kullanıcı): ask_stream() arama adımını try/hariç ile SARIYOR
+        # (bkz. yukarısı, "isinstance(sr, JSONResponse)" kontrolü) ama research_stream
+        # get_context_pack()'i ÇIPLAK çağırıyordu — pipeline karşılaştırmasında bulunan
+        # GERÇEK asimetri: get_context_pack içi (arama + get_relations + get_type_
+        # hierarchy + get_unit_deps, 4 ayrı qdrant çağrısı) bir İSTİSNA fırlatırsa
+        # (ör. bağlantı kopması) jeneratör SESSİZCE çöküyordu — istemci ne "event:
+        # error" ne düzgün bir "done" görüyordu, akış yarıda kesiliyordu. Artık
+        # ask_stream ile AYNI desen: yakala, düzgün bir hata olayı yayınla.
+        try:
+            pack = retrieval.get_context_pack(r.q, r.collections, r.token_budget, related_k=r.related_k)
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)[:200]}, ensure_ascii=False)}\n\n"
+            return
         if "error" in pack:
             yield f"event: error\ndata: {json.dumps(pack, ensure_ascii=False)}\n\n"
             return
