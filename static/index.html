@@ -145,7 +145,20 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
 @keyframes sp{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .scroll::-webkit-scrollbar{width:10px}.scroll::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px}
+/* SweetAlert2 — aynı "ink workshop" paleti (settings.html ile tutarlı) */
+.swal2-popup.ci-swal{background:var(--panel);color:var(--txt);border:1px solid var(--line2);border-radius:14px;font:15px/1.6 'Segoe UI',system-ui,sans-serif}
+.ci-swal .swal2-title{color:var(--txt);font-size:18px}
+.ci-swal .swal2-html-container{color:var(--dim)}
+.ci-swal .swal2-input,.ci-swal .swal2-textarea{background:var(--card);border:1px solid var(--line2);color:var(--txt);box-shadow:none;font-size:14px}
+.ci-swal .swal2-input:focus,.ci-swal .swal2-textarea:focus{border-color:var(--amber-d);box-shadow:0 0 0 3px rgba(224,162,74,.08)}
+.ci-swal-btn{background:var(--amber)!important;color:#1a1305!important;border:0!important;box-shadow:none!important;font-weight:700!important;border-radius:10px!important}
+.ci-swal-btn:hover{background:var(--amber-d)!important}
+.ci-swal-btn-cancel{background:var(--card)!important;color:var(--dim)!important;border:1px solid var(--line2)!important;box-shadow:none!important;border-radius:10px!important}
+.ci-swal-btn-danger{background:var(--err)!important}
+.ci-swal-toast{background:var(--panel)!important;color:var(--txt)!important;border:1px solid var(--line2);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.ci-swal-toast .swal2-title{font-size:14px;color:var(--txt)}
 </style>
+<script src="/static/vendor/sweetalert2.min.js"></script>
 </head>
 <body>
 <div class="top">
@@ -239,6 +252,28 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr', MODE='hybrid', ACT=localStorage.getItem('ci-act')||'ask';
 const T=(t,e)=>LANG==='tr'?t:e, $=id=>document.getElementById(id);
+
+// ---- SweetAlert2 sarmalayıcıları — native alert/confirm/prompt yerine, panel temasıyla ----
+const SWAL_BASE={customClass:{popup:'ci-swal',confirmButton:'ci-swal-btn',cancelButton:'ci-swal-btn-cancel',input:'ci-swal-input'},buttonsStyling:false};
+function ciAlert(msg,icon){return Swal.fire({...SWAL_BASE,icon:icon||'info',html:msg,confirmButtonText:T('Tamam','OK')});}
+function ciError(msg){return Swal.fire({...SWAL_BASE,icon:'error',html:String(msg&&msg.message||msg),confirmButtonText:T('Tamam','OK')});}
+async function ciConfirm(msg,opts){
+  opts=opts||{};
+  const r=await Swal.fire({...SWAL_BASE,icon:opts.icon||'warning',html:msg,showCancelButton:true,
+    confirmButtonText:opts.confirmText||T('Evet','Yes'),cancelButtonText:T('Vazgeç','Cancel'),
+    customClass:{...SWAL_BASE.customClass,confirmButton:opts.danger?'ci-swal-btn ci-swal-btn-danger':'ci-swal-btn'}});
+  return r.isConfirmed;
+}
+async function ciPrompt(title,defaultValue){
+  const r=await Swal.fire({...SWAL_BASE,icon:'question',title:title,input:'text',inputValue:defaultValue||'',
+    showCancelButton:true,confirmButtonText:T('Tamam','OK'),cancelButtonText:T('Vazgeç','Cancel')});
+  return r.isConfirmed?r.value:null;
+}
+function ciToast(msg,icon){
+  return Swal.mixin({toast:true,position:'top-end',showConfirmButton:false,timer:3200,timerProgressBar:true,
+    customClass:{popup:'ci-swal-toast'},didOpen:(t)=>{t.addEventListener('mouseenter',Swal.stopTimer);t.addEventListener('mouseleave',Swal.resumeTimer);}
+  }).fire({icon:icon||'success',title:msg});
+}
 const SUGG={tr:['String split fonksiyonu var mı?','REST isteği nasıl gönderilir?','JSON nasıl serileştirilir?','Bağlantı havuzu (connection pool) var mı?'],
            en:['Is there a string split function?','How is a REST request sent?','How is JSON serialized?','Is there a connection pool?']};
 function applyLang(){
@@ -352,15 +387,16 @@ function currentConfig(){
           rerank:$('rr-toggle').checked, group:GROUP_MODE, lang:$('f-lang').value};
 }
 async function saveWorkspace(){
-  const name=prompt(T('Çalışma alanı adı:','Workspace name:'), $('ws-select').value||'');
+  const name=await ciPrompt(T('Çalışma alanı adı:','Workspace name:'), $('ws-select').value||'');
   if(!name)return;
   await fetch('/api/workspaces',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name,config:currentConfig()})});
   await loadWorkspaces();$('ws-select').value=name;
+  ciToast(T('Çalışma alanı kaydedildi.','Workspace saved.'));
 }
 async function deleteWorkspace(){
   const name=$('ws-select').value;
-  if(!name||!confirm(T(`"${name}" çalışma alanı silinsin mi?`,`Delete workspace "${name}"?`)))return;
+  if(!name||!(await ciConfirm(T(`"${name}" çalışma alanı silinsin mi?`,`Delete workspace "${name}"?`),{danger:true})))return;
   await fetch('/api/workspaces?name='+encodeURIComponent(name),{method:'DELETE'});
   await loadWorkspaces();
 }
@@ -572,7 +608,7 @@ async function explain(id,collection,depth,btn){
     const model=depth==='deep'?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
     const r=await(await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,depth,model})})).json();
     const e=$('e'+id);e.textContent=r.text+(r.cached?'  📌':'');e.classList.add('has');
-  }catch(x){alert(x);}
+  }catch(x){await ciError(x);}
   btn.disabled=false;btn.innerHTML=old;
 }
 
@@ -618,8 +654,8 @@ async function reveal(id,collection,mode,btn){
   const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
     const r=await(await fetch('/api/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,mode})})).json();
-    if(r.error)alert(r.error);
-  }catch(x){alert(x);}
+    if(r.error)await ciError(r.error);
+  }catch(x){await ciError(x);}
   btn.disabled=false;btn.innerHTML=old;
 }
 
@@ -658,7 +694,7 @@ async function showInBrowser(id,collection,btn,lineStart){
       }
     }
     $('sidepanel').classList.add('show');
-  }catch(x){alert(x);}
+  }catch(x){await ciError(x);}
   btn.disabled=false;btn.innerHTML=old;
 }
 function closeSidePanel(){

@@ -124,6 +124,12 @@ app.include_router(index_routes.router)
 app.include_router(mcp_routes.router)
 app.include_router(manual_routes.router)
 
+# Statik varlıklar (ör. yerelde barındırılan SweetAlert2) — proje CDN'siz/çevrimdışı
+# çalışma ilkesine bağlı (bkz. Help/Manual sistemindeki aynı karar), bu yüzden
+# harici bir <script src="https://..."> yerine dosya diskten sunulur.
+from fastapi.staticfiles import StaticFiles
+app.mount("/static/vendor", StaticFiles(directory=str(ROOT / "static" / "vendor")), name="vendor")
+
 LOG_ROTATE_BYTES = 20_000_000   # log dosyası bu boyutu aşınca .1'e devredilir (1 eski kopya tutulur)
 
 def _rotate_logs():

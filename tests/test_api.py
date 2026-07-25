@@ -50,6 +50,15 @@ def test_health(client):
     assert all("_" != c["name"][0] for c in d["collections"])   # iç koleksiyonlar sızmamalı
 
 
+def test_vendored_sweetalert2_served_locally(client):
+    """Panel CDN'siz/çevrimdışı çalışma ilkesine bağlı (bkz. Help/Manual sistemi) —
+    SweetAlert2 harici bir <script src="https://..."> yerine yerelden sunulmalı."""
+    r = client.get("/static/vendor/sweetalert2.min.js")
+    assert r.status_code == 200
+    assert len(r.content) > 10000
+    assert b"sweetalert2" in r.content[:200].lower()
+
+
 @needs_qdrant
 def test_search_basic_and_filters(client):
     d = client.post("/api/search", json={"q": "split string", "collections": ["unidac"], "top_k": 5}).json()

@@ -79,7 +79,21 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
 .vecstate{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .vecstate button{padding:2px 7px;font-size:11px;background:var(--card);border:1px solid var(--line2);color:var(--dim);font-weight:500;border-radius:6px}
 .vecstate button:hover{border-color:var(--amber-d);color:var(--amber)}
+/* SweetAlert2 — aynı "ink workshop" paleti (kütüphanenin varsayılan beyaz/mavi teması yerine) */
+.swal2-popup.ci-swal{background:var(--panel);color:var(--txt);border:1px solid var(--line2);border-radius:14px;font:15px/1.6 'Segoe UI',system-ui,sans-serif}
+.ci-swal .swal2-title{color:var(--txt);font-size:18px}
+.ci-swal .swal2-html-container{color:var(--dim)}
+.ci-swal .swal2-input,.ci-swal .swal2-textarea{background:var(--card);border:1px solid var(--line2);color:var(--txt);box-shadow:none;font-size:14px}
+.ci-swal .swal2-input:focus,.ci-swal .swal2-textarea:focus{border-color:var(--amber-d);box-shadow:0 0 0 3px rgba(224,162,74,.08)}
+.ci-swal .swal2-validation-message{background:var(--card);color:var(--err)}
+.ci-swal-btn{background:var(--amber)!important;color:#1a1305!important;border:0!important;box-shadow:none!important;font-weight:700!important;border-radius:10px!important}
+.ci-swal-btn:hover{background:var(--amber-d)!important}
+.ci-swal-btn-cancel{background:var(--card)!important;color:var(--dim)!important;border:1px solid var(--line2)!important;box-shadow:none!important;border-radius:10px!important}
+.ci-swal-btn-danger{background:var(--err)!important}
+.ci-swal-toast{background:var(--panel)!important;color:var(--txt)!important;border:1px solid var(--line2);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.ci-swal-toast .swal2-title{font-size:14px;color:var(--txt)}
 </style>
+<script src="/static/vendor/sweetalert2.min.js"></script>
 </head>
 <body>
 <header>
@@ -318,6 +332,29 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
 let LANG=localStorage.getItem('ci-lang')||'tr';
 const T=(tr,en)=>LANG==='tr'?tr:en, $=id=>document.getElementById(id);
 let HISTORY={}, SELECTED=null;
+
+// ---- SweetAlert2 sarmalayıcıları — native alert/confirm/prompt yerine, panel temasıyla ----
+const SWAL_BASE={background:undefined,customClass:{popup:'ci-swal',confirmButton:'ci-swal-btn',cancelButton:'ci-swal-btn-cancel',input:'ci-swal-input'},buttonsStyling:false};
+function ciAlert(msg,icon){return Swal.fire({...SWAL_BASE,icon:icon||'info',html:msg,confirmButtonText:T('Tamam','OK')});}
+function ciError(msg){return Swal.fire({...SWAL_BASE,icon:'error',html:String(msg&&msg.message||msg),confirmButtonText:T('Tamam','OK')});}
+function ciSuccess(msg){return Swal.fire({...SWAL_BASE,icon:'success',html:msg,confirmButtonText:T('Tamam','OK')});}
+async function ciConfirm(msg,opts){
+  opts=opts||{};
+  const r=await Swal.fire({...SWAL_BASE,icon:opts.icon||'warning',html:msg,showCancelButton:true,
+    confirmButtonText:opts.confirmText||T('Evet','Yes'),cancelButtonText:T('Vazgeç','Cancel'),
+    customClass:{...SWAL_BASE.customClass,confirmButton:opts.danger?'ci-swal-btn ci-swal-btn-danger':'ci-swal-btn'}});
+  return r.isConfirmed;
+}
+async function ciPrompt(title,defaultValue){
+  const r=await Swal.fire({...SWAL_BASE,icon:'question',title:title,input:'text',inputValue:defaultValue||'',
+    showCancelButton:true,confirmButtonText:T('Tamam','OK'),cancelButtonText:T('Vazgeç','Cancel')});
+  return r.isConfirmed?r.value:null;
+}
+function ciToast(msg,icon){
+  return Swal.mixin({toast:true,position:'top-end',showConfirmButton:false,timer:3200,timerProgressBar:true,
+    customClass:{popup:'ci-swal-toast'},didOpen:(t)=>{t.addEventListener('mouseenter',Swal.stopTimer);t.addEventListener('mouseleave',Swal.resumeTimer);}
+  }).fire({icon:icon||'success',title:msg});
+}
 function applyLang(){
   $('lang-now').textContent=LANG.toUpperCase();$('lang-alt').textContent=LANG==='tr'?'EN':'TR';
   $('t-settings').textContent=T('Ayarlar','Settings');$('t-back').textContent=T('← Sohbete dön','← Back to chat');
@@ -428,34 +465,35 @@ function toggleMergeMode(){
 function toggleMergeSel(name,checked){checked?MERGE_SEL.add(name):MERGE_SEL.delete(name);}
 async function doMerge(){
   const target=$('merge-target').value.trim();
-  if(!target){alert(T('Hedef ad gerekli.','Target name required.'));return;}
-  if(MERGE_SEL.size<1){alert(T('En az bir koleksiyon seçin.','Select at least one collection.'));return;}
+  if(!target){await ciError(T('Hedef ad gerekli.','Target name required.'));return;}
+  if(MERGE_SEL.size<1){await ciError(T('En az bir koleksiyon seçin.','Select at least one collection.'));return;}
   const srcList=[...MERGE_SEL].join(', ');
   const msg=T(`"${srcList}" içindeki TÜM noktalar "${target}" hedefine kopyalanacak (kaynaklar silinmez, sadece kopyalanır). Devam edilsin mi?`,
               `ALL points from "${srcList}" will be copied into "${target}" (sources are not deleted, only copied). Continue?`);
-  if(!confirm(msg))return;
+  if(!(await ciConfirm(msg)))return;
   $('btn-domerge').disabled=true;
   try{
     const r=await(await fetch('/api/collection/merge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sources:[...MERGE_SEL],target})})).json();
-    if(r.error){alert(r.error);}
-    else{alert(T(`Birleştirildi: ${r.points_copied} nokta "${target}" içine kopyalandı.${r.owner_group_note||''} ${r.note||''}`,`Merged: ${r.points_copied} points copied into "${target}".${r.owner_group_note||''} ${r.note||''}`));toggleMergeMode();}
-  }catch(e){alert(e);}
+    if(r.error){await ciError(r.error);}
+    else{await ciSuccess(T(`Birleştirildi: ${r.points_copied} nokta "${target}" içine kopyalandı.${r.owner_group_note||''} ${r.note||''}`,`Merged: ${r.points_copied} points copied into "${target}".${r.owner_group_note||''} ${r.note||''}`));toggleMergeMode();}
+  }catch(e){await ciError(e);}
   $('btn-domerge').disabled=false;
 }
 async function renameCollection(){
   if(!SELECTED)return;
-  const newName=prompt(T('Yeni ad:','New name:'),SELECTED);
+  const newName=await ciPrompt(T('Yeni ad:','New name:'),SELECTED);
   if(!newName||newName===SELECTED)return;
   const ix=INDEXES[SELECTED]||{};
   const msg=T(`"${SELECTED}" (${ix.points||0} nokta) "${newName}" olarak yeniden adlandırılacak — tüm noktalar kopyalanıp eski koleksiyon silinecek. Büyük koleksiyonlarda zaman alabilir. Devam edilsin mi?`,
               `"${SELECTED}" (${ix.points||0} points) will be renamed to "${newName}" — all points are copied then the old collection is deleted. May take a while for large collections. Continue?`);
-  if(!confirm(msg))return;
+  if(!(await ciConfirm(msg)))return;
   try{
     const r=await(await fetch('/api/collection/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old_name:SELECTED,new_name:newName})})).json();
-    if(r.error){alert(r.error);return;}
+    if(r.error){await ciError(r.error);return;}
     SELECTED=newName;
     await loadIndexes(true);
-  }catch(e){alert(e);}
+    ciToast(T('Yeniden adlandırıldı.','Renamed.'));
+  }catch(e){await ciError(e);}
 }
 // ---- owner / group kayıt defterleri (Owner→Collection modeli) ----
 let OWNERS=[], GROUPS=[];
@@ -475,35 +513,37 @@ function renderRegistrySelect(sel,list,current){
 async function onOwnerSelect(){
   const sel=$('det-owner');
   if(sel.value!==NEW_OPT)return;
-  const name=prompt(T('Yeni sahip adı:','New owner name:'));
+  const name=await ciPrompt(T('Yeni sahip adı:','New owner name:'));
   if(!name||!name.trim()){sel.value='';return;}
-  const url=prompt(T('URL (opsiyonel, ör. https://github.com/kullanici):','URL (optional, e.g. https://github.com/user):'),'');
+  const url=await ciPrompt(T('URL (opsiyonel, ör. https://github.com/kullanici):','URL (optional, e.g. https://github.com/user):'),'');
   const r=await(await fetch('/api/owners',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name.trim(),url:(url||'').trim()||null})})).json();
-  if(r.error){alert(r.error);sel.value='';return;}
+  if(r.error){await ciError(r.error);sel.value='';return;}
   await loadOwners();renderRegistrySelect(sel,OWNERS,name.trim());
+  ciToast(T('Sahip eklendi.','Owner added.'));
 }
 async function onGroupSelect(){
   const sel=$('det-group');
   if(sel.value!==NEW_OPT)return;
-  const name=prompt(T('Yeni grup adı (ör. REST Library, Şifreleme):','New group name (e.g. REST Library, Encryption):'));
+  const name=await ciPrompt(T('Yeni grup adı (ör. REST Library, Şifreleme):','New group name (e.g. REST Library, Encryption):'));
   if(!name||!name.trim()){sel.value='';return;}
   const r=await(await fetch('/api/groups',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name.trim()})})).json();
-  if(r.error){alert(r.error);sel.value='';return;}
+  if(r.error){await ciError(r.error);sel.value='';return;}
   await loadGroups();renderRegistrySelect(sel,GROUPS,name.trim());
+  ciToast(T('Grup eklendi.','Group added.'));
 }
 async function deleteOwnerSel(){
   const name=$('det-owner').value;
   if(!name||name===NEW_OPT)return;
-  if(!confirm(T(`"${name}" sahip kaydı silinsin mi? (bu koleksiyonların owner alanını DEĞİŞTİRMEZ, yalnızca gelecekteki seçim listesinden düşer)`,`Delete owner "${name}"? (does not change any collection's owner field, only removes it from future selection)`)))return;
+  if(!(await ciConfirm(T(`"${name}" sahip kaydı silinsin mi? (bu koleksiyonların owner alanını DEĞİŞTİRMEZ, yalnızca gelecekteki seçim listesinden düşer)`,`Delete owner "${name}"? (does not change any collection's owner field, only removes it from future selection)`),{danger:true})))return;
   await fetch('/api/owners?name='+encodeURIComponent(name),{method:'DELETE'});
   await loadOwners();renderRegistrySelect($('det-owner'),OWNERS,'');
 }
 async function deleteGroupSel(){
   const name=$('det-group').value;
   if(!name||name===NEW_OPT)return;
-  if(!confirm(T(`"${name}" grup kaydı silinsin mi? (koleksiyonların group alanını DEĞİŞTİRMEZ, yalnızca gelecekteki seçim listesinden düşer)`,`Delete group "${name}"? (does not change any collection's group field, only removes it from future selection)`)))return;
+  if(!(await ciConfirm(T(`"${name}" grup kaydı silinsin mi? (koleksiyonların group alanını DEĞİŞTİRMEZ, yalnızca gelecekteki seçim listesinden düşer)`,`Delete group "${name}"? (does not change any collection's group field, only removes it from future selection)`),{danger:true})))return;
   await fetch('/api/groups?name='+encodeURIComponent(name),{method:'DELETE'});
   await loadGroups();renderRegistrySelect($('det-group'),GROUPS,'');
 }
@@ -531,15 +571,16 @@ async function deleteCollection(){
   const ix=INDEXES[SELECTED]||{};
   const msg=T(`"${SELECTED}" indeksini SİLMEK istediğinize emin misiniz? ${ix.points||0} nokta, geçmişi ve tüm ayarlarıyla birlikte KALICI olarak silinecek. Bu geri alınamaz.`,
               `Are you sure you want to DELETE "${SELECTED}"? ${ix.points||0} points, its history, and all settings will be PERMANENTLY removed. This cannot be undone.`);
-  if(!confirm(msg))return;
+  if(!(await ciConfirm(msg,{danger:true,confirmText:T('Evet, sil','Yes, delete')})))return;
   $('btn-detdelete').disabled=true;
   try{
     const r=await(await fetch('/api/collection?collection='+encodeURIComponent(SELECTED),{method:'DELETE'})).json();
-    if(r.error){alert(r.error);$('btn-detdelete').disabled=false;return;}
+    if(r.error){await ciError(r.error);$('btn-detdelete').disabled=false;return;}
     SELECTED=null;
     $('detailbox').style.display='none';
     await loadIndexes();
-  }catch(e){alert(e);}
+    ciToast(T('Koleksiyon silindi.','Collection deleted.'));
+  }catch(e){await ciError(e);}
   $('btn-detdelete').disabled=false;
 }
 async function exportCollection(){
@@ -549,14 +590,14 @@ async function exportCollection(){
   btn.disabled=true;btn.innerHTML='<span class="spin"></span> '+T('Hazırlanıyor…','Preparing…');
   try{
     const r=await fetch('/api/collection/export?collection='+encodeURIComponent(SELECTED));
-    if(!r.ok){const j=await r.json().catch(()=>({}));alert(j.error||T('Dışa aktarma başarısız.','Export failed.'));return;}
+    if(!r.ok){const j=await r.json().catch(()=>({}));await ciError(j.error||T('Dışa aktarma başarısız.','Export failed.'));return;}
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
     a.href=url;a.download=SELECTED+'.jsonl.gz';
     document.body.appendChild(a);a.click();a.remove();
     URL.revokeObjectURL(url);
-  }catch(e){alert(e);}
+  }catch(e){await ciError(e);}
   btn.disabled=false;btn.innerHTML=orig;
 }
 async function importCollection(file){
@@ -570,15 +611,15 @@ async function importCollection(file){
     let j=await r.json();
     if(j.error && r.status===409){
       $('btn-import').disabled=false;$('btn-import').innerHTML=orig;
-      if(confirm(j.error+'\n\n'+T('Üzerine yazılsın mı?','Overwrite it?'))){
+      if(await ciConfirm(j.error+'<br><br>'+T('Üzerine yazılsın mı?','Overwrite it?'),{danger:true})){
         $('btn-import').disabled=true;$('btn-import').innerHTML='<span class="spin"></span> '+T('Yükleniyor, bekleyiniz…','Uploading, please wait…');
         r=await fetch('/api/collection/import?overwrite=true',{method:'POST',body:fd});
         j=await r.json();
       }else{$('import-file').value='';return;}
     }
-    if(j.error){alert(j.error);}
-    else{alert(T(`İçe aktarıldı: "${j.collection}" — ${j.points} nokta.`,`Imported: "${j.collection}" — ${j.points} points.`));await loadIndexes();}
-  }catch(e){alert(e);}
+    if(j.error){await ciError(j.error);}
+    else{await ciSuccess(T(`İçe aktarıldı: "${j.collection}" — ${j.points} nokta.`,`Imported: "${j.collection}" — ${j.points} points.`));await loadIndexes();}
+  }catch(e){await ciError(e);}
   $('btn-import').disabled=false;$('btn-import').innerHTML=orig;
   $('import-file').value='';
 }
@@ -586,10 +627,11 @@ async function importCollection(file){
 let gitUpdateTimer=null;
 async function startGitUpdateAll(){
   const gitColls=Object.values(INDEXES).filter(ix=>ix.kaynak==='git');
-  if(!gitColls.length){alert(T('kaynak="git" olarak işaretli koleksiyon yok — Ayrıntılar\'dan bir koleksiyona kaynak atayın.','No collections marked kaynak="git" — set it from a collection\'s Details.'));return;}
-  if(!confirm(T(`${gitColls.length} git koleksiyonu güncellenecek (git pull + reindex). Yerel değişikliği olanlar atlanır. Devam?`,`${gitColls.length} git collections will be updated (git pull + reindex). Ones with local changes are skipped. Continue?`)))return;
+  if(!gitColls.length){await ciError(T('kaynak="git" olarak işaretli koleksiyon yok — Ayrıntılar\'dan bir koleksiyona kaynak atayın.','No collections marked kaynak="git" — set it from a collection\'s Details.'));return;}
+  if(!(await ciConfirm(T(`${gitColls.length} git koleksiyonu güncellenecek (git pull + reindex). Yerel değişikliği olanlar atlanır. Devam?`,`${gitColls.length} git collections will be updated (git pull + reindex). Ones with local changes are skipped. Continue?`))))return;
   const r=await(await fetch('/api/git-update-all',{method:'POST'})).json();
-  if(r.error){alert(r.error);return;}
+  if(r.error){await ciError(r.error);return;}
+  ciToast(T('Güncelleme başlatıldı.','Update started.'));
   if(gitUpdateTimer)clearInterval(gitUpdateTimer);
   gitUpdateTimer=setInterval(loadGitUpdateStatus,2000);
   loadGitUpdateStatus();
@@ -619,7 +661,7 @@ async function loadGitUpdateStatus(){
 // yalnızca tetikleme arayüzü (tekil/toplu + klasör seçici scope) eklendi ----
 async function pickManualScope(){
   const ix=INDEXES[SELECTED]||{};
-  if(!ix.path){alert(T('Bu koleksiyon için kayıtlı bir kaynak klasör yok.','No saved source folder for this collection.'));return;}
+  if(!ix.path){await ciError(T('Bu koleksiyon için kayıtlı bir kaynak klasör yok.','No saved source folder for this collection.'));return;}
   const btn=$('btn-manualpick');const orig=btn.innerHTML;btn.disabled=true;btn.textContent=T('Seçiliyor…','Choosing…');
   try{
     const r=await(await fetch('/api/pick-folder')).json();
@@ -628,11 +670,11 @@ async function pickManualScope(){
     const base=norm(ix.path), picked=norm(r.path);
     if(picked===base){$('det-manual-scope').value='';return;}
     if(!picked.startsWith(base+'/')){
-      alert(T('Seçilen klasör bu koleksiyonun kaynak klasörünün İÇİNDE olmalı.\n\nKaynak: '+ix.path,'The selected folder must be INSIDE this collection\'s source folder.\n\nSource: '+ix.path));
+      await ciError(T('Seçilen klasör bu koleksiyonun kaynak klasörünün İÇİNDE olmalı.<br><br>Kaynak: '+ix.path,'The selected folder must be INSIDE this collection\'s source folder.<br><br>Source: '+ix.path));
       return;
     }
     $('det-manual-scope').value=r.path.replace(/\\/g,'/').slice(base.length+1).replace(/^\/+/,'')+'/';
-  }catch(e){alert(e);}
+  }catch(e){await ciError(e);}
   btn.disabled=false;btn.innerHTML=orig;
 }
 function manualUrl(collection){return '/manual/'+encodeURIComponent(collection);}
@@ -643,10 +685,11 @@ async function buildManual(){
   try{
     const r=await(await fetch('/api/manual/build',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({collection:SELECTED,scope:$('det-manual-scope').value})})).json();
-    if(r.error){alert(r.error);btn.disabled=false;return;}
+    if(r.error){await ciError(r.error);btn.disabled=false;return;}
+    ciToast(T('Manual üretimi başlatıldı.','Manual generation started.'));
     if(manualTimer)clearInterval(manualTimer);
     manualTimer=setInterval(loadManualStatus,2000);loadManualStatus();
-  }catch(e){alert(e);btn.disabled=false;}
+  }catch(e){await ciError(e);btn.disabled=false;}
 }
 let manualTimer=null;
 async function loadManualStatus(){
@@ -659,9 +702,11 @@ async function loadManualStatus(){
     }else if(s.phase==='done'){
       clearInterval(manualTimer);manualTimer=null;$('btn-manualbuild').disabled=false;
       box.innerHTML=`✅ ${T('manual hazır','manual ready')} — <a href="${manualUrl(SELECTED)}" target="_blank">${T('görüntüle','view')} ↗</a>`;
+      ciToast(T('Manual hazır.','Manual ready.'));
     }else if(s.phase==='error'){
       clearInterval(manualTimer);manualTimer=null;$('btn-manualbuild').disabled=false;
       box.innerHTML=`❌ ${esc(s.error||'')}`;
+      ciToast(T('Manual üretimi başarısız.','Manual generation failed.'),'error');
     }
   }catch(e){}
 }
@@ -670,20 +715,21 @@ async function exportManual(fmt){
   const btn=$('btn-manual'+fmt);const orig=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   try{
     const r=await fetch('/api/manual/export?collection='+encodeURIComponent(SELECTED)+'&format='+fmt);
-    if(!r.ok){const j=await r.json().catch(()=>({}));alert(j.error||T('Dışa aktarma başarısız — önce manual üretilmiş olmalı.','Export failed — the manual must be built first.'));return;}
+    if(!r.ok){const j=await r.json().catch(()=>({}));await ciError(j.error||T('Dışa aktarma başarısız — önce manual üretilmiş olmalı.','Export failed — the manual must be built first.'));return;}
     const blob=await r.blob();const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download=SELECTED+'-manual.'+fmt;
     document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-  }catch(e){alert(e);}
+  }catch(e){await ciError(e);}
   btn.disabled=false;btn.innerHTML=orig;
 }
 let manualAllTimer=null;
 async function startManualBuildAll(){
   const n=Object.keys(INDEXES).length;
-  if(!n){alert(T('Koleksiyon yok.','No collections.'));return;}
-  if(!confirm(T(`${n} koleksiyonun TAMAMI için manual üretilecek (kapsam daraltması yok). Büyük koleksiyonlarda uzun sürebilir. Devam?`,`Full manuals will be built for all ${n} collections (no scope narrowing). May take a long time for large collections. Continue?`)))return;
+  if(!n){await ciError(T('Koleksiyon yok.','No collections.'));return;}
+  if(!(await ciConfirm(T(`${n} koleksiyonun TAMAMI için manual üretilecek (kapsam daraltması yok). Büyük koleksiyonlarda uzun sürebilir. Devam?`,`Full manuals will be built for all ${n} collections (no scope narrowing). May take a long time for large collections. Continue?`))))return;
   const r=await(await fetch('/api/manual/build-all',{method:'POST'})).json();
-  if(r.error){alert(r.error);return;}
+  if(r.error){await ciError(r.error);return;}
+  ciToast(T('Tümü için manual üretimi başlatıldı.','Manual generation started for all.'));
   if(manualAllTimer)clearInterval(manualAllTimer);
   manualAllTimer=setInterval(loadManualBuildAllStatus,3000);loadManualBuildAllStatus();
 }
@@ -700,17 +746,21 @@ async function loadManualBuildAllStatus(){
     }else if(s.phase==='done'){
       clearInterval(manualAllTimer);manualAllTimer=null;
       box.innerHTML=`✅ ${T('tamamlandı','done')} (${s.total||0} ${T('koleksiyon','collections')})<br>${rows}`;
+      ciToast(T('Tüm manuallar üretildi.','All manuals generated.'));
     }else if(s.phase==='error'){
       clearInterval(manualAllTimer);manualAllTimer=null;
       box.innerHTML=`❌ ${esc(s.error||'')}<br>${rows}`;
+      ciToast(T('Toplu manual üretimi başarısız.','Bulk manual generation failed.'),'error');
     }
   }catch(e){}
 }
 async function refreshVector(name,type){
   const body={collection:name,vectors:[type],device:$('idx-dev').value};
   const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
-  if(r.error){alert(r.error);return;}
+  if(r.error){await ciError(r.error);return;}
   SELECTED=name;
+  ciToast(T('İndeksleme başlatıldı.','Indexing started.'));
+  INDEX_JOB_ACTIVE=true;
   $('jobbar').classList.add('show');if(jobTimer)clearInterval(jobTimer);jobTimer=setInterval(poll,1500);poll();
 }
 async function refreshHistory(){try{
@@ -864,10 +914,11 @@ async function startDupScan(){
   try{
     const r=await(await fetch('/api/duplicates/start',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({collection,threshold:parseFloat($('dup-thr').value)||0.93})})).json();
-    if(r.error){alert(r.error);$('btn-dupstart').disabled=false;return;}
+    if(r.error){await ciError(r.error);$('btn-dupstart').disabled=false;return;}
+    ciToast(T('Tarama başlatıldı.','Scan started.'));
     if(dupTimer)clearInterval(dupTimer);
     dupTimer=setInterval(pollDup,1500);pollDup();
-  }catch(e){alert(e);$('btn-dupstart').disabled=false;}
+  }catch(e){await ciError(e);$('btn-dupstart').disabled=false;}
 }
 async function pollDup(){
   try{
@@ -929,33 +980,35 @@ async function loadApiKeys(){
 }
 async function createApiKey(){
   const name=$('newkey-name').value.trim();
-  if(!name){alert(T('Bir ad girin.','Enter a name.'));return;}
+  if(!name){await ciError(T('Bir ad girin.','Enter a name.'));return;}
   const role=$('newkey-role').value;
   $('btn-newkey').disabled=true;
   try{
     const r=await(await fetch('/api/apikeys',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name,role})})).json();
-    if(r.error){alert(r.error);return;}
+    if(r.error){await ciError(r.error);return;}
     $('newkey-name').value='';
     $('newkey-reveal').style.display='block';
     $('newkey-reveal').innerHTML=`<div style="margin-bottom:6px">${T('Yeni anahtar (yalnız ŞİMDİ gösteriliyor, bir daha görüntülenemez):','New key (shown ONLY now, cannot be retrieved again):')}</div>
       <div class="mono" style="font-size:13px;word-break:break-all;color:var(--amber)">${esc(r.key.key)}</div>`;
     await loadApiKeys();
-  }catch(e){alert(e);}finally{$('btn-newkey').disabled=false;}
+    ciToast(T('Anahtar üretildi.','Key generated.'));
+  }catch(e){await ciError(e);}finally{$('btn-newkey').disabled=false;}
 }
 async function revokeApiKey(id,name){
-  if(!confirm(T(`"${name}" anahtarı iptal edilsin mi? Bu anahtarı kullanan istemciler artık erişemez.`,`Revoke key "${name}"? Clients using it will lose access.`)))return;
+  if(!(await ciConfirm(T(`"${name}" anahtarı iptal edilsin mi? Bu anahtarı kullanan istemciler artık erişemez.`,`Revoke key "${name}"? Clients using it will lose access.`),{danger:true})))return;
   await fetch('/api/apikeys?id='+encodeURIComponent(id),{method:'DELETE'});
   await loadApiKeys();
+  ciToast(T('Anahtar iptal edildi.','Key revoked.'));
 }
 async function runBackup(){
   $('btn-backup').disabled=true;
   try{
     const r=await(await fetch('/api/backup/run?full=true',{method:'POST'})).json();
-    if(r.error)alert(r.error);
+    if(r.error){await ciError(r.error);}else{ciToast(T('Yedekleme başlatıldı.','Backup started.'));}
     setTimeout(loadBackups,800);
     const t=setInterval(async()=>{const d=await(await fetch('/api/backup/status')).json();loadBackups();if((d.job||{}).phase!=='running'&&(d.job||{}).phase!=='starting'){clearInterval(t);$('btn-backup').disabled=false;}},2500);
-  }catch(e){alert(e);$('btn-backup').disabled=false;}
+  }catch(e){await ciError(e);$('btn-backup').disabled=false;}
 }
 health();loadModels();loadOwners();loadGroups();loadIndexes().then(fillDupColls);loadAnalytics();loadBackups();loadGitUpdateStatus();loadManualBuildAllStatus();loadApiKeys();
 setInterval(health,10000);setInterval(()=>{loadIndexes(false).then(fillDupColls);},10000);
@@ -966,17 +1019,20 @@ async function startIndex(vectors){
   const path=$('idx-path').value.trim();
   const collection=$('idx-coll').value.trim()||'unidac';
   if(!path && !(HISTORY[collection]||[]).length){
-    alert(T('Bu indeks için kayıtlı bir kaynak klasör yok — önce klasör seçin.','No saved source folder for this index yet — choose a folder first.'));
+    await ciError(T('Bu indeks için kayıtlı bir kaynak klasör yok — önce klasör seçin.','No saved source folder for this index yet — choose a folder first.'));
     return;
   }
   const body={path,collection,vectors,device:$('idx-dev').value,patterns:$('idx-pattern').value.trim()||'*.pas'};
   const r=await(await fetch('/api/index/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
-  if(r.error){alert(r.error);return;}
+  if(r.error){await ciError(r.error);return;}
   SELECTED=collection;
+  ciToast(T('İndeksleme başlatıldı.','Indexing started.'));
+  INDEX_JOB_ACTIVE=true;
   refreshHistory();
   loadIndexes();
   $('jobbar').classList.add('show');if(jobTimer)clearInterval(jobTimer);jobTimer=setInterval(poll,1500);poll();
 }
+let INDEX_JOB_ACTIVE=false;   // yalnız BURADAN başlatılan işlerde tamamlanma toast'ı göster — sayfa her açılışta poll() eski bir 'done' durumunu tekrar görüp toast'ı SPAM etmesin
 async function poll(){
   const s=await(await fetch('/api/index/status')).json();
   if(s.phase==='idle'||!s.phase)return;
@@ -990,6 +1046,10 @@ async function poll(){
   $('jobtitle').innerHTML=s.phase==='done'?'✅ '+T('Tamamlandı','Done')+` (${s.sec} sn)`:s.phase==='error'?'❌ '+esc(s.error):'<span class="spin"></span>'+T('İndeksleniyor','Indexing')+` — ${esc(s.collection||'')}`;
   if(s.phase==='done'||s.phase==='error'){
     clearInterval(jobTimer);jobTimer=null;health();loadIndexes();
+    if(INDEX_JOB_ACTIVE){
+      INDEX_JOB_ACTIVE=false;
+      ciToast(s.phase==='done'?T('İndeksleme tamamlandı.','Indexing complete.'):T('İndeksleme başarısız.','Indexing failed.'),s.phase==='done'?'success':'error');
+    }
     if(s.phase==='done'){refreshHistory().then(()=>{if(SELECTED)renderDetail(SELECTED);});}
   }
 }
