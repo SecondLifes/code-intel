@@ -461,7 +461,15 @@ function srcCard(h,i){return `
       <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
     </div>
   </div>`;}
-function tog(id){$('s'+id).classList.toggle('open');}
+// Sıra 5 (kullanıcı, canlı doğrulamada bulunan gerçek hata): birçok kod bloğu
+// "genişlet"e tıklanınca açılmıyordu. Kök neden: classList.toggle sonrası
+// tarayıcı bazı elemanlarda max-height geçişini (transition) hiç tetiklemiyor
+// — computed style YENİ değeri döndürse bile render'a hiç YANSIMIYORDU (uzun
+// içerikli kartlarda tekrarlanabilir şekilde doğrulandı: offsetHeight okuması
+// ZORLA senkron reflow yaptırınca sorun kayboluyor). void el.offsetHeight
+// bu yüzden eklendi — tarayıcının layout/paint'i hemen taze bilgiyle
+// güncellemesini garantiler.
+function tog(id){const el=$('s'+id);el.classList.toggle('open');void el.offsetHeight;}
 
 let LAST_Q='', LAST_OFFSET=0, ALL_HITS=[];
 const PAGE_SIZE=8;
