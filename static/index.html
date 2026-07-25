@@ -657,7 +657,7 @@ async function runAskStream(q, research){
       }else if(ev==='error'){$('ans').innerHTML='⚠️ '+esc(d.error||JSON.stringify(d));}
       else if(ev==='step'){if(!text)$('ans').innerHTML=`<span class="spin"></span>${esc(d.step||'')}…`;}
       else if(ev==='done'){sec=d.sec??'?';truncated=!!d.truncated;}
-      else if(d.t){text+=d.t;$('ans').innerHTML=citeFmt(text)+'<span class="spin"></span>';}
+      else if(d.t){text+=d.t;$('ans').innerHTML=citeFmt(text)+'<span class="spin"></span>';updateAnsToggle();}
     }
   }
   $('ans').innerHTML=text?citeFmt(text):$('ans').innerHTML.replace('<span class="spin"></span>','');
@@ -673,22 +673,35 @@ async function runAskStream(q, research){
 // Sıra 7 (kullanıcı): id="ans" (derin/normal araştırma cevabı) büyüdükçe
 // ekrana sığmıyordu — kod bloklarındaki (.codewrap) AYNI aç/kapa deseni
 // (max-height + gradient fade), yalnız uzunsa düğme gösterilir.
+// 2. tur (kullanıcı, ekran görüntüsü): düğme yazım BİTENE kadar hiç
+// gözükmüyordu — artık her token geldiğinde de çağrılıyor (bkz. yukarıda
+// d.t dalı). Bunun için noclamp KALICI olmamalı: kısayken eklenip metin
+// büyüyünce geri kaldırılabilmeli, yoksa erken kısa halde takılıp sonunda
+// uzun cevapta düğme hiç çıkmaz. "open" durumunda da düğme gizlenmemeli —
+// kullanıcı yazım sırasında genişletirse "Daralt" ile geri kapatabilmeli.
 function updateAnsToggle(){
   const el=$('ans'),btn=$('anstoggle');
   if(!el||!btn)return;
-  if(el.classList.contains('open')||el.scrollHeight<=360){
-    btn.style.display='none';
-    if(el.scrollHeight<=360)el.classList.add('noclamp');
-  }else{
+  const long=el.scrollHeight>360;
+  if(el.classList.contains('open')){
+    btn.style.display=long?'block':'none';
+    btn.textContent=T('Daralt ▴','Collapse ▴');
+    return;
+  }
+  if(long){
+    el.classList.remove('noclamp');
     btn.style.display='block';
     btn.textContent=T('Devamını Göster ▾','Show more ▾');
+  }else{
+    el.classList.add('noclamp');
+    btn.style.display='none';
   }
 }
 function togAns(){
-  const el=$('ans'),btn=$('anstoggle');
+  const el=$('ans');
   el.classList.toggle('open');
   void el.offsetHeight;   // Sıra 5 bulgusu: reflow zorlamadan transition bazen takılı kalıyor
-  btn.textContent=el.classList.contains('open')?T('Daralt ▴','Collapse ▴'):T('Devamını Göster ▾','Show more ▾');
+  updateAnsToggle();
 }
 function err(m){return `<div class="answer" style="border-left-color:#c65">⚠️ ${esc(m)}</div>`;}
 function none(){return `<div class="hero"><div class="mark">∅</div><p>${T('Sonuç bulunamadı — başka bir ifadeyle dene.','No results — try rephrasing.')}</p></div>`;}
