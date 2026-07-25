@@ -345,7 +345,7 @@ MANUAL_CSS = """
 :root{
   --bg:#14110c;--panel:#1b1710;--card:#211c14;--code:#0f0d09;
   --line:#332b1f;--line2:#463b2a;--txt:#f1ebdd;--dim:#a99a83;--faint:#6f6555;
-  --amber:#e0a24a;--amber-d:#c58a37;--teal:#49b39c;--teal-d:#2f7e6c;
+  --amber:#e0a24a;--amber-d:#c58a37;--teal:#49b39c;--teal-d:#2f7e6c;--err:#e0704a;
   --serif:Georgia,'Iowan Old Style','Palatino Linotype',serif;
   --mono:'Cascadia Code','JetBrains Mono',Consolas,monospace;
 }
@@ -383,7 +383,7 @@ main pre code{background:none;border:0;padding:0}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .stat b{display:block;font-size:22px;color:var(--amber);font-family:var(--serif)}
 .stat span{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
-.sec-actions{display:inline-flex;gap:6px;margin-left:10px;vertical-align:middle}
+.sec-actions{display:inline-flex;flex-wrap:wrap;gap:6px;margin-left:10px;vertical-align:middle}
 .sec-actions button{font-size:11px;padding:3px 9px;background:var(--card);border:1px solid var(--line2);color:var(--dim);border-radius:6px;cursor:pointer;font-family:inherit}
 .sec-actions button:hover{border-color:var(--amber-d);color:var(--amber)}
 .sec-actions button:disabled{opacity:.5;cursor:wait}
@@ -393,9 +393,19 @@ main pre code{background:none;border:0;padding:0}
 .langsw{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .langsw a{font-size:11.5px;padding:3px 9px;border-radius:99px;border:1px solid var(--line2);color:var(--dim);text-decoration:none}
 .langsw a:hover{border-color:var(--amber-d);color:var(--amber)}
-.langsw a.active{background:var(--amber);border-color:var(--amber);color:#1a1305;font-weight:700}
+.langsw a.cur{background:var(--amber);border-color:var(--amber);color:#1a1305!important;font-weight:700}
 .langsw a.addlang{color:var(--teal);border-style:dashed}
 .langsw a.addlang:hover{border-color:var(--teal-d);color:var(--teal-d)}
+.swal2-popup.ci-swal{background:var(--panel);color:var(--txt);border:1px solid var(--line2);border-radius:14px;font:15px/1.6 'Segoe UI',system-ui,sans-serif}
+.ci-swal .swal2-title{color:var(--txt);font-size:18px}
+.ci-swal .swal2-html-container{color:var(--dim)}
+.ci-swal .swal2-input{background:var(--card);border:1px solid var(--line2);color:var(--txt);box-shadow:none;font-size:14px}
+.ci-swal .swal2-input:focus{border-color:var(--amber-d);box-shadow:0 0 0 3px rgba(224,162,74,.08)}
+.ci-swal-btn{background:var(--amber)!important;color:#1a1305!important;border:0!important;box-shadow:none!important;font-weight:700!important;border-radius:10px!important}
+.ci-swal-btn:hover{background:var(--amber-d)!important}
+.ci-swal-btn-cancel{background:var(--card)!important;color:var(--dim)!important;border:1px solid var(--line2)!important;box-shadow:none!important;border-radius:10px!important}
+.ci-swal-toast{background:var(--panel)!important;color:var(--txt)!important;border:1px solid var(--line2);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.ci-swal-toast .swal2-title{font-size:14px;color:var(--txt)}
 """
 
 
@@ -422,12 +432,21 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
 
     base = f"/manual/{model['collection']}/"
     index_url = f"/manual/{model['collection']}{qs}"
-    langs_avail = list_manual_languages(model["collection"]) or [
-        {"code": base_lang, "label": LANG_LABELS.get(base_lang, base_lang.title()), "base": True}]
+    # list_manual_languages(collection) DİSKTEN okur — burada BİLEREK kullanılmıyor:
+    # bu fonksiyon her zaman `model` PARAMETRESİYLE tutarlı olmalı (model_for_lang de
+    # aynı sözleşmeyi izliyor), aksi halde diskteki hal ile bellekteki `model` farklıysa
+    # (ör. henüz kaydedilmemiş bir model, testler) dil rozeti YANLIŞ/eksik listelenirdi.
+    langs_avail = [{"code": base_lang, "label": LANG_LABELS.get(base_lang, base_lang.title()), "base": True}] + [
+        {"code": code, "label": t.get("label") or LANG_LABELS.get(code, code.title()), "base": False}
+        for code, t in (model.get("translations") or {}).items()]
+    # class="cur" (NOT "active"): "active" çakışıyordu — nav a.active{color:var(--amber)
+    # !important} kuralı (chapter/section vurgusu için) genel "nav a.active" seçicisiyle
+    # dil rozetini de eşliyordu, !important yüzünden .langsw a.active'i eziyor, amber
+    # ÜSTÜNE amber (görünmez metin) çıkıyordu — canlı doğrulamada yakalanan gerçek hata.
     lang_switcher = '<div class="langsw">' + "".join(
         f'<a href="{"/manual/" + model["collection"] + ("/" + page + ".html" if page != "index" else "")}'
         f'{"?lang=" + l["code"] if l["code"] != base_lang else ""}" '
-        f'class="{"active" if l["code"] == active_lang else ""}">{_esc(l["label"])}</a>'
+        f'class="{"cur" if l["code"] == active_lang else ""}">{_esc(l["label"])}</a>'
         for l in langs_avail) + (
         '<a href="#" class="addlang" onclick="manualAddLang(event)" title="Yapay zeka ile yeni bir dile çevir">+ Dil ekle</a>'
     ) + '</div><div id="langjob" class="note" style="display:none"></div>'
@@ -471,9 +490,11 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
             actions = ""
             if sec.get("chunk_id") is not None:
                 cid = sec["chunk_id"]
+                coll_esc = _esc(model["collection"])
                 actions = (f'<span class="sec-actions">'
-                          f'<button type="button" onclick="manualOpen(\'{_esc(model["collection"])}\',{cid},this)" title="Kayıtlı varsayılan uygulamada aç">📂 Aç</button>'
-                          f'<button type="button" onclick="manualShowInBrowser(\'{_esc(model["collection"])}\',{cid},\'{sec["slug"]}\',this)">🖥️ Tarayıcıda Göster</button>'
+                          f'<button type="button" onclick="manualOpen(\'{coll_esc}\',{cid},this)" title="Kayıtlı varsayılan uygulamada aç">📂 Aç</button>'
+                          f'<button type="button" onclick="manualOpenFolder(\'{coll_esc}\',{cid},this)" title="Dosya gezgininde, seçili olarak göster">🗂️ Klasörde Aç</button>'
+                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{sec["slug"]}\',this)">🖥️ Tarayıcıda Göster</button>'
                           f'</span>')
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
                          f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
@@ -482,16 +503,28 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
 
     html_lang = active_lang if active_lang in ("tr", "en") else "en"
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
-<title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style></head>
+<title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style>
+<script src="/static/vendor/sweetalert2.min.js"></script></head>
 <body><nav>{nav}</nav><main>{body}</main>
 <script>
 var MANUAL_COLLECTION={json.dumps(model["collection"])}, MANUAL_PAGE={json.dumps(page)};
+var SWAL_BASE={{background:undefined,customClass:{{popup:'ci-swal',confirmButton:'ci-swal-btn',cancelButton:'ci-swal-btn-cancel'}},buttonsStyling:false}};
+function ciError(msg){{return Swal.fire(Object.assign({{}},SWAL_BASE,{{icon:'error',html:String(msg&&msg.message||msg),confirmButtonText:'Tamam'}}));}}
+function ciPrompt(title,defaultValue){{
+  return Swal.fire(Object.assign({{}},SWAL_BASE,{{icon:'question',title:title,input:'text',inputValue:defaultValue||'',
+    showCancelButton:true,confirmButtonText:'Tamam',cancelButtonText:'Vazgeç'}})).then(function(r){{return r.isConfirmed?r.value:null;}});
+}}
+function ciToast(msg,icon){{
+  return Swal.mixin({{toast:true,position:'top-end',showConfirmButton:false,timer:3200,timerProgressBar:true,
+    customClass:{{popup:'ci-swal-toast'}},didOpen:function(t){{t.addEventListener('mouseenter',Swal.stopTimer);t.addEventListener('mouseleave',Swal.resumeTimer);}}
+  }}).fire({{icon:icon||'success',title:msg}});
+}}
 function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
   var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
   ch.style.display=(!q||any)?'':'none';}});}}
 async function manualAddLang(ev){{
   ev.preventDefault();
-  var name=prompt('Hangi dile çevrilsin? (ör. Türkçe, Deutsch, Français)');
+  var name=await ciPrompt('Hangi dile çevrilsin? (ör. Türkçe, Deutsch, Français)');
   if(!name||!name.trim())return;
   var code=name.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-');
   var box=document.getElementById('langjob');
@@ -499,39 +532,48 @@ async function manualAddLang(ev){{
   try{{
     var r=await(await fetch('/api/manual/translate',{{method:'POST',headers:{{'Content-Type':'application/json'}},
       body:JSON.stringify({{collection:MANUAL_COLLECTION,lang:code,label:name.trim()}})}})).json();
-    if(r.error){{box.textContent='❌ '+r.error;return;}}
+    if(r.error){{box.textContent='❌ '+r.error;ciError(r.error);return;}}
     var t=setInterval(async function(){{
       var s=await(await fetch('/api/manual/translate-status')).json();
       if(!s.phase||s.phase==='idle')return;
       if(s.phase==='translating')box.textContent='Çevriliyor… '+(s.done||0)+'/'+(s.total||0);
-      else if(s.phase==='done'){{clearInterval(t);box.textContent='✅ Hazır, yenileniyor…';
+      else if(s.phase==='done'){{clearInterval(t);box.textContent='✅ Hazır, yenileniyor…';ciToast('Çeviri hazır');
         location.href='/manual/'+MANUAL_COLLECTION+(MANUAL_PAGE!=='index'?'/'+MANUAL_PAGE+'.html':'')+'?lang='+code;}}
-      else if(s.phase==='error'){{clearInterval(t);box.textContent='❌ '+(s.error||'');}}
+      else if(s.phase==='error'){{clearInterval(t);box.textContent='❌ '+(s.error||'');ciError(s.error||'Çeviri hatası');}}
     }},2000);
-  }}catch(e){{box.textContent='❌ '+e;}}
+  }}catch(e){{box.textContent='❌ '+e;ciError(e);}}
 }}
 async function manualOpen(collection,id,btn){{
   var old=btn.textContent;btn.disabled=true;btn.textContent='…';
   try{{
     var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'file'}})}})).json();
-    if(r.error)alert(r.error);
-  }}catch(e){{alert(e);}}
+    if(r.error)ciError(r.error);
+  }}catch(e){{ciError(e);}}
+  btn.disabled=false;btn.textContent=old;
+}}
+async function manualOpenFolder(collection,id,btn){{
+  var old=btn.textContent;btn.disabled=true;btn.textContent='…';
+  try{{
+    var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'folder'}})}})).json();
+    if(r.error)ciError(r.error);
+  }}catch(e){{ciError(e);}}
   btn.disabled=false;btn.textContent=old;
 }}
 async function manualShowInBrowser(collection,id,secSlug,btn){{
   var box=document.getElementById('code-'+secSlug);
   if(box.classList.contains('show')){{box.classList.remove('show');return;}}
   if(!box.dataset.loaded){{
-    btn.disabled=true;
+    btn.disabled=true;var oldTxt=btn.textContent;btn.textContent='⏳ Yükleniyor…';
     try{{
       var r=await(await fetch('/api/reveal',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{collection:collection,id:id,mode:'browser'}})}})).json();
       var esc=function(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}};
-      box.innerHTML=r.error?('<p style="color:#e0704a">'+esc(r.error)+'</p>'):('<pre><code>'+esc(r.content)+'</code></pre>');
+      box.innerHTML=r.error?('<p style="color:var(--err)">'+esc(r.error)+'</p>'):('<pre><code>'+esc(r.content)+'</code></pre>');
       box.dataset.loaded='1';
-    }}catch(e){{box.innerHTML='<p style="color:#e0704a">'+e+'</p>';}}
-    btn.disabled=false;
+    }}catch(e){{box.innerHTML='<p style="color:var(--err)">'+e+'</p>';}}
+    btn.disabled=false;btn.textContent=oldTxt;
   }}
   box.classList.add('show');
+  box.scrollIntoView({{block:'nearest',behavior:'smooth'}});
 }}
 </script></body></html>"""
 

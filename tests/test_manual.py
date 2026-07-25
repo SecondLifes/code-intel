@@ -77,6 +77,18 @@ def test_md_to_html_fragment_basic():
     assert "<ul><li>öğe1</li>" in html or ("<li>öğe1</li>" in html and "<ul>" in html)
 
 
+def test_lang_switcher_active_class_does_not_collide_with_nav_active():
+    """Canlı doğrulamada bulunan gerçek hata: dil rozeti class="active" kullanıyordu
+    — nav a.active{color:var(--amber)!important} kuralı (bölüm vurgusu için) BUNU DA
+    eşleyip !important ile eziyordu -> amber ÜSTÜNE amber (görünmez metin). Artık
+    class="cur" (nav a.active seçicisiyle asla çakışmayacak bir ad)."""
+    m = {**FAKE_MODEL, "translations": {"tr": {"label": "Türkçe", "sections": {}}}}
+    html = manual.render_manual_html(m, "index", lang="tr")
+    assert 'class="cur">Türkçe</a>' in html
+    assert 'class="active">' not in html   # nav a.active ile ASLA aynı ad kullanılmamalı
+    assert ".langsw a.cur" in html and "!important" in html.split(".langsw a.cur")[1].split("}")[0]
+
+
 def test_render_html_index_and_chapter():
     idx = manual.render_manual_html(FAKE_MODEL, "index")
     assert "test-coll" in idx and "İçindekiler" in idx
@@ -87,9 +99,16 @@ def test_render_html_index_and_chapter():
     assert 'id="unita-pas"' in ch and 'id="unitb-pas"' in ch
     assert "[TBar]" not in ch and '<a href="/manual/test-coll/src.html#unitb-pas">TBar</a>' in ch   # cross-link uygulanmış
 
-    # Sıra 7 (kullanıcı): Aç + Tarayıcıda Göster — YALNIZ chunk_id'si olan bölümde (UnitA)
+    # Sıra 7 (kullanıcı): Aç + Klasörde Aç + Tarayıcıda Göster — YALNIZ chunk_id'si olan bölümde (UnitA)
     assert "manualOpen('test-coll',123456,this)" in ch
+    assert "manualOpenFolder('test-coll',123456,this)" in ch
     assert "manualShowInBrowser('test-coll',123456,'unita-pas',this)" in ch
+
+    # madde 2. tur (kullanıcı): manuel sayfasında da SweetAlert2 kullanılmalı — native
+    # alert()/prompt() kalmamalı, self-hosted script dahil edilmeli (offline-first)
+    assert '/static/vendor/sweetalert2.min.js' in ch
+    assert "alert(" not in ch and "prompt(" not in ch
+    assert "ciError(" in ch and "ciPrompt(" in ch
     # chunk_id'si OLMAYAN eski-model bölümü (UnitB) için düğme HİÇ üretilmemeli — çökmemeli;
     # test fixture'ında tek chunk_id var, bu yüzden onclick çağrısı tam bir kez görünmeli
     # ("manualOpen(" kendisi ayrıca <script> içindeki fonksiyon TANIMINDA da geçiyor,
