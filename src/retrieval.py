@@ -745,6 +745,20 @@ def get_unit_deps(collection: str, unit: str) -> dict:
             "used_by": sorted({(e.get("unit") or e["child_display"]) for e in in_edges}),
             "note": "unit-düzeyi graf; uses listeleri kaynak dosyalardaki bildirimlerden gelir"}
 
+def get_all_class_edges(collection: str) -> list[dict]:
+    """Koleksiyondaki TÜM inherits/implements kenarlarını TEK seferde getirir
+    (manual.py'nin Sıra B — sınıf-bazlı iç içe ağaç sidebar'ı için; her bölüm
+    için ayrı ayrı sorgu yerine BİR bulk fetch, sonra Python'da bölüme göre
+    gruplanır). build_symbol_graph() önceden çalıştırılmamışsa (eski/yeniden
+    indekslenmemiş koleksiyon) boş liste döner — çağıran taraf (manual.py)
+    bunu "sınıf ağacı yok, dosya listesine düş" olarak yorumlar."""
+    if not cl.collection_exists(SYMBOL_COLL):
+        return []
+    coll_f = models.FieldCondition(key="src_collection", match=models.MatchValue(value=collection))
+    edge_f = models.FieldCondition(key="edge", match=models.MatchAny(any=["inherits", "implements"]))
+    return _edge_scroll([coll_f, edge_f], limit=20000)
+
+
 def _edge_scroll(flt_must: list, limit: int = 500) -> list:
     out, next_page = [], None
     while True:

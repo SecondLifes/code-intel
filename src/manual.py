@@ -66,6 +66,67 @@ def _slug(*parts: str) -> str:
     return s or "bolum"
 
 
+def _build_class_tree(sections: list[dict], chapter_types: list[dict], edges: list[dict]) -> dict:
+    """Sıra B (kullanıcı, "Tree list Classlara göre yapılmalı iç içe"): bir
+    bölümün DOSYA listesinin yanına sınıf hiyerarşisi ağacı ekler.
+    build_symbol_graph()'ın ürettiği inherits/implements kenarlarından
+    (retrieval.get_all_class_edges — TÜM koleksiyon için TEK seferde çekilir)
+    bu bölüme ÖZEL, PURE (qdrant'a dokunmaz, test edilebilir) bir ağaç kurar.
+
+    sections: bu bölümün TÜM dosyaları [{"unit","slug","title"}, ...]
+              (chapters[ch]["sections"] ile aynı sözleşme — sınıfsız dosyalar
+              dahil, "Diğer/Global" grubu için gerekir)
+    chapter_types: bu bölümde TANIMLI sınıf/arayüz adları [{"name","unit"}, ...]
+    edges: TÜM koleksiyonun kenarları (filtrelenmemiş) — {"child_name",
+           "child_display","parent_name","parent_display","unit"}
+
+    Döner: {"roots": [{"name","href","external","children":[...]}, ...],
+            "other_files": [{"title","href"}, ...]}   # sınıfsız dosyalar
+
+    Kullanıcı kararı: ebeveyni BU BÖLÜMDE tanımlı olmayan düğümler (harici RTL
+    sınıfı — TObject/TComponent — YA DA başka bir bölümdeki sınıf, ikisi de
+    burada AYIRT EDİLMEZ, bilinçli basitleştirme) "external": true, "href":
+    None ile işaretlenir — arayüzde gri/tıklanamaz kök olarak gösterilir."""
+    unit_to_href = {s["unit"]: f'#{s["slug"]}' for s in sections}
+    name_to_unit = {t["name"].lower(): t["unit"] for t in chapter_types if t.get("name")}
+    chapter_names = set(name_to_unit)
+
+    children_of: dict[str, list[str]] = {}
+    # KENARI OLMAYAN (izole, yalnız-kök) tipler için de doğru büyük/küçük harfli
+    # ad gerekir — aşağıdaki döngü yalnız bir KENARDE geçen adları doldurur.
+    display: dict[str, str] = {t["name"].lower(): t["name"] for t in chapter_types if t.get("name")}
+    seen_child = set()
+    for e in edges:
+        cn = (e.get("child_name") or "").lower()
+        if cn not in chapter_names:
+            continue   # çocuk bu bölümde tanımlı değilse (başka bölüm) burada dal değil
+        pn = (e.get("parent_name") or "").lower()
+        if not pn:
+            continue
+        display[cn] = e.get("child_display") or cn
+        display.setdefault(pn, e.get("parent_display") or pn)
+        children_of.setdefault(pn, []).append(cn)
+        seen_child.add(cn)
+
+    def node(name: str, path: frozenset = frozenset()) -> dict:
+        unit = name_to_unit.get(name)
+        kids = [] if name in path else sorted(
+            (node(c, path | {name}) for c in set(children_of.get(name, []))),
+            key=lambda n: n["name"].lower())
+        return {"name": display.get(name, name), "href": unit_to_href.get(unit) if unit else None,
+                "external": unit is None, "children": kids}
+
+    parent_names = set(children_of.keys())
+    root_names = (parent_names - seen_child) | (chapter_names - seen_child - parent_names)
+    roots = sorted((node(n) for n in root_names), key=lambda n: n["name"].lower())
+
+    typed_units = set(name_to_unit.values())
+    other_files = sorted(
+        ({"title": s["title"], "href": f'#{s["slug"]}'} for s in sections if s["unit"] not in typed_units),
+        key=lambda f: f["title"].lower())
+    return {"roots": roots, "other_files": other_files}
+
+
 def _topo_order(unit_paths: list[str], deps: dict[str, set[str]]) -> dict[str, int]:
     """Kahn algoritması — TEMEL (başkalarınca kullanılan/bağımlılığı az) dosyalar
     ÖNCE gelsin diye: `deps[u]` = u'nun (aynı bölüm içinde) bağımlı olduğu
@@ -144,8 +205,11 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
     if st is not None:
         st.update(phase="building", total=len(units), done=0)
 
-    # ---- tip adı -> ev sahibi bölüm slug'ı (HTML çapraz-linkleme için) ----
+    # ---- tip adı -> ev sahibi bölüm slug'ı (HTML çapraz-linkleme için) + Sıra B
+    # (kullanıcı): aynı taramada bölüm başına tip listesi de toplanır — sınıf
+    # ağacı (_build_class_tree) bunu kullanır, ayrı bir sorgu turu gerekmez.
     type_home: dict[str, str] = {}   # bare-lower isim -> "chapter-slug#section-slug"
+    chapter_types: dict[str, list[dict]] = {}   # chapter_key -> [{"name","unit"}, ...]
     for u in units:
         ch = _chapter_key(u["unit"])
         sec = _slug(u["unit"])
@@ -157,6 +221,7 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
             nm = (p.payload.get("name") or "").split("=")[0].strip()
             if nm:
                 type_home[nm.lower()] = f"{_slug(ch)}.html#{sec}"
+                chapter_types.setdefault(ch, []).append({"name": nm, "unit": u["unit"]})
 
     # ---- bölüm içeriği: document_unit'in ÖNBELLEKLİ özeti ----
     chapters: dict[str, dict] = {}
@@ -176,6 +241,12 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
         })
     for ch in chapters.values():
         ch["sections"].sort(key=lambda s: dep_order.get(s["unit"], len(dep_order)))
+
+    # ---- Sıra B (kullanıcı): sınıf-bazlı iç içe ağaç — TEK bulk kenar sorgusu,
+    # sonra her bölüm için PURE _build_class_tree (qdrant'a bir daha dokunmaz).
+    class_edges = retrieval.get_all_class_edges(collection)
+    for ch_key, ch in chapters.items():
+        ch["class_tree"] = _build_class_tree(ch["sections"], chapter_types.get(ch_key, []), class_edges)
 
     title = f"{collection} — Kullanım Kılavuzu" if lang == "tr" else f"{collection} — User Guide"
     model = {
@@ -462,7 +533,33 @@ main pre code{background:none;border:0;padding:0}
 .ci-swal-btn-cancel{background:var(--card)!important;color:var(--dim)!important;border:1px solid var(--line2)!important;box-shadow:none!important;border-radius:10px!important}
 .ci-swal-toast{background:var(--panel)!important;color:var(--txt)!important;border:1px solid var(--line2);box-shadow:0 8px 24px rgba(0,0,0,.35)}
 .ci-swal-toast .swal2-title{font-size:14px;color:var(--txt)}
+.navtabs{display:flex;gap:4px;margin-bottom:10px}
+.navtabs button{flex:1;font-size:11.5px;padding:5px 8px;background:var(--card);border:1px solid var(--line2);color:var(--dim);border-radius:6px;cursor:pointer;font-family:inherit}
+.navtabs button.cur{background:var(--amber);border-color:var(--amber);color:#1a1305;font-weight:700}
+.navview{display:none}
+.navview.cur{display:block}
+.ctree{list-style:none;margin:0;padding-left:0}
+.ctree ul{list-style:none;margin:2px 0 2px 14px;padding-left:10px;border-left:1px dashed var(--line2)}
+.ctree li{margin:2px 0}
+.ctree a,.ctree span.ext{display:block;font-size:12.5px;padding:3px 4px;text-decoration:none;overflow-wrap:anywhere;line-height:1.35}
+.ctree a{color:var(--txt)}
+.ctree a:hover{color:var(--amber)}
+.ctree span.ext{color:var(--faint);font-style:italic}
+.ctree .other{margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.ctree .other-label{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;padding-left:4px}
 """
+
+
+def _render_ctree_node(n: dict, ch_slug: str, base: str, qs: str) -> str:
+    """_build_class_tree'nin döndürdüğü TEK bir düğümü (ve alt ağacını) HTML'e
+    çevirir. "external" düğümler (kullanıcı kararı: gri/tıklanamaz kök) `<span>`
+    olarak, kendi bölümü olanlar `<a>` olarak render edilir."""
+    if n["href"]:
+        label = f'<a href="{base}{ch_slug}.html{qs}{n["href"]}">{_esc(n["name"])}</a>'
+    else:
+        label = f'<span class="ext" title="Bu koleksiyonda tanımlı değil (harici sınıf veya başka bir bölümde)">{_esc(n["name"])}</span>'
+    kids = "".join(f'<li>{_render_ctree_node(c, ch_slug, base, qs)}</li>' for c in n["children"])
+    return label + (f'<ul>{kids}</ul>' if kids else "")
 
 
 def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
@@ -521,14 +618,49 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
                 f'<div class="meta">{_esc(model.get("version",""))} '
                 f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
                 lang_switcher,
-                export_menu,
-                '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
+                export_menu]
+
+    files_view = []
     for ch in model["chapters"]:
         active_ch = " active" if page == ch["slug"] else ""
-        nav_html.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html{qs}" class="{active_ch}">{_esc(ch["title"])}</a>')
+        files_view.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html{qs}" class="{active_ch}">{_esc(ch["title"])}</a>')
         for sec in ch["sections"]:
-            nav_html.append(f'<a class="sec" href="{base}{ch["slug"]}.html{qs}#{sec["slug"]}">{_esc(sec["title"])}</a>')
-        nav_html.append("</div>")
+            files_view.append(f'<a class="sec" href="{base}{ch["slug"]}.html{qs}#{sec["slug"]}">{_esc(sec["title"])}</a>')
+        files_view.append("</div>")
+
+    # Sıra B (kullanıcı, "Tree list Classlara göre yapılmalı iç içe"): dosya
+    # listesinin yanına sekmeli bir sınıf-hiyerarşisi görünümü — yalnız
+    # class_tree'si olan (build_manual Sıra B'yi destekleyen bir sürümle
+    # üretilmiş) koleksiyonlarda gösterilir; eski manual.json'larda hiç
+    # görünmez (geriye uyumlu, "Sınıflar" sekmesi hiç render edilmez).
+    class_view = []
+    has_any_classes = False
+    for ch in model["chapters"]:
+        ct = ch.get("class_tree") or {"roots": [], "other_files": []}
+        if not ct["roots"] and not ct["other_files"]:
+            continue
+        has_any_classes = has_any_classes or bool(ct["roots"])
+        active_ch = " active" if page == ch["slug"] else ""
+        class_view.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html{qs}" class="{active_ch}">{_esc(ch["title"])}</a>')
+        if ct["roots"]:
+            items = "".join(f'<li>{_render_ctree_node(n, ch["slug"], base, qs)}</li>' for n in ct["roots"])
+            class_view.append(f'<ul class="ctree">{items}</ul>')
+        if ct["other_files"]:
+            of = "".join(f'<li><a href="{base}{ch["slug"]}.html{qs}{f["href"]}">{_esc(f["title"])}</a></li>' for f in ct["other_files"])
+            class_view.append(f'<div class="other"><div class="other-label">Diğer / Global</div><ul class="ctree">{of}</ul></div>')
+        class_view.append("</div>")
+
+    if has_any_classes:
+        nav_html.append('<div class="navtabs">'
+            '<button type="button" class="cur" data-tab="files" onclick="manualNavTab(this)">Dosyalar</button>'
+            '<button type="button" data-tab="classes" onclick="manualNavTab(this)">Sınıflar</button>'
+            '</div>')
+        nav_html.append('<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">')
+        nav_html.append(f'<div class="navview cur" id="navview-files">{"".join(files_view)}</div>')
+        nav_html.append(f'<div class="navview" id="navview-classes">{"".join(class_view)}</div>')
+    else:
+        nav_html.append('<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">')
+        nav_html.extend(files_view)
     nav = "\n".join(nav_html)
 
     if page == "index":
@@ -674,6 +806,24 @@ function ciToast(msg,icon){{
 function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
   var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
   ch.style.display=(!q||any)?'':'none';}});}}
+// Sıra B (kullanıcı): sol menüde Dosyalar/Sınıflar sekmesi — seçim oturumlar
+// arası hatırlanır (yalnız class_tree'si olan koleksiyonlarda gösteriliyor).
+function manualNavTab(btn){{
+  var which=btn.dataset.tab;
+  document.querySelectorAll('.navtabs button').forEach(function(b){{b.classList.remove('cur');}});
+  btn.classList.add('cur');
+  document.querySelectorAll('.navview').forEach(function(v){{v.classList.remove('cur');}});
+  var v=document.getElementById('navview-'+which);
+  if(v)v.classList.add('cur');
+  localStorage.setItem('ci-manual-navtab',which);
+}}
+(function(){{
+  var saved=localStorage.getItem('ci-manual-navtab');
+  if(saved&&saved!=='files'){{
+    var btn=document.querySelector('.navtabs button[data-tab="'+saved+'"]');
+    if(btn)manualNavTab(btn);
+  }}
+}})();
 async function manualAddLang(ev){{
   ev.preventDefault();
   var name=await ciPrompt('Hangi dile çevrilsin? (ör. Türkçe, Deutsch, Français)');
@@ -766,14 +916,47 @@ def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str
     nav_html = ([f'<a class="home" href="index.html">← İndeks / Kapak</a>'] if page != "index" else []) + [
                 f'<h1><a href="index.html">{_esc(model["title"])}</a></h1>',
                 f'<div class="meta">{_esc(model.get("version",""))} '
-                f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
-                '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
+                f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>']
+
+    files_view = []
     for ch in model["chapters"]:
         active_ch = " active" if page == ch["slug"] else ""
-        nav_html.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
+        files_view.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
         for sec in ch["sections"]:
-            nav_html.append(f'<a class="sec" href="{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
-        nav_html.append("</div>")
+            files_view.append(f'<a class="sec" href="{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
+        files_view.append("</div>")
+
+    # Sıra B (kullanıcı): statik pakette de aynı Dosyalar/Sınıflar sekmesi —
+    # veri zaten model içinde (build_manual'de bir kez hesaplandı), burada
+    # yalnız GÖRECELİ hrefler ile render ediliyor.
+    class_view = []
+    has_any_classes = False
+    for ch in model["chapters"]:
+        ct = ch.get("class_tree") or {"roots": [], "other_files": []}
+        if not ct["roots"] and not ct["other_files"]:
+            continue
+        has_any_classes = has_any_classes or bool(ct["roots"])
+        active_ch = " active" if page == ch["slug"] else ""
+        class_view.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
+        if ct["roots"]:
+            items = "".join(f'<li>{_render_ctree_node(n, ch["slug"], "", "")}</li>' for n in ct["roots"])
+            class_view.append(f'<ul class="ctree">{items}</ul>')
+        if ct["other_files"]:
+            of = "".join(f'<li><a href="{ch["slug"]}.html{f["href"]}">{_esc(f["title"])}</a></li>' for f in ct["other_files"])
+            class_view.append(f'<div class="other"><div class="other-label">Diğer / Global</div><ul class="ctree">{of}</ul></div>')
+        class_view.append("</div>")
+
+    if has_any_classes:
+        nav_html.append('<div class="navtabs">'
+            '<button type="button" class="cur" data-tab="files" onclick="manualNavTab(this)">Dosyalar</button>'
+            '<button type="button" data-tab="classes" onclick="manualNavTab(this)">Sınıflar</button>'
+            '</div>')
+        nav_html.append('<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">')
+        nav_html.append(f'<div class="navview cur" id="navview-files">{"".join(files_view)}</div>')
+        nav_html.append(f'<div class="navview" id="navview-classes">{"".join(class_view)}</div>')
+    else:
+        nav_html.append('<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">')
+        nav_html.extend(files_view)
     nav = "\n".join(nav_html)
 
     if page == "index":
@@ -830,6 +1013,22 @@ def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str
 function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
   var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
   ch.style.display=(!q||any)?'':'none';}});}}
+function manualNavTab(btn){{
+  var which=btn.dataset.tab;
+  document.querySelectorAll('.navtabs button').forEach(function(b){{b.classList.remove('cur');}});
+  btn.classList.add('cur');
+  document.querySelectorAll('.navview').forEach(function(v){{v.classList.remove('cur');}});
+  var v=document.getElementById('navview-'+which);
+  if(v)v.classList.add('cur');
+  localStorage.setItem('ci-manual-navtab',which);
+}}
+(function(){{
+  var saved=localStorage.getItem('ci-manual-navtab');
+  if(saved&&saved!=='files'){{
+    var btn=document.querySelector('.navtabs button[data-tab="'+saved+'"]');
+    if(btn)manualNavTab(btn);
+  }}
+}})();
 (function(){{
   var nav=document.getElementById('manualnav'),handle=document.getElementById('navresize');
   var saved=parseInt(localStorage.getItem('ci-manual-navw'));

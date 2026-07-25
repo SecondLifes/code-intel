@@ -60,6 +60,59 @@ def test_hljs_lang_maps_known_exceptions_and_passes_through_others():
     assert manual._hljs_lang("") == ""
 
 
+def test_build_class_tree_nested_roots_external_and_unclassed_files():
+    """Sıra B (kullanıcı, "Tree list Classlara göre yapılmalı iç içe"):
+    - kalıtım zincirleri iç içe ağaç olmalı (TObject -> TBase -> TFoo)
+    - ebeveyni bu bölümde tanımlı olmayan (TObject) düğüm "external" olmalı
+      (kullanıcı kararı: gri/tıklanamaz kök)
+    - hiç sınıfı olmayan dosyalar (Utils.pas) "Diğer/Global" grubuna düşmeli"""
+    sections = [
+        {"unit": "src/Base.pas", "slug": "base-pas", "title": "Base.pas"},
+        {"unit": "src/Foo.pas", "slug": "foo-pas", "title": "Foo.pas"},
+        {"unit": "src/Bar.pas", "slug": "bar-pas", "title": "Bar.pas"},
+        {"unit": "src/Utils.pas", "slug": "utils-pas", "title": "Utils.pas"},
+    ]
+    chapter_types = [
+        {"name": "TBase", "unit": "src/Base.pas"},
+        {"name": "TFoo", "unit": "src/Foo.pas"},
+        {"name": "TBar", "unit": "src/Bar.pas"},
+    ]
+    edges = [
+        {"child_name": "tfoo", "child_display": "TFoo", "parent_name": "tbase", "parent_display": "TBase", "unit": "src/Foo.pas"},
+        {"child_name": "tbase", "child_display": "TBase", "parent_name": "tobject", "parent_display": "TObject", "unit": "src/Base.pas"},
+        # TBar hiç kenara sahip değil -> yalnız/izole kök
+    ]
+    tree = manual._build_class_tree(sections, chapter_types, edges)
+    root_names = sorted(r["name"] for r in tree["roots"])
+    assert root_names == ["TBar", "TObject"]
+
+    tobj = next(r for r in tree["roots"] if r["name"] == "TObject")
+    assert tobj["external"] is True and tobj["href"] is None
+    assert [c["name"] for c in tobj["children"]] == ["TBase"]
+    tbase = tobj["children"][0]
+    assert tbase["external"] is False and tbase["href"] == "#base-pas"
+    assert [c["name"] for c in tbase["children"]] == ["TFoo"]
+    assert tbase["children"][0]["href"] == "#foo-pas"
+
+    tbar = next(r for r in tree["roots"] if r["name"] == "TBar")
+    assert tbar["external"] is False and tbar["href"] == "#bar-pas" and tbar["children"] == []
+
+    assert tree["other_files"] == [{"title": "Utils.pas", "href": "#utils-pas"}]
+
+
+def test_build_class_tree_cycle_is_safe():
+    """Savunmacı: bozuk/döngülü kenar verisi (A<->B) sonsuz özyinelemeye
+    girmemeli — çökmeden (muhtemelen boş) bir sonuç dönmeli."""
+    sections = [{"unit": "A.pas", "slug": "a-pas", "title": "A.pas"}, {"unit": "B.pas", "slug": "b-pas", "title": "B.pas"}]
+    chapter_types = [{"name": "A", "unit": "A.pas"}, {"name": "B", "unit": "B.pas"}]
+    edges = [
+        {"child_name": "a", "child_display": "A", "parent_name": "b", "parent_display": "B", "unit": "A.pas"},
+        {"child_name": "b", "child_display": "B", "parent_name": "a", "parent_display": "A", "unit": "B.pas"},
+    ]
+    tree = manual._build_class_tree(sections, chapter_types, edges)
+    assert isinstance(tree["roots"], list)
+
+
 def test_topo_order_puts_foundations_first():
     """Sıra 6 (kullanıcı): sol menü dosya sırası bağımlılığa göre olmalı —
     kullanılan (temel) dosya, onu kullanandan ÖNCE gelmeli."""
@@ -162,6 +215,32 @@ def test_render_html_index_and_chapter():
     assert "/api/manual/export?collection=test-coll&format=docx" in ch
     assert "/api/manual/export?collection=test-coll&format=zip" in ch
     assert ch.index('class="langsw"') < ch.index('class="exportmenu"')   # dil menüsünün ALTINDA
+
+    # Sıra B (kullanıcı): class_tree'si OLMAYAN (eski) manuel — "Sınıflar"
+    # sekmesi HİÇ görünmemeli, geriye uyumlu tek dosya listesi kalmalı
+    assert 'class="navtabs"' not in ch and 'id="navview-classes"' not in ch
+
+
+def test_render_html_shows_class_tree_tab_when_present():
+    """Sıra B (kullanıcı): class_tree verisi VARSA sol menüde Dosyalar/Sınıflar
+    sekmesi görünmeli; harici ebeveyn (TObject) tıklanamaz gri düğüm olmalı."""
+    m = {**FAKE_MODEL, "chapters": [{
+        **FAKE_MODEL["chapters"][0],
+        "class_tree": {
+            "roots": [{"name": "TObject", "href": None, "external": True, "children": [
+                {"name": "TBar", "href": "#unitb-pas", "external": False, "children": [
+                    {"name": "TFoo", "href": "#unita-pas", "external": False, "children": []},
+                ]},
+            ]}],
+            "other_files": [],
+        },
+    }]}
+    ch = manual.render_manual_html(m, "src")
+    assert 'class="navtabs"' in ch and 'data-tab="classes"' in ch
+    assert 'id="navview-files"' in ch and 'id="navview-classes"' in ch
+    assert '<span class="ext" title=' in ch and '>TObject</span>' in ch   # harici -> tıklanamaz
+    assert '<a href="/manual/test-coll/src.html#unitb-pas">TBar</a>' in ch   # kendi bölümü var -> link
+    assert "function manualNavTab(" in ch
 
 
 def test_render_manual_zip_is_relative_and_navigable_without_server():
