@@ -38,9 +38,19 @@ def _mk_fixture_collection(name: str, points: list[dict]):
 
 
 def _cleanup(*names: str):
+    # 4. tur: import artık staging+alias modelini kullanabildiği için `n` bir
+    # ALIAS olabilir — cl.delete_collection(alias) SESSİZCE HİÇBİR ŞEY YAPMAZ
+    # (generations.py'de belgelenmiş, ampirik doğrulanmış Qdrant davranışı),
+    # bu yüzden önce alias olup olmadığına bakılıp öyleyse TÜM nesilleriyle
+    # birlikte temizlenir (admin_routes.collection_delete ile AYNI desen) —
+    # yoksa eski çalıştırmadan kalan bir alias sonraki test koşusunda
+    # create_collection'ı "alias zaten var" hatasıyla patlatır.
     import retrieval
+    from src.services import generations
     for n in names:
-        if retrieval.cl.collection_exists(n):
+        if generations.is_generational(n):
+            generations.delete_all_generations(n)
+        elif retrieval.cl.collection_exists(n):
             retrieval.cl.delete_collection(n)
 
 
@@ -153,3 +163,53 @@ def test_import_corrupt_file_leaves_existing_collection_untouched(client):
         assert len(pts) == 1 and pts[0].payload["name"] == "Untouched"
     finally:
         _cleanup(name)
+
+
+@needs_qdrant
+def test_import_write_failure_leaves_existing_collection_untouched(client, monkeypatch):
+    """4. tur — dış analizde (Codex, 2026-07-25) bulunan HATALI/Kritik bulgu:
+    satır/sayım doğrulaması dosyanın SÖZDİZİMİNİ korur ama önceki kod eski
+    koleksiyonu SİLİP SONRA yazıyordu — yazma (upsert döngüsü) kendisi yarıda
+    kesilirse (ağ kopması vb.) eski veri zaten silinmiş, yenisi eksik kalırdı.
+    Artık staging+alias modeli kullanılıyor: upsert burada BİLEREK
+    (yalnız __gen'li staging koleksiyonunda) patlatılır; eski koleksiyonun
+    PLAIN kimliğiyle ve orijinal noktasıyla DEĞİŞMEDEN kaldığı, yarım
+    staging'in ARDINDA İZ BIRAKMADAN silindiği kanıtlanır."""
+    import retrieval
+    name = "__test_import_write_fail"
+    _cleanup(name)
+    try:
+        _mk_fixture_collection(name, [{"id": 1, "payload": {"unit": "A.pas", "kind": "method", "name": "Original"}}])
+        exp = client.get("/api/collection/export", params={"collection": name})
+        assert exp.status_code == 200
+        gz_bytes = exp.content
+
+        from src.api import admin_routes
+        real_upsert = admin_routes.cl.upsert
+        def _flaky_upsert(coll, points):
+            if "__gen" in coll:   # yalnız İÇE AKTARMA staging'i patlasın, gerçek çağrılar etkilenmesin
+                raise ConnectionError("simüle edilmiş ağ kopması")
+            return real_upsert(coll, points=points)
+        monkeypatch.setattr(admin_routes.cl, "upsert", _flaky_upsert)
+
+        files = {"file": ("test.jsonl.gz", io.BytesIO(gz_bytes), "application/gzip")}
+        imp = client.post("/api/collection/import", params={"overwrite": "true"}, files=files)
+        assert imp.status_code == 502
+
+        monkeypatch.undo()   # gerçek durumu kontrol etmeden önce orijinal upsert'i geri yükle
+
+        # Eski koleksiyon TAMAMEN el değmemiş: hâlâ PLAIN (alias'a dönüşmedi), orijinal noktayla.
+        aliases = {a.alias_name for a in retrieval.cl.get_aliases().aliases}
+        assert name not in aliases
+        assert retrieval.cl.collection_exists(name)
+        pts, _ = retrieval.cl.scroll(name, limit=10, with_payload=True)
+        assert len(pts) == 1 and pts[0].payload["name"] == "Original"
+
+        # Yarım staging koleksiyonu ARDINDA İZ BIRAKMAMALI (temizlendi).
+        leftover = [c.name for c in retrieval.cl.get_collections().collections if c.name.startswith(name + "__gen")]
+        assert leftover == []
+    finally:
+        _cleanup(name)
+        for c in retrieval.cl.get_collections().collections:
+            if c.name.startswith(name + "__gen"):
+                retrieval.cl.delete_collection(c.name)

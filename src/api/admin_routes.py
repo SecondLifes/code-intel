@@ -295,10 +295,21 @@ async def collection_import(file: UploadFile = File(...), overwrite: bool = Fals
     if expected is not None and len(parsed) != expected:
         return JSONResponse({"error": f"satır sayısı manifest ile uyuşmuyor ({len(parsed)} != {expected}) — dosya kesik olabilir, mevcut koleksiyona DOKUNULMADI"}, status_code=400)
 
-    if cl.collection_exists(collection):
-        if not overwrite:
-            return JSONResponse({"error": f'"{collection}" zaten var — üzerine yazmak için overwrite=true gönderin'}, status_code=409)
-        cl.delete_collection(collection)
+    # 4. tur — dış analizde (Codex, 2026-07-25) bulunan HATALI/Kritik bulgu:
+    # yukarıdaki satır/sayım doğrulaması dosyanın SÖZDİZİMİNİ korur ama yazma
+    # işleminin KENDİSİ (delete_collection + upsert döngüsü) yarıda kesilirse
+    # (ağ kopması, disk dolması, Qdrant çökmesi) eski koleksiyon ZATEN
+    # silinmiş, yenisi ise EKSİK kalırdı — gerçek bir veri kaybı penceresi.
+    # Artık mevcut "atomik staging+alias nesil modeli" (generations.py,
+    # normal reindex'te kullanılan AYNI mekanizma) yeniden kullanılıyor:
+    # yeni veri TAMAMEN AYRI, henüz görünmez bir gerçek koleksiyona yazılır,
+    # nokta sayısı doğrulanır, ANCAK O ZAMAN eski koleksiyon devreden çıkarılıp
+    # tek atomik çağrıyla (swap_alias) takas edilir. Yazma yarıda kesilirse
+    # eski koleksiyona HİÇ dokunulmamış olur — yalnız yarım staging silinir.
+    exists_as_alias = generations.is_generational(collection)
+    exists_as_plain = cl.collection_exists(collection) and not exists_as_alias
+    if (exists_as_alias or exists_as_plain) and not overwrite:
+        return JSONResponse({"error": f'"{collection}" zaten var — üzerine yazmak için overwrite=true gönderin'}, status_code=409)
 
     if manifest.get("default_vector") and not manifest.get("dense_vectors"):
         # iç koleksiyon yedeği (adsız/size-1 vektör) — export '_default' anahtarıyla yazar
@@ -309,17 +320,30 @@ async def collection_import(file: UploadFile = File(...), overwrite: bool = Fals
                        for k, vc in manifest.get("dense_vectors", {}).items()}
     sparse_names = manifest.get("sparse_vectors", [])
     sparse_cfg = {k: models.SparseVectorParams(modifier=models.Modifier.IDF) for k in sparse_names} if sparse_names else None
-    cl.create_collection(collection, vectors_config=vectors_cfg, sparse_vectors_config=sparse_cfg)
-    retrieval.ensure_payload_indexes(collection)
 
-    B = 200; count = 0
-    for i in range(0, len(parsed), B):
-        b = parsed[i:i + B]
-        cl.upsert(collection, points=b); count += len(b)
+    staging_name = generations.start_new_generation(collection, vectors_cfg, sparse_cfg, seed=False)
+    try:
+        B = 200
+        for i in range(0, len(parsed), B):
+            cl.upsert(staging_name, points=parsed[i:i + B])
+        written = cl.count(staging_name).count
+        if written != len(parsed):
+            raise RuntimeError(f"staging'e yazılan nokta sayısı ({written}) beklenenle ({len(parsed)}) uyuşmuyor")
+        retrieval.ensure_payload_indexes(staging_name)
+    except Exception as e:
+        cl.delete_collection(staging_name)   # yarım/bozuk staging silinir — mevcut koleksiyona HİÇ dokunulmadı
+        return JSONResponse({"error": f"içe aktarma sırasında yazma hatası, mevcut koleksiyona DOKUNULMADI: {str(e)[:200]}"}, status_code=502)
+
+    # Staging TAM ve DOĞRU yazıldıktan SONRA eski veri devreden çıkarılır —
+    # bu andan sonraki tek risk normal Qdrant alias-takas atomikliğidir.
+    if exists_as_plain:
+        cl.delete_collection(collection)
+    generations.swap_alias(collection, staging_name, keep_previous=0)
 
     if manifest.get("profile"):
         prof = {k: v for k, v in manifest["profile"].items() if k != "collection"}
         set_profile(collection, **prof)
+    count = len(parsed)
     return {"ok": True, "collection": collection, "points": count}
 
 # ---------------- ayarlar sayfası için zengin indeks özeti ----------------
