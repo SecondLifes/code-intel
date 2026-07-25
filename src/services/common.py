@@ -3,6 +3,7 @@ Tüm servis ve rota modülleri AYNI STATE sözlüğünü ve sabitleri buradan al
 (Sıra 2 modülerleşmesi: panel.py 1500 satırlık monolitten bölündü, davranış
 tests/test_api.py sözleşme testleriyle korunuyor)."""
 import pathlib
+import threading
 
 try:
     from .. import retrieval
@@ -25,6 +26,15 @@ APIKEY_COLL = retrieval.APIKEY_COLL
 JOB_COLL = retrieval.JOB_COLL
 INTERNAL_COLLS = retrieval.INTERNAL_COLLS   # TEK kaynak: retrieval.py (kopya liste kaymasın)
 STATE = {"index_job": None}   # TEK paylaşılan iş durumu — tüm modüller aynı dict'i günceller
+# 4. tur — dış analizde (Codex, 2026-07-25) bulunan HATALI/Yüksek bulgu: iş
+# başlatma uçları (index/start, duplicates/start, git-update-all) STATE
+# üzerinde "kontrol et sonra ata" (check-then-set) yapıyordu, KİLİTSİZ.
+# FastAPI'nin düz `def` rotaları Starlette'in threadpool'unda GERÇEKTEN
+# paralel çalışır (async cooperative scheduling değil) — iki eşzamanlı istek
+# ikisi de kontrolü GEÇİP ikisi de kendi arka plan thread'ini başlatabilirdi
+# (aynı koleksiyona karşı iki eşzamanlı chunk/embed/upsert döngüsü — veri
+# bozulması riski). STATE_LOCK bu kontrol+atama'yı TEK atomik adım yapar.
+STATE_LOCK = threading.Lock()
 WATCH_INTERVAL_SEC = 600      # auto_refresh kaynak tarama aralığı
 
 # ---------------- otomatik/elle yedekleme (rotasyonlu) ----------------

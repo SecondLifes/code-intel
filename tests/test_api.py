@@ -698,6 +698,62 @@ def test_compare_uses_custom_ollama_url_when_provided(client, monkeypatch):
     assert captured["url"] == search_routes.OLLAMA + "/api/generate"
 
 
+# ---------------- 1h) 4. tur — dış analiz (Codex, 2026-07-25): check-then-set
+# ---------------- yarış durumu (iş başlatma uçları) ----------------
+# STATE üzerinde kontrol+atama önceden kilitsizdi — iki eşzamanlı istek ikisi
+# de kontrolü GEÇİP iki ayrı arka plan iş'i (thread) başlatabiliyordu. Bunu
+# GERÇEK OS thread'leriyle (threading.Barrier ile aynı ana zorlanmış) kanıtlar:
+# STATE_LOCK doğru çalışıyorsa TAM OLARAK biri 200, diğeri 409 dönmeli.
+@needs_qdrant
+def test_index_start_concurrent_requests_reject_second(client, monkeypatch):
+    import threading
+    import time
+    from src.api import index_routes
+
+    def _fake_run_index(r):
+        time.sleep(0.3)   # STATE "starting" fazında yeterince kalsın — ikinci istek onu görsün
+    monkeypatch.setattr(index_routes, "_run_index", _fake_run_index)
+    index_routes.STATE["index_job"] = None
+    try:
+        barrier = threading.Barrier(2)
+        results = [None, None]
+        def _call(i):
+            barrier.wait()
+            results[i] = client.post("/api/index/start", json={"collection": "__race_test_idx"}).status_code
+        t1 = threading.Thread(target=_call, args=(0,))
+        t2 = threading.Thread(target=_call, args=(1,))
+        t1.start(); t2.start(); t1.join(timeout=5); t2.join(timeout=5)
+        assert sorted(results) == [200, 409], f"yarış durumu hâlâ var — ikisi de kontrolü geçmiş olabilir: {results}"
+    finally:
+        time.sleep(0.4)   # arka plan thread'inin bitmesini bekle (STATE'i temiz bırak)
+        index_routes.STATE["index_job"] = None
+
+
+@needs_qdrant
+def test_duplicates_start_concurrent_requests_reject_second(client, monkeypatch):
+    import threading
+    import time
+    from src.api import index_routes
+
+    def _fake_run_dup_scan(r):
+        time.sleep(0.3)
+    monkeypatch.setattr(index_routes, "_run_dup_scan", _fake_run_dup_scan)
+    index_routes.STATE["dup_job"] = None
+    try:
+        barrier = threading.Barrier(2)
+        results = [None, None]
+        def _call(i):
+            barrier.wait()
+            results[i] = client.post("/api/duplicates/start", json={"collection": "unidac"}).status_code
+        t1 = threading.Thread(target=_call, args=(0,))
+        t2 = threading.Thread(target=_call, args=(1,))
+        t1.start(); t2.start(); t1.join(timeout=5); t2.join(timeout=5)
+        assert sorted(results) == [200, 409], f"yarış durumu hâlâ var — ikisi de kontrolü geçmiş olabilir: {results}"
+    finally:
+        time.sleep(0.4)
+        index_routes.STATE["dup_job"] = None
+
+
 # ---------------- 2) SÖZLEŞME: MCP <-> REST paritesi ----------------
 def test_mcp_rest_parity():
     """Her MCP tool'unun /api/mcp/<ad> REST test ucu olmalı (ve tersi) — tool
