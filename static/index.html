@@ -232,6 +232,10 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
       <input type="checkbox" id="rr-toggle" style="accent-color:var(--amber)">
       <span id="t-rr">🎯 Hassas sıra</span>
     </label>
+    <label class="mini" id="rk-wrap" style="display:none;align-items:center;gap:6px" title="Derin araştırmada ana sonucun yanına bağlama eklenecek ilgili kayıt sayısı">
+      <span id="t-rk">🔢 İlgili kayıt</span>
+      <select class="mini" id="rk-select" style="width:auto"></select>
+    </label>
     <div class="sp"></div>
     <select class="mini" id="ws-select" onchange="applyWorkspace()" title="Kayıtlı çalışma alanları"><option value="">WS…</option></select>
     <button class="mini" id="ws-save" onclick="saveWorkspace()" type="button" title="Mevcut ayarları çalışma alanı olarak kaydet">💾</button>
@@ -304,6 +308,7 @@ function applyLang(){
   $('sugg').innerHTML=SUGG[LANG].map(s=>`<span onclick="pick(this)">${s}</span>`).join('');
   $('t-grouptoggle').textContent=T('Sahibe/Koleksiyona göre grupla','Group by owner/collection');
   $('t-rr').textContent=T('🎯 Hassas sıra','🎯 Precise rank');
+  $('t-rk').textContent=T('🔢 İlgili kayıt','🔢 Related records');
   $('f-kind').options[0].textContent=T('Tümü','All kinds');
   $('f-unit').placeholder=T('dosya süzgeci','file filter');
   $('f-lang').options[0].textContent=T('Tüm diller','All languages');
@@ -314,9 +319,16 @@ let COMPACT=localStorage.getItem('ci-compact')==='1';
 function applyCompact(){$('out').classList.toggle('compact',COMPACT);$('compact-btn').classList.toggle('on',COMPACT);}
 function toggleCompact(){COMPACT=!COMPACT;localStorage.setItem('ci-compact',COMPACT?'1':'0');applyCompact();}
 applyCompact();
-$('seg-act').onclick=e=>{const s=e.target.closest('span[data-a]');if(!s)return;[...$('seg-act').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');ACT=s.dataset.a;localStorage.setItem('ci-act',ACT);};
+// Sıra 6 (kullanıcı): "Derin seçilirse sabit 5 kayıt geliyor, seçim olmalı" —
+// yalnız "Derin" (research) modunda görünür, seçim oturumlar arası hatırlanır.
+[3,5,8,10,15,20].forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;$('rk-select').appendChild(o);});
+$('rk-select').value=localStorage.getItem('ci-relatedk')||'5';
+$('rk-select').onchange=()=>localStorage.setItem('ci-relatedk',$('rk-select').value);
+function updateRkVisibility(){$('rk-wrap').style.display=ACT==='research'?'flex':'none';}
+$('seg-act').onclick=e=>{const s=e.target.closest('span[data-a]');if(!s)return;[...$('seg-act').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');ACT=s.dataset.a;localStorage.setItem('ci-act',ACT);updateRkVisibility();};
 $('seg-mode').onclick=e=>{const s=e.target.closest('span[data-m]');if(!s)return;[...$('seg-mode').children].forEach(x=>x.classList.remove('on'));s.classList.add('on');MODE=s.dataset.m;};
 [...$('seg-act').children].forEach(x=>x.classList.toggle('on',x.dataset.a===ACT));
+updateRkVisibility();
 applyLang();
 
 // "Tümünü Seç" bir SNAPSHOT liste değil, dinamik bir MOD olarak saklanır — aksi
@@ -609,7 +621,7 @@ async function runAskStream(q, research){
   const model=research?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
   const url=research?'/api/research/stream':'/api/ask/stream';
   const bodyObj=research
-    ?{q,collections:SELECTED_COLLS,lang:LANG,model}
+    ?{q,collections:SELECTED_COLLS,lang:LANG,model,related_k:parseInt($('rk-select').value)||5}
     :{q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY};
   const resp=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(bodyObj)});
@@ -635,9 +647,11 @@ async function runAskStream(q, research){
       if(ev==='meta'){
         meta=d;
         if(d.hits&&d.hits.length){
-          $('anssrc').innerHTML=`<div class="reslabel">${T('kaynaklar','sources')} (${T('en iyi','top')} ${Math.min(5,d.hits.length)} / ${d.total||d.hits.length})</div>`+
-            (d.total>5?`<div class="note" style="margin:-6px 0 10px 2px">${T(`Cevap yalnızca en alakalı 5 kaynağa dayanıyor — toplam ${d.total} eşleşmeden geri kalanı görmek için "Bul" moduna geçin.`,`The answer is based only on the 5 most relevant sources — switch to "Find" mode to see the rest of the ${d.total} matches.`)}</div>`:'')+
-            d.hits.slice(0,5).map(srcCard).join('');
+          const shown=d.hits.length;
+          $('anssrc').innerHTML=`<div class="reslabel">${T('kaynaklar','sources')} (${T('en iyi','top')} ${shown} / ${d.total||shown})</div>`+
+            (d.total>shown?`<div class="note" style="margin:-6px 0 10px 2px">${T(`Cevap yalnızca en alakalı ${shown} kaynağa dayanıyor — toplam ${d.total} eşleşmeden geri kalanı görmek için "Bul" moduna geçin (ya da yukarıdan ilgili kayıt sayısını artırın).`,`The answer is based only on the ${shown} most relevant sources — switch to "Find" mode to see the rest of the ${d.total} matches (or raise the related-record count above).`)}</div>`:'')+
+            d.hits.map(srcCard).join('');
+          applyCodeEnhancements($('anssrc'));
         }
       }else if(ev==='error'){$('ans').innerHTML='⚠️ '+esc(d.error||JSON.stringify(d));}
       else if(ev==='step'){if(!text)$('ans').innerHTML=`<span class="spin"></span>${esc(d.step||'')}…`;}

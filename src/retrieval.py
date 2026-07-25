@@ -953,16 +953,22 @@ def analyze_impact(collection: str, base: str = "", head: str = "HEAD", max_item
 
 # ---------------- agent bağlam paketi (get_context_pack) ----------------
 def get_context_pack(task: str, collections: list[str] | None = None, token_budget: int = 8000,
-                     include_relations: bool = True) -> dict:
+                     include_relations: bool = True, related_k: int = 5) -> dict:
     """Bir görev/soru için TOKEN BÜTÇELİ bağlam paketi — CodeIntel'i "arama
     aracı"ndan "ajan bağlam motoruna" çeviren çağrı (üç bağımsız analizin ortak
     #1-2 önerisi). Tek çağrıda: ana sembolün TAM kodu + ikincil eşleşmeler +
     çağıranlar/çağrılanlar + tip hiyerarşisi + unit bağımlılıkları, bütçeye
     sığacak şekilde önem sırasıyla seçilir (bütçe ~4 karakter/token varsayımıyla
     uygulanır). `sections` sırası önem sırasıdır; `omitted` bütçeye sığmayanları
-    listeler — ajan gerekirse onları ayrı çağrılarla derinleştirir."""
+    listeler — ajan gerekirse onları ayrı çağrılarla derinleştirir.
+
+    Sıra 6 (kullanıcı): "Derin seçilirse sabit 5 kayıt geliyor, seçim olmalı" —
+    `related_k` (varsayılan 5, ESKİ SABİT DAVRANIŞLA AYNI) ana semboldün SONRA
+    bağlama eklenecek ikincil eşleşme sayısını belirler. 1-20 arası sınırlanır
+    (0 = anlamsız, >20 hem token bütçesini hem yanıt süresini gereksiz şişirir)."""
+    related_k = max(1, min(related_k, 20))
     colls = collections or [c["name"] for c in list_collections()][:4]
-    sr = search(task, colls, "hybrid", top_k=10, rerank=True, log=False)
+    sr = search(task, colls, "hybrid", top_k=max(10, related_k + 1), rerank=True, log=False)
     if "error" in sr:
         return sr
     hits = sr["hits"]
@@ -1013,7 +1019,7 @@ def get_context_pack(task: str, collections: list[str] | None = None, token_budg
                 "uses: " + (", ".join(ud["uses"][:20]) or "(yok)") +
                 f"\nused_by ({len(ud.get('used_by', []))}): " + ", ".join(ud.get("used_by", [])[:15]))
 
-    for h in hits[1:6]:
+    for h in hits[1:1 + related_k]:
         add("related", f"{h['name']} ({h['unit']})", h["code"][:1500],
             {"collection": h["collection"], "id": h["id"], "unit": h["unit"], "score": h["score"]})
 

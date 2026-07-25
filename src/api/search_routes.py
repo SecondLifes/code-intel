@@ -248,6 +248,7 @@ def ask_stream(r: AskReq):
 class ResearchReq(BaseModel):
     q: str; collections: list[str] = ["unidac"]; model: str = ""; lang: str = "tr"
     token_budget: int = 6000
+    related_k: int = 5   # Sıra 6 (kullanıcı): eskiden sabit 5 idi, artık istemci seçebiliyor
 
 @router.post("/api/research/stream")
 def research_stream(r: ResearchReq):
@@ -255,7 +256,7 @@ def research_stream(r: ResearchReq):
 
     def gen():
         yield f"event: step\ndata: {json.dumps({'step': 'arama + bağlam paketi hazırlanıyor'}, ensure_ascii=False)}\n\n"
-        pack = retrieval.get_context_pack(r.q, r.collections, r.token_budget)
+        pack = retrieval.get_context_pack(r.q, r.collections, r.token_budget, related_k=r.related_k)
         if "error" in pack:
             yield f"event: error\ndata: {json.dumps(pack, ensure_ascii=False)}\n\n"
             return
