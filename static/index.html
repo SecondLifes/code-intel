@@ -617,9 +617,13 @@ async function runAskStream(q, research){
   // bağlamı) + derin model; adımlar SSE 'step' olaylarıyla ekranda görünür
   const model=research?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
   const url=research?'/api/research/stream':'/api/ask/stream';
+  // 3. tur, Madde 6 (kullanıcı): uzak Ollama sunucusu — yalnız bu iki sohbet
+  // ucuna eklenir (ayarlar sayfasında kaydedilir), boşsa alan hiç gönderilmez
+  // (sunucu kendi varsayılanını kullanır).
+  const ollamaUrl=localStorage.getItem('ci-ollama-url')||'';
   const bodyObj=research
-    ?{q,collections:SELECTED_COLLS,lang:LANG,model,related_k:parseInt($('rk-select').value)||5}
-    :{q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY};
+    ?{q,collections:SELECTED_COLLS,lang:LANG,model,related_k:parseInt($('rk-select').value)||5,ollama_url:ollamaUrl}
+    :{q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY,ollama_url:ollamaUrl};
   const resp=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(bodyObj)});
   if(!resp.ok||!resp.body){$('out').innerHTML=err('HTTP '+resp.status);return;}

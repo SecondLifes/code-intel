@@ -148,6 +148,12 @@ td.path{font-family:var(--mono);color:var(--dim);font-size:12px;max-width:160px;
   <!-- MODELLER -->
   <div class="panelcard">
     <h3 id="t-models">Ollama Modelleri (Türkçe açıklama)</h3>
+    <div class="row" style="margin-bottom:10px">
+      <div class="field"><label>🌐 <span id="l-ollamahost">Ollama Sunucusu</span></label><input id="ollama-host" placeholder="127.0.0.1" style="width:160px"></div>
+      <div class="field"><label>🔌 <span id="l-ollamaport">Port</span></label><input id="ollama-port" placeholder="11434" style="width:90px"></div>
+      <div class="field" style="justify-content:flex-end"><button type="button" onclick="saveOllamaHost()" id="btn-ollamahost-save" style="background:var(--card);border:1px solid var(--line2);color:var(--dim)">💾 <span id="t-ollamahost-save">Kaydet</span></button></div>
+    </div>
+    <div class="note" id="t-ollamahost-note" style="margin-bottom:14px">Yalnız Cevapla/Derin sohbet istekleri için — uzak bir Ollama sunucusu kullanmak isterseniz. Boş bırakılırsa panelin kendi varsayılanı kullanılır (arkaplan işleri — manuel çeviri, dosya özeti — bundan etkilenmez).</div>
     <div class="row">
       <div class="field"><label>⚡ <span id="l-fast">Hızlı model</span></label><select id="m-fast" style="min-width:220px"></select></div>
       <div class="field"><label>🔬 <span id="l-deep">Derin model</span></label><select id="m-deep" style="min-width:220px"></select></div>
@@ -362,6 +368,9 @@ function applyLang(){
   $('l-path').textContent=T('Kaynak klasör (boş = kayıtlı yol veya mevcut chunk dosyası kullanılır)','Source folder (empty = saved path or existing chunks are reused)');
   $('l-name').textContent=T('İndeks adı','Index name');$('l-dev').textContent=T('Donanım (Türkçe/anlamsal için)','Device (for Turkish/semantic)');
   $('l-pattern').textContent=T('Dosya deseni (virgülle birden fazla)','File pattern (comma for multiple)');
+  $('l-ollamahost').textContent=T('Ollama Sunucusu','Ollama Server');$('l-ollamaport').textContent=T('Port','Port');
+  $('t-ollamahost-save').textContent=T('Kaydet','Save');
+  $('t-ollamahost-note').textContent=T('Yalnız Cevapla/Derin sohbet istekleri için — uzak bir Ollama sunucusu kullanmak isterseniz. Boş bırakılırsa panelin kendi varsayılanı kullanılır (arkaplan işleri — manuel çeviri, dosya özeti — bundan etkilenmez).','Only for Answer/Deep chat requests — if you want to use a remote Ollama server. Leave empty to use the panel\'s own default (background jobs — manual translation, file summaries — are unaffected).');
   $('t-gitupdate').textContent=T('Tümünü Güncelle','Update All');
   $('t-manualbuildall').textContent=T('Tümünü Oluştur','Build All');
   $('t-manualfor').textContent=T('Manual (Yardım Dosyası)','Manual (Help File)');
@@ -417,6 +426,30 @@ function applyLang(){
 }
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
 applyLang();
+// 3. tur, Madde 6 (kullanıcı): "Ollama Modelleri"nin üstüne URL/port —
+// index.html'in ci-mdeep/ci-mfast ile AYNI localStorage deseni, sunucu
+// restart'ı GEREKMEZ, yalnız Cevapla/Derin sohbet isteklerine eklenir.
+function loadOllamaHostFields(){
+  const url=localStorage.getItem('ci-ollama-url')||'';
+  try{
+    if(!url){$('ollama-host').value='';$('ollama-port').value='';return;}
+    const u=new URL(url);
+    $('ollama-host').value=u.hostname;
+    $('ollama-port').value=u.port;
+  }catch(e){}
+}
+function saveOllamaHost(){
+  const host=$('ollama-host').value.trim();
+  const port=$('ollama-port').value.trim();
+  if(!host){
+    localStorage.removeItem('ci-ollama-url');
+    ciToast(T('Ollama sunucusu varsayılana döndürüldü.','Ollama server reset to default.'));
+    return;
+  }
+  localStorage.setItem('ci-ollama-url','http://'+host+(port?':'+port:''));
+  ciToast(T('Ollama sunucusu kaydedildi — yalnız Cevapla/Derin istekleri etkiler.','Ollama server saved — affects only Answer/Deep requests.'));
+}
+loadOllamaHostFields();
 function setPill(id,ok,label){const el=$(id);el.className='pill '+(ok?'ok':'bad');el.textContent=(ok?'● ':'○ ')+label;}
 async function health(){try{
   const h=await(await fetch('/api/health')).json();

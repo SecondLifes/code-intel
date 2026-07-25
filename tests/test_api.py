@@ -506,6 +506,38 @@ def test_research_stream_no_truncation_flag_on_natural_stop(client, monkeypatch)
     assert '"truncated": false' in r.text
 
 
+# ---------------- 1f) 3. tur, Madde 6 (kullanıcı): sohbet uçları için Ollama
+# URL geçersiz kılma ----------------
+# ollama_url alanının GERÇEKTEN urlopen'e giden isteğin hedef adresine
+# yansıdığının kanıtı — boşsa sunucunun varsayılan OLLAMA'sı kullanılmalı.
+@needs_qdrant
+def test_research_stream_uses_custom_ollama_url_when_provided(client, monkeypatch):
+    from src.api import search_routes
+    captured = {}
+
+    def _fake_pack(*a, **kw):
+        return {"task": "x", "collections": [], "sections": [
+            {"kind": "primary", "title": "t", "text": "code", "collection": "c", "id": 1, "unit": "u.pas", "line_start": 1}],
+            "omitted": []}
+    monkeypatch.setattr(search_routes.retrieval, "get_context_pack", _fake_pack)
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self):
+            yield b'{"response":"x","done":true,"done_reason":"stop"}\n'
+    def _fake_urlopen(req, timeout=600):
+        captured["url"] = req.full_url
+        return _FakeResp()
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", _fake_urlopen)
+
+    client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"], "ollama_url": "http://10.0.0.5:11500"})
+    assert captured["url"] == "http://10.0.0.5:11500/api/generate"
+
+    client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"]})
+    assert captured["url"] == search_routes.OLLAMA + "/api/generate"   # boşsa sunucu varsayılanı
+
+
 # ---------------- 2) SÖZLEŞME: MCP <-> REST paritesi ----------------
 def test_mcp_rest_parity():
     """Her MCP tool'unun /api/mcp/<ad> REST test ucu olmalı (ve tersi) — tool

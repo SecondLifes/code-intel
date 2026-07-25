@@ -95,6 +95,11 @@ class AskReq(BaseModel):
     # çok turlu sohbet: istemci önceki turları [{"q":..., "a":...}, ...] olarak
     # gönderir — sunucu tarafında oturum TUTULMAZ (stateless), geçmişin sahibi istemcidir
     history: list[dict] = []
+    # 3. tur, Madde 6 (kullanıcı): "Ollama'yı başka sunucudan kullanabilelim" —
+    # yalnız SOHBET uçları için (kapsam kullanıcıyla netleştirildi: arkaplan
+    # işleri — manuel çeviri, dosya özeti, agentic edit — sunucunun kendi
+    # varsayılan OLLAMA'sında kalır). Boşsa sunucunun varsayılanı kullanılır.
+    ollama_url: str = ""
 
 def _build_ask_prompt(r: AskReq, hits: list) -> str:
     ctx = "\n\n".join(f"[{i+1}] {h['name']} ({h['unit']} L{h['line_start']}-{h['line_end']}):\n{h['code'][:1100]}"
@@ -172,7 +177,7 @@ def ask(r: AskReq):
                        "options": {"num_predict": 600}, "think": False}).encode()
     t0 = time.time()
     txt = json.loads(urllib.request.urlopen(
-        urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
+        urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
         timeout=600).read()).get("response", "").strip()
     _ans_put(r, txt, hits, sr.get("total", len(hits)))
     return {"answer": txt, "sec": round(time.time() - t0, 1), "model": r.model, "ms_search": sr["ms"],
@@ -218,7 +223,7 @@ def ask_stream(r: AskReq):
         full = []   # akan yanıt biriktirilir — sonda önbelleğe yazmak için
         try:
             with urllib.request.urlopen(
-                    urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
+                    urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
                     timeout=600) as resp:
                 for line in resp:
                     if not line.strip():
@@ -248,7 +253,8 @@ def ask_stream(r: AskReq):
 class ResearchReq(BaseModel):
     q: str; collections: list[str] = ["unidac"]; model: str = ""; lang: str = "tr"
     token_budget: int = 6000
-    related_k: int = 5   # Sıra 6 (kullanıcı): eskiden sabit 5 idi, artık istemci seçebiliyor
+    related_k: int = 5   # 2. tur, Sıra 6 (kullanıcı): eskiden sabit 5 idi, artık istemci seçebiliyor
+    ollama_url: str = ""   # 3. tur, Sıra 6 (kullanıcı) — bkz. AskReq.ollama_url'deki not
 
 @router.post("/api/research/stream")
 def research_stream(r: ResearchReq):
@@ -312,7 +318,7 @@ def research_stream(r: ResearchReq):
         done_reason = None
         try:
             with urllib.request.urlopen(
-                    urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
+                    urllib.request.Request((r.ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
                     timeout=600) as resp:
                 for line in resp:
                     if not line.strip():
