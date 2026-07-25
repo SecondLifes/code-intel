@@ -62,11 +62,18 @@ def _topo_order(unit_paths: list[str], deps: dict[str, set[str]]) -> dict[str, i
     return {u: i for i, u in enumerate(order)}
 
 
-def build_manual(collection: str, scope: str = "", force: bool = False, st: dict | None = None) -> dict:
+def build_manual(collection: str, scope: str = "", force: bool = False, st: dict | None = None, lang: str = "en") -> dict:
     """Koleksiyon için manual modelini kurar ve `data/manuals/<collection>.json`
     olarak kalıcı yazar. `force=True` document_unit önbelleğini de atlayıp
     tüm dosya özetlerini yeniden ürettirir (pahalı — normalde gerekmez, çünkü
-    document_unit zaten kendi başına önbellekli)."""
+    document_unit zaten kendi başına önbellekli).
+
+    lang="en" (Sıra 5, kullanıcı kararı — "Sadece İngilizce yapalım, manuel
+    içinde istediğimiz dile çevir gibi bir yer olsun"): manuel artık BAZ olarak
+    İngilizce üretilir; Türkçe (veya başka bir dil) ayrı, isteğe bağlı bir AI
+    ÇEVİRİ katmanı olarak translate_manual() ile SONRADAN eklenir, model.json'da
+    saklanır — özgün İngilizce içerik asla kaybolmaz, çeviri onun ÜZERİNE
+    yazılmaz."""
     cl = retrieval.cl
     prof = retrieval.get_profile_payload(collection)
 
@@ -136,7 +143,7 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
         if st is not None:
             st.update(done=i, current=u["unit"])
         lang_counts[u["lang"]] = lang_counts.get(u["lang"], 0) + 1
-        doc = retrieval.document_unit(collection, u["unit"], force=force)
+        doc = retrieval.document_unit(collection, u["unit"], force=force, lang=lang)
         if "error" in doc:
             continue
         ch_key = _chapter_key(u["unit"])
@@ -148,9 +155,10 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
     for ch in chapters.values():
         ch["sections"].sort(key=lambda s: dep_order.get(s["unit"], len(dep_order)))
 
+    title = f"{collection} — Kullanım Kılavuzu" if lang == "tr" else f"{collection} — User Guide"
     model = {
-        "collection": collection, "scope": scope,
-        "title": f"{collection} — Kullanım Kılavuzu",
+        "collection": collection, "scope": scope, "lang": lang, "translations": {},
+        "title": title,
         "owner": prof.get("owner", ""), "group": prof.get("group", ""),
         "version": prof.get("version", ""), "kaynak": prof.get("kaynak", ""), "url": prof.get("url", ""),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -158,8 +166,7 @@ def build_manual(collection: str, scope: str = "", force: bool = False, st: dict
         "chapters": sorted(chapters.values(), key=lambda c: c["title"].lower()),
         "type_home": type_home,
     }
-    MANUAL_DIR.mkdir(parents=True, exist_ok=True)
-    (MANUAL_DIR / f"{collection}.json").write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
+    _save_manual(collection, model)
     if st is not None:
         st.update(done=len(units))
     return model
@@ -170,6 +177,100 @@ def load_manual(collection: str) -> dict | None:
     if not f.exists():
         return None
     return json.loads(f.read_text(encoding="utf-8"))
+
+
+def _save_manual(collection: str, model: dict):
+    MANUAL_DIR.mkdir(parents=True, exist_ok=True)
+    (MANUAL_DIR / f"{collection}.json").write_text(json.dumps(model, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+LANG_LABELS = {"en": "English", "tr": "Türkçe"}   # bilinen birkaçı için düzgün ad — bilinmeyen kod .title() ile düşer
+
+
+def model_for_lang(model: dict, lang: str) -> dict:
+    """`model`in section body_md'lerini `lang` çevirisiyle DEĞİŞTİRİLMİŞ bir
+    KOPYASINI döner (özgün model asla mutasyona uğramaz). lang boşsa veya baz
+    dilse model AYNEN döner. HTML/DOCX/PDF render'larının HEPSİ bunu kullanır
+    — çeviri mantığı üç render'da AYRI AYRI tekrarlanmaz, tek yerde."""
+    base_lang = model.get("lang", "en")
+    if not lang or lang == base_lang:
+        return model
+    translation = (model.get("translations") or {}).get(lang)
+    if not translation:
+        return model
+    trans_secs = translation.get("sections") or {}
+    out = dict(model)
+    out["title"] = model["title"]   # başlık çevrilmiyor (kısa, koleksiyon adı içeriyor) — bilinçli
+    new_chapters = []
+    for ch in model["chapters"]:
+        new_ch = dict(ch)
+        new_ch["sections"] = [
+            {**sec, "body_md": trans_secs.get(f'{ch["slug"]}|{sec["slug"]}', sec["body_md"])}
+            for sec in ch["sections"]]
+        new_chapters.append(new_ch)
+    out["chapters"] = new_chapters
+    return out
+
+
+def list_manual_languages(collection: str) -> list[dict]:
+    """Bu manuel için mevcut diller: baz (üretildiği dil) + eklenmiş çeviriler.
+    UI'daki dil seçici bunu kullanır — "her eklenen dil orada görünsün" (Sıra 5)."""
+    m = load_manual(collection)
+    if m is None:
+        return []
+    base = m.get("lang", "en")
+    out = [{"code": base, "label": LANG_LABELS.get(base, base.title()), "base": True}]
+    for code, t in (m.get("translations") or {}).items():
+        out.append({"code": code, "label": t.get("label") or LANG_LABELS.get(code, code.title()), "base": False})
+    return out
+
+
+def translate_manual(collection: str, target_lang: str, target_label: str = "", model: str = "",
+                      force: bool = False, st: dict | None = None) -> dict:
+    """Sıra 5 (kullanıcı): var olan (baz dilde, varsayılan İngilizce) manuel
+    modelini AI ile hedef dile çevirir; sonucu model.json'un `translations`
+    alanında KALICI saklar. Yapı (bölüm/section sırası, slug, chunk_id) AYNEN
+    korunur — yalnız gövde metni (body_md) çevrilir. section BAŞINA önbelleklidir
+    (force=False iken zaten çevrilmiş bir bölüm atlanır — force=True hepsini
+    yeniden çevirir). Özgün baz-dil içeriği ASLA üzerine yazılmaz, translations
+    ayrı bir alanda tutulur."""
+    doc_model = load_manual(collection)
+    if doc_model is None:
+        return {"error": f"'{collection}' için manuel henüz üretilmemiş"}
+    target_lang = (target_lang or "").strip().lower()
+    if not target_lang:
+        return {"error": "hedef dil boş olamaz"}
+    base_lang = doc_model.get("lang", "en")
+    if target_lang == base_lang:
+        return {"error": f"manuel zaten '{target_lang}' dilinde üretilmiş — çeviriye gerek yok"}
+    mdl = model or retrieval._CFG.get("deep_model", "qwen3.6")
+    translations = doc_model.setdefault("translations", {})
+    existing = {} if force else dict((translations.get(target_lang) or {}).get("sections") or {})
+    total = sum(len(ch["sections"]) for ch in doc_model["chapters"])
+    if st is not None:
+        st.update(phase="translating", total=total, done=0)
+    label = target_label.strip() if target_label and target_label.strip() else LANG_LABELS.get(target_lang, target_lang.title())
+    done = 0
+    for ch in doc_model["chapters"]:
+        for sec in ch["sections"]:
+            key = f'{ch["slug"]}|{sec["slug"]}'
+            if st is not None:
+                st.update(done=done, current=sec["unit"])
+            done += 1
+            if key in existing:
+                continue
+            prompt = (f"Translate the following technical documentation from English to {label}. "
+                      "Preserve the EXACT Markdown structure (headings, bullet lists, code blocks) — do NOT "
+                      "translate content inside code blocks (```...```) or inline code (`...`), and do NOT "
+                      "translate identifier/type/function names. Output ONLY the translated Markdown text, "
+                      "no extra commentary before or after.\n\n" + sec["body_md"])
+            existing[key] = retrieval.ollama_generate(mdl, prompt, num_predict=1400)
+    translations[target_lang] = {"label": label, "model": mdl,
+                                  "generated_at": datetime.now(timezone.utc).isoformat(), "sections": existing}
+    _save_manual(collection, doc_model)
+    if st is not None:
+        st.update(done=total)
+    return {"ok": True, "lang": target_lang, "label": label, "sections": len(existing)}
 
 
 # ---------------- HTML render (tek paylaşılan CSS, "hepsi aynı türden") ----------------
@@ -289,11 +390,21 @@ main pre code{background:none;border:0;padding:0}
 .sec-code{display:none;margin-top:10px}
 .sec-code.show{display:block}
 .sec-code pre{max-height:480px;overflow:auto}
+.langsw{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.langsw a{font-size:11.5px;padding:3px 9px;border-radius:99px;border:1px solid var(--line2);color:var(--dim);text-decoration:none}
+.langsw a:hover{border-color:var(--amber-d);color:var(--amber)}
+.langsw a.active{background:var(--amber);border-color:var(--amber);color:#1a1305;font-weight:700}
+.langsw a.addlang{color:var(--teal);border-style:dashed}
+.langsw a.addlang:hover{border-color:var(--teal-d);color:var(--teal-d)}
 """
 
 
-def render_manual_html(model: dict, page: str = "index") -> str:
-    """page: "index" (kapak+TOC) veya bir chapter slug'ı.
+def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
+    """page: "index" (kapak+TOC) veya bir chapter slug'ı. lang: boşsa BAZ dil
+    (model["lang"]); doluysa model["translations"][lang] varsa o dilin
+    body_md'si kullanılır (bir bölüm henüz çevrilmemişse baz dile SESSİZCE düşer
+    — hiç eksik/boş görünmez). Sıra 5 (kullanıcı): "manuel içinde istediğimiz
+    dile çevir gibi bir yer olsun" — nav'daki dil seçici bunu sağlar.
 
     KRİTİK düzeltme: tüm href'ler MUTLAK yol (`/manual/{collection}/...`) olmalı.
     Eskiden `"{slug}.html"` gibi GÖRECELİ üretiliyordu — bu yalnız sayfa URL'si
@@ -304,41 +415,56 @@ def render_manual_html(model: dict, page: str = "index") -> str:
     hata: HER link "Manual henüz üretilmemiş" gösteriyordu. Var olan
     manual.json dosyaları (type_home içinde hâlâ göreli yol saklıyor)
     YENİDEN ÜRETİLMEDEN çalışsın diye düzeltme RENDER anında yapılıyor."""
+    base_lang = model.get("lang", "en")
+    active_lang = lang or base_lang
+    qs = f"?lang={active_lang}" if active_lang != base_lang else ""
+    display_model = model_for_lang(model, active_lang)   # body_md'ler çeviriyle değiştirilmiş kopya (varsa)
+
     base = f"/manual/{model['collection']}/"
-    index_url = f"/manual/{model['collection']}"
+    index_url = f"/manual/{model['collection']}{qs}"
+    langs_avail = list_manual_languages(model["collection"]) or [
+        {"code": base_lang, "label": LANG_LABELS.get(base_lang, base_lang.title()), "base": True}]
+    lang_switcher = '<div class="langsw">' + "".join(
+        f'<a href="{"/manual/" + model["collection"] + ("/" + page + ".html" if page != "index" else "")}'
+        f'{"?lang=" + l["code"] if l["code"] != base_lang else ""}" '
+        f'class="{"active" if l["code"] == active_lang else ""}">{_esc(l["label"])}</a>'
+        for l in langs_avail) + (
+        '<a href="#" class="addlang" onclick="manualAddLang(event)" title="Yapay zeka ile yeni bir dile çevir">+ Dil ekle</a>'
+    ) + '</div><div id="langjob" class="note" style="display:none"></div>'
     nav_html = ([f'<a class="home" href="{index_url}">← İndeks / Kapak</a>'] if page != "index" else []) + [
                 f'<h1><a href="{index_url}">{_esc(model["title"])}</a></h1>',
                 f'<div class="meta">{_esc(model.get("version",""))} '
                 f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
+                lang_switcher,
                 '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
     for ch in model["chapters"]:
         active_ch = " active" if page == ch["slug"] else ""
-        nav_html.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
+        nav_html.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html{qs}" class="{active_ch}">{_esc(ch["title"])}</a>')
         for sec in ch["sections"]:
-            nav_html.append(f'<a class="sec" href="{base}{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
+            nav_html.append(f'<a class="sec" href="{base}{ch["slug"]}.html{qs}#{sec["slug"]}">{_esc(sec["title"])}</a>')
         nav_html.append("</div>")
     nav = "\n".join(nav_html)
 
     if page == "index":
-        langs = ", ".join(f"{k} ({v})" for k, v in sorted(model["stats"]["languages"].items(), key=lambda kv: -kv[1]))
+        pl = ", ".join(f"{k} ({v})" for k, v in sorted(model["stats"]["languages"].items(), key=lambda kv: -kv[1]))
         body = f"""<h1>{_esc(model["title"])}</h1>
 <p>{_esc(model.get("group","") or "")}</p>
 <div class="overview-grid">
   <div class="stat"><b>{model["stats"]["units"]}</b><span>Dosya</span></div>
   <div class="stat"><b>{model["stats"]["chapters"]}</b><span>Bölüm</span></div>
 </div>
-<p><b>Diller:</b> {_esc(langs)}</p>
+<p><b>Diller:</b> {_esc(pl)}</p>
 {"<p><b>Kaynak:</b> " + _esc(model.get("kaynak","")) + (" — <a href=\"" + _esc(model.get("url","")) + "\">" + _esc(model.get("url","")) + "</a>" if model.get("url") else "") + "</p>" if model.get("kaynak") else ""}
 <h2>İçindekiler</h2>
-<ul>{"".join(f'<li><a href="{base}{c["slug"]}.html">{_esc(c["title"])}</a> ({len(c["sections"])})</li>' for c in model["chapters"])}</ul>"""
+<ul>{"".join(f'<li><a href="{base}{c["slug"]}.html{qs}">{_esc(c["title"])}</a> ({len(c["sections"])})</li>' for c in model["chapters"])}</ul>"""
     else:
-        ch = next((c for c in model["chapters"] if c["slug"] == page), None)
+        ch = next((c for c in display_model["chapters"] if c["slug"] == page), None)
         if ch is None:
             return "<h1>404</h1>"
-        type_home_abs = {k: base + v for k, v in model.get("type_home", {}).items()}
+        type_home_abs = {k: base + v + qs for k, v in model.get("type_home", {}).items()}
         parts = [f'<h1>{_esc(ch["title"])}</h1>']
         for sec in ch["sections"]:
-            linked = _cross_link(sec["body_md"], type_home_abs, f'{base}{ch["slug"]}.html#{sec["slug"]}')
+            linked = _cross_link(sec["body_md"], type_home_abs, f'{base}{ch["slug"]}.html{qs}#{sec["slug"]}')
             # "Aç" (kayıtlı varsayılan uygulamada) + "Tarayıcıda Göster" (sayfa içi
             # aç-kapa, gerçek kaynak) — YALNIZ chunk_id varsa (eski manual.json'lar
             # bu alanı henüz taşımıyor olabilir, yeniden üretilmeden de çökmesin).
@@ -354,13 +480,36 @@ def render_manual_html(model: dict, page: str = "index") -> str:
                          f'{_md_to_html_fragment(linked)}<div class="sec-code" id="code-{sec["slug"]}"></div></div>')
         body = "\n".join(parts)
 
-    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
+    html_lang = active_lang if active_lang in ("tr", "en") else "en"
+    return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
 <title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style></head>
 <body><nav>{nav}</nav><main>{body}</main>
 <script>
+var MANUAL_COLLECTION={json.dumps(model["collection"])}, MANUAL_PAGE={json.dumps(page)};
 function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
   var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
   ch.style.display=(!q||any)?'':'none';}});}}
+async function manualAddLang(ev){{
+  ev.preventDefault();
+  var name=prompt('Hangi dile çevrilsin? (ör. Türkçe, Deutsch, Français)');
+  if(!name||!name.trim())return;
+  var code=name.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-');
+  var box=document.getElementById('langjob');
+  box.style.display='block';box.textContent='Çeviri başlatılıyor…';
+  try{{
+    var r=await(await fetch('/api/manual/translate',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{collection:MANUAL_COLLECTION,lang:code,label:name.trim()}})}})).json();
+    if(r.error){{box.textContent='❌ '+r.error;return;}}
+    var t=setInterval(async function(){{
+      var s=await(await fetch('/api/manual/translate-status')).json();
+      if(!s.phase||s.phase==='idle')return;
+      if(s.phase==='translating')box.textContent='Çevriliyor… '+(s.done||0)+'/'+(s.total||0);
+      else if(s.phase==='done'){{clearInterval(t);box.textContent='✅ Hazır, yenileniyor…';
+        location.href='/manual/'+MANUAL_COLLECTION+(MANUAL_PAGE!=='index'?'/'+MANUAL_PAGE+'.html':'')+'?lang='+code;}}
+      else if(s.phase==='error'){{clearInterval(t);box.textContent='❌ '+(s.error||'');}}
+    }},2000);
+  }}catch(e){{box.textContent='❌ '+e;}}
+}}
 async function manualOpen(collection,id,btn){{
   var old=btn.textContent;btn.disabled=true;btn.textContent='…';
   try{{

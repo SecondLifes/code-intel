@@ -91,7 +91,7 @@ def manual_build_all_status():
 
 @router.get("/manual/{collection}")
 @router.get("/manual/{collection}/{page}")
-def manual_view(collection: str, page: str = "index"):
+def manual_view(collection: str, page: str = "index", lang: str = ""):
     model = manual.load_manual(collection)
     if model is None:
         return HTMLResponse("<h1>Manual henüz üretilmemiş</h1><p>Ayarlar sayfasından bu koleksiyon için "
@@ -101,14 +101,15 @@ def manual_view(collection: str, page: str = "index"):
     # bölümü BARE slug'a göre eşliyor (uzantısız) — canlı doğrulamada yakalanan
     # gerçek hata: uzantı burada soyulmazsa HER bölüm sayfası 404 dönüyordu.
     page = page.removesuffix(".html")
-    return HTMLResponse(manual.render_manual_html(model, page))
+    return HTMLResponse(manual.render_manual_html(model, page, lang))
 
 
 @router.get("/api/manual/export")
-def manual_export(collection: str, format: str = "pdf"):
+def manual_export(collection: str, format: str = "pdf", lang: str = ""):
     model = manual.load_manual(collection)
     if model is None:
         return JSONResponse({"error": "bu koleksiyon için manual henüz üretilmemiş"}, status_code=404)
+    model = manual.model_for_lang(model, lang)
     if format == "docx":
         data = manual.render_manual_docx(model)
         media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -119,5 +120,49 @@ def manual_export(collection: str, format: str = "pdf"):
         ext = "pdf"
     else:
         return JSONResponse({"error": "format 'pdf' veya 'docx' olmalı"}, status_code=400)
+    suffix = f"-{lang}" if lang and lang != model.get("lang", "en") else ""
     return Response(content=data, media_type=media,
-                    headers={"Content-Disposition": f'attachment; filename="{collection}-manual.{ext}"'})
+                    headers={"Content-Disposition": f'attachment; filename="{collection}-manual{suffix}.{ext}"'})
+
+
+# ---------------- Sıra 5 (kullanıcı): i18n — İngilizce baz + AI çevirisi ----------------
+class ManualTranslateReq(BaseModel):
+    collection: str
+    lang: str
+    label: str = ""
+    force: bool = False
+
+
+def _run_manual_translate(r: ManualTranslateReq):
+    job = STATE["manual_translate_job"]
+    try:
+        result = manual.translate_manual(r.collection, r.lang, r.label, force=r.force, st=job)
+        if "error" in result:
+            job.update(phase="error", error=result["error"])
+        else:
+            job.update(phase="done")
+    except Exception as e:
+        job.update(phase="error", error=str(e)[:300])
+
+
+@router.post("/api/manual/translate")
+def manual_translate(r: ManualTranslateReq):
+    if manual.load_manual(r.collection) is None:
+        return JSONResponse({"error": f"'{r.collection}' için manuel henüz üretilmemiş"}, status_code=404)
+    if not r.lang or not r.lang.strip():
+        return JSONResponse({"error": "hedef dil boş olamaz"}, status_code=400)
+    if STATE.get("manual_translate_job") and STATE["manual_translate_job"].get("phase") == "translating":
+        return JSONResponse({"error": "zaten çalışan bir çeviri işi var"}, status_code=409)
+    STATE["manual_translate_job"] = {"phase": "starting", "collection": r.collection, "lang": r.lang}
+    threading.Thread(target=_run_manual_translate, args=(r,), daemon=True).start()
+    return {"ok": True}
+
+
+@router.get("/api/manual/translate-status")
+def manual_translate_status():
+    return STATE.get("manual_translate_job") or {"phase": "idle"}
+
+
+@router.get("/api/manual/languages")
+def manual_languages(collection: str):
+    return {"languages": manual.list_manual_languages(collection)}

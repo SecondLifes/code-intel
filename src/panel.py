@@ -71,7 +71,7 @@ LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 ADMIN_PREFIXES = ("/api/collection", "/api/index/start", "/api/backup/run",
                    "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile",
                    "/api/owners", "/api/groups", "/api/apikeys", "/api/git-update-all",
-                   "/api/index/migrate-ids", "/api/manual/build")
+                   "/api/index/migrate-ids", "/api/manual/build", "/api/manual/translate")
 RATE_WINDOW_SEC, RATE_MAX = 10, 300
 _rate: dict[str, deque] = {}
 _AUDIT_FILE = common.ROOT / "logs" / "admin-audit.log"

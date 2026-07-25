@@ -1008,13 +1008,16 @@ def get_context_pack(task: str, collections: list[str] | None = None, token_budg
             "guidance": "sections önem sıralıdır; id'lerle get_chunk/get_relations üzerinden derinleşilebilir"}
 
 # ---------------- otomatik unit dokümantasyonu (önbellekli) ----------------
-def document_unit(collection: str, unit: str, model: str = "", force: bool = False) -> dict:
+def document_unit(collection: str, unit: str, model: str = "", force: bool = False, lang: str = "tr") -> dict:
     """Bir dosyanın (unit) teknik dokümantasyonunu Markdown olarak üretir ve
-    _unit_docs iç koleksiyonunda KALICI önbellekler (aynı unit için tekrar çağrı
-    anında döner; force=True yeniden üretir). Girdi: unit'in decl/type chunk'ları
-    (public API), unithead uses listesi ve /// doc özetleri. Üretim yereldeki
-    Ollama modeliyle yapılır — kod dışarı çıkmaz."""
-    key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{collection}|{unit}"))
+    _unit_docs iç koleksiyonunda KALICI önbellekler (aynı unit+dil için tekrar
+    çağrı anında döner; force=True yeniden üretir). Girdi: unit'in decl/type
+    chunk'ları (public API), unithead uses listesi ve /// doc özetleri. Üretim
+    yereldeki Ollama modeliyle yapılır — kod dışarı çıkmaz.
+    lang="tr" (varsayılan, GERİYE DÖNÜK UYUMLU — mevcut çağıranlar etkilenmez)
+    | "en" — Help/Manual sistemi artık İngilizce baz üretiyor (Sıra 5), Türkçe
+    ayrı bir ÇEVİRİ katmanı olarak isteğe bağlı ekleniyor (bkz. manual.translate_manual)."""
+    key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{collection}|{unit}|{lang}"))
     try:
         if not force and cl.collection_exists(UNITDOC_COLL):
             pts = cl.retrieve(UNITDOC_COLL, ids=[key], with_payload=True)
@@ -1033,18 +1036,26 @@ def document_unit(collection: str, unit: str, model: str = "", force: bool = Fal
     decls = [f"- {p.payload.get('name')}" + (f" — {p.payload.get('doc')}" if p.payload.get("doc") else "")
              for p in pts if p.payload.get("kind") in ("decl", "type")][:80]
     mdl = model or _CFG.get("deep_model", "qwen3.6")
-    prompt = ("Asagidaki Delphi unit'i icin Markdown teknik dokumantasyon uret (Turkce). "
-              "Bolumler: ## Amac (2-3 cumle), ## Bagimliliklar, ## Public API (imza + tek satir aciklama), "
-              "## Onemli Tipler, ## Notlar (varsa riskler/desenler). Kod URETME, yalnizca dokumante et. "
-              f"Kisa ve teknik yaz.\n\nUNIT: {unit}\nUSES: {', '.join(uses) or '(yok)'}\n"
-              f"BILDIRIMLER:\n" + "\n".join(decls) + f"\n\nKOD (kirpilmis):\n{ru['code'][:12000]}")
+    if lang == "en":
+        prompt = ("Generate Markdown technical documentation for the following Delphi unit, IN ENGLISH. "
+                  "Sections: ## Purpose (2-3 sentences), ## Dependencies, ## Public API (signature + one-line "
+                  "description each), ## Key Types, ## Notes (risks/patterns if any). Do NOT generate code, "
+                  "only document. Be concise and technical.\n\n"
+                  f"UNIT: {unit}\nUSES: {', '.join(uses) or '(none)'}\n"
+                  f"DECLARATIONS:\n" + "\n".join(decls) + f"\n\nCODE (truncated):\n{ru['code'][:12000]}")
+    else:
+        prompt = ("Asagidaki Delphi unit'i icin Markdown teknik dokumantasyon uret (Turkce). "
+                  "Bolumler: ## Amac (2-3 cumle), ## Bagimliliklar, ## Public API (imza + tek satir aciklama), "
+                  "## Onemli Tipler, ## Notlar (varsa riskler/desenler). Kod URETME, yalnizca dokumante et. "
+                  f"Kisa ve teknik yaz.\n\nUNIT: {unit}\nUSES: {', '.join(uses) or '(yok)'}\n"
+                  f"BILDIRIMLER:\n" + "\n".join(decls) + f"\n\nKOD (kirpilmis):\n{ru['code'][:12000]}")
     t0 = time.time()
     md = ollama_generate(mdl, prompt, num_predict=1200)
     try:
         if not cl.collection_exists(UNITDOC_COLL):
             cl.create_collection(UNITDOC_COLL, vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
         cl.upsert(UNITDOC_COLL, points=[models.PointStruct(id=key, vector=[0.0],
-            payload={"collection": collection, "unit": unit, "md": md, "model": mdl,
+            payload={"collection": collection, "unit": unit, "lang": lang, "md": md, "model": mdl,
                      "date": datetime.now(timezone.utc).isoformat()})])
     except Exception:
         pass

@@ -6,6 +6,7 @@ KOŞULMAZ (pahalı/yavaş, panel.py ile canlı doğrulandı) — bu dosya yalnı
 LLM'siz saf fonksiyonları (render_*, _cross_link, _md_to_html_fragment,
 _chapter_key, _slug) ve API sözleşmesini test eder.
 """
+import json
 import pathlib
 import sys
 
@@ -115,6 +116,8 @@ def test_render_html_links_are_absolute_not_relative():
     for href in hrefs:
         if href.startswith(("http://", "https://")):
             continue   # dış kaynak linki (ör. "Kaynak: <url>") — gezinme linki değil
+        if href == "#":
+            continue   # yalnız-fragment (ör. "+ Dil ekle") — mevcut sayfaya işaret eder, JS ile ele alınır
         if href == "/manual/test-coll":
             continue   # koleksiyon KÖKÜNE (indekse) mutlak-yol linki — trailing slash sorunundan bağımsız güvenli
         resolved = urljoin(page_url_no_trailing_slash, href)
@@ -136,6 +139,73 @@ def test_render_pdf_produces_valid_pdf():
 
 def test_load_manual_missing_returns_none():
     assert manual.load_manual("__kesinlikle_yok_boyle_bir_koleksiyon") is None
+
+
+def test_model_for_lang_pure():
+    """Sıra 5 (kullanıcı): i18n — model_for_lang saf fonksiyon: çeviri yoksa/baz
+    dilse model AYNEN döner (mutasyon YOK); çeviri varsa yalnız body_md değişir,
+    yapı (slug/chunk_id/lang rozeti) AYNEN kalır; çevrilmemiş bir bölüm baz dile
+    SESSİZCE düşer (hiç boş görünmez)."""
+    base = manual.model_for_lang(FAKE_MODEL, "")
+    assert base is FAKE_MODEL   # dönüşüm yok -> aynı nesne (gereksiz kopya değil)
+    assert manual.model_for_lang(FAKE_MODEL, "en") is FAKE_MODEL   # "en" zaten baz dil (FAKE_MODEL'de lang alanı yok -> varsayılan "en")
+
+    m = {**FAKE_MODEL, "translations": {"tr": {"label": "Türkçe", "sections": {
+        "src|unita-pas": "## Amaç (TR)\nÇevrilmiş metin."}}}}
+    tr = manual.model_for_lang(m, "tr")
+    assert tr is not m   # KOPYA — özgün asla mutasyona uğramaz
+    sec_a = tr["chapters"][0]["sections"][0]
+    sec_b = tr["chapters"][0]["sections"][1]
+    assert sec_a["body_md"] == "## Amaç (TR)\nÇevrilmiş metin."
+    assert sec_b["body_md"] == FAKE_MODEL["chapters"][0]["sections"][1]["body_md"]   # çevrilmemiş -> baz dile düşer
+    assert sec_a["slug"] == "unita-pas" and sec_a["chunk_id"] == 123456   # yapı korunur
+    assert FAKE_MODEL["chapters"][0]["sections"][0]["body_md"].startswith("## Amaç\n")   # özgün DEĞİŞMEDİ
+
+
+def test_translate_manual_saves_and_caches_per_section(tmp_path, monkeypatch):
+    """translate_manual: chunk_id'siz saf model diske yazılıp AI çağrısı
+    monkeypatch'lenir (gerçek Ollama gerektirmez — canlı Ollama doğrulaması
+    ayrıca panel ile elle yapıldı). force=False iken zaten çevrilmiş bölüm
+    TEKRAR çevrilmemeli (önbellek section-bazlı)."""
+    monkeypatch.setattr(manual, "MANUAL_DIR", tmp_path)
+    coll = "__test_translate_pure"
+    manual._save_manual(coll, json.loads(json.dumps(FAKE_MODEL)))   # derin kopya, diske yaz
+
+    calls = []
+    def fake_generate(model, prompt, num_predict=1400):
+        calls.append(prompt)
+        return f"[ÇEVİRİ #{len(calls)}]"
+    monkeypatch.setattr(manual.retrieval, "ollama_generate", fake_generate)
+
+    r = manual.translate_manual(coll, "tr", "Türkçe")
+    assert r == {"ok": True, "lang": "tr", "label": "Türkçe", "sections": 2}
+    assert len(calls) == 2   # FAKE_MODEL'de 2 section var
+    saved = manual.load_manual(coll)
+    assert saved["translations"]["tr"]["label"] == "Türkçe"
+    assert set(saved["translations"]["tr"]["sections"]) == {"src|unita-pas", "src|unitb-pas"}
+    # özgün İngilizce body_md HİÇ değişmedi (çeviri ayrı alanda)
+    assert saved["chapters"][0]["sections"][0]["body_md"] == FAKE_MODEL["chapters"][0]["sections"][0]["body_md"]
+
+    # ikinci çağrı (force=False) -> zaten çevrilmiş, YENİ AI çağrısı olmamalı
+    r2 = manual.translate_manual(coll, "tr", "Türkçe")
+    assert r2["sections"] == 2 and len(calls) == 2   # calls sayısı ARTMADI
+
+    # aynı dile (baz) çeviri istemek hata vermeli
+    assert "error" in manual.translate_manual(coll, "en", "English")
+    # üretilmemiş koleksiyon hata vermeli
+    assert "error" in manual.translate_manual("__hic_yok", "tr")
+
+
+def test_list_manual_languages(tmp_path, monkeypatch):
+    monkeypatch.setattr(manual, "MANUAL_DIR", tmp_path)
+    coll = "__test_langs"
+    assert manual.list_manual_languages(coll) == []   # üretilmemiş -> boş liste
+    m = json.loads(json.dumps(FAKE_MODEL))
+    m["translations"] = {"tr": {"label": "Türkçe", "sections": {}}}
+    manual._save_manual(coll, m)
+    langs = manual.list_manual_languages(coll)
+    assert {"code": "en", "label": "English", "base": True} in langs
+    assert {"code": "tr", "label": "Türkçe", "base": False} in langs
 
 
 @needs_qdrant
