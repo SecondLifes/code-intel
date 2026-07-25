@@ -454,6 +454,58 @@ def test_research_stream_passes_related_k_through(client, monkeypatch):
     assert "event: done\ndata: " in r.text
 
 
+# ---------------- 1e) Sıra 4 (kullanıcı, ekran görüntüsüyle bulunan gerçek hata):
+# "Derin"de cevap yarım/eksik kalıyor ----------------
+# Ollama'nın kendi done_reason="length" alanı (token sınırına takıldı) SSE
+# "done" olayına "truncated" olarak yansımalı — Ollama'ya hiç gitmeden, sahte
+# bir NDJSON akışı taklit edilerek (proje kuralı: yavaş/kararsız gerçek LLM'e
+# dayanmaz).
+@needs_qdrant
+def test_research_stream_reports_truncation_from_done_reason(client, monkeypatch):
+    from src.api import search_routes
+
+    def _fake_pack(*a, **kw):
+        return {"task": "x", "collections": [], "sections": [
+            {"kind": "primary", "title": "t", "text": "code", "collection": "c", "id": 1, "unit": "u.pas", "line_start": 1}],
+            "omitted": []}
+    monkeypatch.setattr(search_routes.retrieval, "get_context_pack", _fake_pack)
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self):
+            yield b'{"response":"merhaba","done":false}\n'
+            yield b'{"response":"","done":true,"done_reason":"length"}\n'
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+
+    r = client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"]})
+    assert r.status_code == 200
+    assert '"truncated": true' in r.text
+
+
+@needs_qdrant
+def test_research_stream_no_truncation_flag_on_natural_stop(client, monkeypatch):
+    from src.api import search_routes
+
+    def _fake_pack(*a, **kw):
+        return {"task": "x", "collections": [], "sections": [
+            {"kind": "primary", "title": "t", "text": "code", "collection": "c", "id": 1, "unit": "u.pas", "line_start": 1}],
+            "omitted": []}
+    monkeypatch.setattr(search_routes.retrieval, "get_context_pack", _fake_pack)
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self):
+            yield b'{"response":"merhaba","done":false}\n'
+            yield b'{"response":"","done":true,"done_reason":"stop"}\n'
+    monkeypatch.setattr(search_routes.urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+
+    r = client.post("/api/research/stream", json={"q": "test", "collections": ["unidac"]})
+    assert r.status_code == 200
+    assert '"truncated": false' in r.text
+
+
 # ---------------- 2) SÖZLEŞME: MCP <-> REST paritesi ----------------
 def test_mcp_rest_parity():
     """Her MCP tool'unun /api/mcp/<ad> REST test ucu olmalı (ve tersi) — tool

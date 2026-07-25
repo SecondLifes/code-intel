@@ -298,9 +298,18 @@ def research_stream(r: ResearchReq):
                       "covering architecture flow, related types/call relations and caveats; cite as "
                       f"[S1] [S2]. If context is insufficient, say what else is needed.\n\nQUESTION: {r.q}\n\nCONTEXT:\n{ctx}")
         yield f"event: step\ndata: {json.dumps({'step': f'{mdl} ile sentezleniyor'}, ensure_ascii=False)}\n\n"
+        # Sıra 4 (kullanıcı, ekran görüntüsüyle bulunan gerçek hata): derin
+        # araştırma cevapları yarım/eksik kalıyordu — num_predict=900 zengin
+        # bağlam paketiyle (tam kod + çağrı/tip/unit bağlamı) üretilen kapsamlı
+        # yanıtlar için çoğu zaman YETMİYORDU. 900 -> 3000'e çıkarıldı. Ama
+        # HERHANGİ bir sabit sayı yine de yetmeyebilir — bu yüzden Ollama'nın
+        # kendi done_reason alanı ("length" = token sınırına takıldı, "stop" =
+        # doğal bitiş) izlenip istemciye AÇIKÇA iletiliyor; limit her zaman
+        # yetmese bile kullanıcı en azından cevabın kesilmiş olabileceğini bilir.
         body = json.dumps({"model": mdl, "prompt": prompt, "stream": True,
-                           "options": {"num_predict": 900}, "think": False}).encode()
+                           "options": {"num_predict": 3000}, "think": False}).encode()
         t0 = time.time()
+        done_reason = None
         try:
             with urllib.request.urlopen(
                     urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
@@ -316,11 +325,12 @@ def research_stream(r: ResearchReq):
                     if tok:
                         yield f"data: {json.dumps({'t': tok}, ensure_ascii=False)}\n\n"
                     if d.get("done"):
+                        done_reason = d.get("done_reason")
                         break
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)[:200]}, ensure_ascii=False)}\n\n"
             return
-        yield f"event: done\ndata: {json.dumps({'sec': round(time.time() - t0, 1)})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'sec': round(time.time() - t0, 1), 'truncated': done_reason == 'length'})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

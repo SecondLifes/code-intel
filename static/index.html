@@ -624,7 +624,7 @@ async function runAskStream(q, research){
     body:JSON.stringify(bodyObj)});
   if(!resp.ok||!resp.body){$('out').innerHTML=err('HTTP '+resp.status);return;}
   $('out').innerHTML=`<div class="answer" id="ans"><span class="spin"></span></div><div id="anstoggle" class="ans-toggle" onclick="togAns()"></div><div class="metaline" id="ansmeta"></div><div id="anssrc"></div>`;
-  let meta=null,text='',sec='?';
+  let meta=null,text='',sec='?',truncated=false;
   const reader=resp.body.getReader(),dec=new TextDecoder();
   let buf='';
   while(true){
@@ -652,13 +652,18 @@ async function runAskStream(q, research){
         }
       }else if(ev==='error'){$('ans').innerHTML='⚠️ '+esc(d.error||JSON.stringify(d));}
       else if(ev==='step'){if(!text)$('ans').innerHTML=`<span class="spin"></span>${esc(d.step||'')}…`;}
-      else if(ev==='done'){sec=d.sec??'?';}
+      else if(ev==='done'){sec=d.sec??'?';truncated=!!d.truncated;}
       else if(d.t){text+=d.t;$('ans').innerHTML=citeFmt(text)+'<span class="spin"></span>';}
     }
   }
   $('ans').innerHTML=text?citeFmt(text):$('ans').innerHTML.replace('<span class="spin"></span>','');
   if(text){CHAT_HISTORY.push({q,a:text});if(CHAT_HISTORY.length>8)CHAT_HISTORY.shift();persistChat();}
-  $('ansmeta').innerHTML=`${esc((meta&&meta.model)||model)} · ${T('yanıt','answer')} ${sec}s · ${T('arama','search')} ${(meta&&meta.ms_search)||'?'}ms · ${MODE}${chatChip()}`;
+  // Sıra 4 (kullanıcı, ekran görüntüsüyle bulunan gerçek hata): "Derin"de cevap
+  // yarım/eksik kalıyordu — num_predict artırıldı AMA her uzunluk için
+  // yetmeyebilir; bu yüzden sunucunun bildirdiği gerçek kesilme durumu
+  // (Ollama done_reason="length") burada AÇIKÇA gösteriliyor.
+  const truncNote=truncated?`<div class="note" style="margin:8px 2px 0;color:var(--err)">⚠️ ${T('Cevap token sınırına takıldı — kesilmiş olabilir. Soruyu daraltmayı deneyin.','The answer hit the token limit — it may be truncated. Try narrowing the question.')}</div>`:'';
+  $('ansmeta').innerHTML=`${esc((meta&&meta.model)||model)} · ${T('yanıt','answer')} ${sec}s · ${T('arama','search')} ${(meta&&meta.ms_search)||'?'}ms · ${MODE}${chatChip()}`+truncNote;
   updateAnsToggle();
 }
 // Sıra 7 (kullanıcı): id="ans" (derin/normal araştırma cevabı) büyüdükçe
