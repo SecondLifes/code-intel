@@ -96,6 +96,11 @@ def manual_view(collection: str, page: str = "index"):
     if model is None:
         return HTMLResponse("<h1>Manual henüz üretilmemiş</h1><p>Ayarlar sayfasından bu koleksiyon için "
                             "\"Manual Üret\" düğmesine basın.</p>", status_code=404)
+    # nav/cross-link href'leri "{slug}.html" üretir (bkz. manual.render_manual_html) —
+    # tarayıcı bunu TAM OLARAK bu path segmentiyle ister; ama render_manual_html
+    # bölümü BARE slug'a göre eşliyor (uzantısız) — canlı doğrulamada yakalanan
+    # gerçek hata: uzantı burada soyulmazsa HER bölüm sayfası 404 dönüyordu.
+    page = page.removesuffix(".html")
     return HTMLResponse(manual.render_manual_html(model, page))
 
 

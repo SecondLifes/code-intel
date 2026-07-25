@@ -68,10 +68,31 @@ def test_render_html_index_and_chapter():
 
     ch = manual.render_manual_html(FAKE_MODEL, "src")
     assert 'id="unita-pas"' in ch and 'id="unitb-pas"' in ch
-    assert "[TBar]" not in ch and "<a href=\"src.html#unitb-pas\">TBar</a>" in ch   # cross-link uygulanmış
+    assert "[TBar]" not in ch and '<a href="/manual/test-coll/src.html#unitb-pas">TBar</a>' in ch   # cross-link uygulanmış
 
     missing = manual.render_manual_html(FAKE_MODEL, "hic-yok")
     assert "404" in missing
+
+
+def test_render_html_links_are_absolute_not_relative():
+    """Canlı doğrulamada bulunan gerçek hata: hrefler GÖRECELİ (`"src.html"`)
+    üretiliyordu — sayfa `/manual/{collection}` adresinde (SONUNDA `/` YOK)
+    sunulduğu için tarayıcı bunu son path segmentini DEĞİŞTİREREK çözüyordu
+    (`/manual/src.html`, "RESTRequest4Delphi" tamamen kayboluyordu) — her
+    link "Manual henüz üretilmemiş" gösteriyordu. Artık MUTLAK olmalı; bunu
+    urljoin ile GERÇEK tarayıcı çözümlemesini simüle ederek kanıtlıyoruz."""
+    from urllib.parse import urljoin
+    import re as _re
+    idx = manual.render_manual_html(FAKE_MODEL, "index")
+    hrefs = _re.findall(r'href="([^"]+)"', idx)
+    assert hrefs, "İndeks sayfasında hiç link bulunamadı"
+    page_url_no_trailing_slash = "http://x/manual/test-coll"   # gerçek servis edilen URL — SONUNDA / YOK
+    for href in hrefs:
+        if href.startswith(("http://", "https://")):
+            continue   # dış kaynak linki (ör. "Kaynak: <url>") — gezinme linki değil
+        resolved = urljoin(page_url_no_trailing_slash, href)
+        assert resolved.startswith("http://x/manual/test-coll/"), \
+            f"{href!r} göreceli çözüldü ve koleksiyon adını kaybetti: {resolved}"
 
 
 def test_render_docx_produces_valid_zip():
@@ -88,6 +109,31 @@ def test_render_pdf_produces_valid_pdf():
 
 def test_load_manual_missing_returns_none():
     assert manual.load_manual("__kesinlikle_yok_boyle_bir_koleksiyon") is None
+
+
+@needs_qdrant
+def test_manual_chapter_route_strips_html_suffix():
+    """Canlı doğrulamada bulunan İKİNCİ hata (ilki mutlak/göreceli href'ti):
+    nav/cross-link href'leri "{slug}.html" formatında ("src.html") — ama
+    /manual/{collection}/{page} rotası `page`'i AYNEN (uzantılı) render'a
+    veriyordu, render ise BÖLÜM SLUG'INA (uzantısız "src") göre eşleştiriyordu
+    — hiçbir eşleşme bulunamayıp her bölüm sayfası 404 dönüyordu. Gerçek bir
+    model dosyası diske yazılıp HTTP üzerinden (route dahil) doğrulanıyor."""
+    import json as _json
+    from fastapi.testclient import TestClient
+    from src.panel import app
+    coll = "__test_manual_route"
+    manual.MANUAL_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = manual.MANUAL_DIR / f"{coll}.json"
+    saved_model = {**FAKE_MODEL, "collection": coll}
+    model_path.write_text(_json.dumps(saved_model, ensure_ascii=False), encoding="utf-8")
+    try:
+        with TestClient(app) as client:
+            r = client.get(f"/manual/{coll}/src.html")
+            assert r.status_code == 200 and "404" not in r.text[:20]
+            assert 'id="unita-pas"' in r.text
+    finally:
+        model_path.unlink(missing_ok=True)
 
 
 @needs_qdrant

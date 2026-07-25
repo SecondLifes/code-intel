@@ -237,16 +237,27 @@ main pre code{background:none;border:0;padding:0}
 
 
 def render_manual_html(model: dict, page: str = "index") -> str:
-    """page: "index" (kapak+TOC) veya bir chapter slug'ı."""
+    """page: "index" (kapak+TOC) veya bir chapter slug'ı.
+
+    KRİTİK düzeltme: tüm href'ler MUTLAK yol (`/manual/{collection}/...`) olmalı.
+    Eskiden `"{slug}.html"` gibi GÖRECELİ üretiliyordu — bu yalnız sayfa URL'si
+    SONUNDA `/` varken doğru çözülür; ama gerçek sayfa `/manual/{collection}`
+    (eğik çizgisiz) adresinde sunuluyor, bu yüzden tarayıcı `src.html`'i
+    `/manual/src.html` diye çözüyordu (son segment "RESTRequest4Delphi"
+    DEĞİŞTİRİLİYOR, ALTINA eklenmiyor) — canlı doğrulamada yakalanan gerçek
+    hata: HER link "Manual henüz üretilmemiş" gösteriyordu. Var olan
+    manual.json dosyaları (type_home içinde hâlâ göreli yol saklıyor)
+    YENİDEN ÜRETİLMEDEN çalışsın diye düzeltme RENDER anında yapılıyor."""
+    base = f"/manual/{model['collection']}/"
     nav_html = [f'<h1>{_esc(model["title"])}</h1>',
                 f'<div class="meta">{_esc(model.get("version",""))} '
                 f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
                 '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
     for ch in model["chapters"]:
         active_ch = " active" if page == ch["slug"] else ""
-        nav_html.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
+        nav_html.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
         for sec in ch["sections"]:
-            nav_html.append(f'<a class="sec" href="{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
+            nav_html.append(f'<a class="sec" href="{base}{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
         nav_html.append("</div>")
     nav = "\n".join(nav_html)
 
@@ -261,14 +272,15 @@ def render_manual_html(model: dict, page: str = "index") -> str:
 <p><b>Diller:</b> {_esc(langs)}</p>
 {"<p><b>Kaynak:</b> " + _esc(model.get("kaynak","")) + (" — <a href=\"" + _esc(model.get("url","")) + "\">" + _esc(model.get("url","")) + "</a>" if model.get("url") else "") + "</p>" if model.get("kaynak") else ""}
 <h2>İçindekiler</h2>
-<ul>{"".join(f'<li><a href="{c["slug"]}.html">{_esc(c["title"])}</a> ({len(c["sections"])})</li>' for c in model["chapters"])}</ul>"""
+<ul>{"".join(f'<li><a href="{base}{c["slug"]}.html">{_esc(c["title"])}</a> ({len(c["sections"])})</li>' for c in model["chapters"])}</ul>"""
     else:
         ch = next((c for c in model["chapters"] if c["slug"] == page), None)
         if ch is None:
             return "<h1>404</h1>"
+        type_home_abs = {k: base + v for k, v in model.get("type_home", {}).items()}
         parts = [f'<h1>{_esc(ch["title"])}</h1>']
         for sec in ch["sections"]:
-            linked = _cross_link(sec["body_md"], model.get("type_home", {}), f'{ch["slug"]}.html#{sec["slug"]}')
+            linked = _cross_link(sec["body_md"], type_home_abs, f'{base}{ch["slug"]}.html#{sec["slug"]}')
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
                          f'<span class="badge">{_esc(sec["lang"])}</span></h2>{_md_to_html_fragment(linked)}</div>')
         body = "\n".join(parts)
