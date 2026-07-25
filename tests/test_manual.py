@@ -48,6 +48,18 @@ def test_chapter_key_and_slug():
     assert manual._slug("Ç ö ş İ") != ""   # Türkçe karakterler çökertmemeli
 
 
+def test_hljs_lang_maps_known_exceptions_and_passes_through_others():
+    """Sıra 3/4 (kullanıcı, highlight.js seçildi): proje dil etiketleri ile
+    vendored highlight.js dosya adları arasındaki BİLİNEN 3 istisna
+    (static/vendor/highlightjs/languages içeriğine göre doğrulandı)."""
+    assert manual._hljs_lang("pascal") == "delphi"
+    assert manual._hljs_lang("objc") == "objectivec"
+    assert manual._hljs_lang("vb") == "vbnet"
+    assert manual._hljs_lang("python") == "python"   # eşleşenler olduğu gibi geçer
+    assert manual._hljs_lang("zig") == ""   # bilinen-desteksiz -> boş (istemci hiç denemez)
+    assert manual._hljs_lang("") == ""
+
+
 def test_topo_order_puts_foundations_first():
     """Sıra 6 (kullanıcı): sol menü dosya sırası bağımlılığa göre olmalı —
     kullanılan (temel) dosya, onu kullanandan ÖNCE gelmeli."""
@@ -79,6 +91,15 @@ def test_md_to_html_fragment_basic():
     assert "<ul><li>öğe1</li>" in html or ("<li>öğe1</li>" in html and "<ul>" in html)
 
 
+def test_md_to_html_fragment_applies_hljs_lang_class_to_code_fences():
+    """Sıra 5 (kullanıcı): body_md içindeki kod örnekleri de highlight.js
+    kullanmalı — hljs_lang verilirse fenced code blok class="language-X" alır."""
+    html = manual._md_to_html_fragment("```\nTFoo = class(TBar)\nend;\n```", hljs_lang="delphi")
+    assert '<pre><code class="language-delphi">' in html
+    no_lang = manual._md_to_html_fragment("```\nplain\n```")
+    assert '<pre><code>' in no_lang and 'class=' not in no_lang
+
+
 def test_lang_switcher_active_class_does_not_collide_with_nav_active():
     """Canlı doğrulamada bulunan gerçek hata: dil rozeti class="active" kullanıyordu
     — nav a.active{color:var(--amber)!important} kuralı (bölüm vurgusu için) BUNU DA
@@ -104,13 +125,25 @@ def test_render_html_index_and_chapter():
     # Sıra 7 (kullanıcı): Aç + Klasörde Aç + Tarayıcıda Göster — YALNIZ chunk_id'si olan bölümde (UnitA)
     assert "manualOpen('test-coll',123456,this)" in ch
     assert "manualOpenFolder('test-coll',123456,this)" in ch
-    assert "manualShowInBrowser('test-coll',123456,'UnitA.pas',this)" in ch
+    # FAKE_MODEL section lang="pascal" -> _hljs_lang eşlemesiyle "delphi" olarak geçmeli
+    assert "manualShowInBrowser('test-coll',123456,'UnitA.pas',this,'delphi')" in ch
 
     # madde 2. tur, 2 (kullanıcı): "browserde aç" artık İÇE gömülü değil, sağ
     # panelde (index.html'deki #sidepanel deseniyle aynı) açılıyor
     assert 'id="sidepanel"' in ch and 'id="sp-body"' in ch and 'id="sp-resize"' in ch
     assert "ci-manual-spwidth" in ch
     assert 'class="sec-code"' not in ch   # eski, bölüm-içi gömülü render KALDIRILDI
+
+    # madde 2. tur, 3/4/5 (kullanıcı): highlight.js self-hosted, her kod
+    # gösteriminde (sağ panel) kullanılmalı — dinamik dil yükleyici + tema
+    assert '/static/vendor/highlightjs/highlight.min.js' in ch
+    assert "function manualHL(" in ch and "hljs.highlightElement" in ch
+    assert ".hljs-keyword" in ch   # tema CSS'i
+
+    # madde 2. tur, 5 (kullanıcı): body_md'deki kod örnekleri de (Public API vb.)
+    # highlight.js kullanmalı — UnitA'nın gövdesinde bir ```kod bloğu``` var
+    assert '<pre><code class="language-delphi">' in ch
+    assert "querySelectorAll('main pre code" in ch   # sayfa yüklenince otomatik uygulanır
 
     # madde 2. tur (kullanıcı): manuel sayfasında da SweetAlert2 kullanılmalı — native
     # alert()/prompt() kalmamalı, self-hosted script dahil edilmeli (offline-first)
@@ -161,6 +194,20 @@ def test_render_manual_zip_is_relative_and_navigable_without_server():
     # açılır — ama fetch() YOK, kaynak <template> içine GÖMÜLÜ (offline çalışır)
     assert 'id="sidepanel"' in src and "manualShowSource(" in src
     assert "<template id=\"code-unita-pas\">" in src or "fetch(" not in src
+
+    # madde 2. tur, 3/4/5 (kullanıcı): highlight.js statik pakette de çalışmalı —
+    # ama /static/vendor/... (SUNUCU-bağımlı, mutlak) DEĞİL, ZIP'in İÇİNDE göreli
+    # bir "highlightjs/" alt klasörü olarak (Sıra 8'in server-free kısıtına uyar)
+    src_attrs = _re2.findall(r'src="([^"]+)"', idx) + _re2.findall(r'src="([^"]+)"', src)
+    for s in src_attrs:
+        assert not s.startswith(("http://", "https://", "/static/")), f"statik pakette mutlak script yolu olmamalı: {s!r}"
+    assert 'src="highlightjs/highlight.min.js"' in src
+    assert "highlightjs/languages/" in src   # manualHL'in dinamik yükleyicisi
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        names = zf.namelist()
+        assert "highlightjs/highlight.min.js" in names
+        assert "highlightjs/languages/delphi.min.js" in names   # FAKE_MODEL lang="pascal" -> delphi
+        assert "highlightjs/languages/python.min.js" not in names   # kullanılmayan dil paketlenmemeli
 
 
 def test_render_html_missing_chapter_is_404():

@@ -35,6 +35,25 @@ except ImportError:
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MANUAL_DIR = ROOT / "data" / "manuals"
 
+# Sıra 3/4 (kullanıcı, highlight.js seçildi): projenin chunker dil etiketleri
+# (src/chunker.py LANG_TABLE) çoğunlukla highlight.js'in vendored dosya adlarıyla
+# BİREBİR aynı — ama 3 bilinen istisna var (static/vendor/highlightjs/languages
+# içeriğine göre doğrulandı): Pascal/Delphi dosyası "delphi.min.js" adında
+# (kayıtlı takma adları: dpr/dfm/pas/pascal), Objective-C "objectivec.min.js",
+# Visual Basic "vbnet.min.js". Burada YOKSA (ör. zig/solidity/gdscript/odin/
+# gleam — hljs'te hiç yok) proje dil adı OLDUĞU GİBİ denenir; dosya 404 dönerse
+# istemci tarafında SESSİZCE düz metne düşülür (bkz. script'teki manualHL) —
+# bu yüzden liste TAM olmak ZORUNDA değil, yalnız BİLİNEN istisnaları düzeltir.
+_HLJS_ALIAS = {"pascal": "delphi", "objc": "objectivec", "vb": "vbnet"}
+_HLJS_UNSUPPORTED = {"zig", "solidity", "gdscript", "odin", "gleam"}
+
+
+def _hljs_lang(lang: str) -> str:
+    """Boş string dönerse istemci highlight.js'i hiç DENEMEZ (bilinen-desteksiz)."""
+    if not lang or lang in _HLJS_UNSUPPORTED:
+        return ""
+    return _HLJS_ALIAS.get(lang, lang)
+
 
 def _chapter_key(unit: str) -> str:
     parts = unit.replace("\\", "/").split("/")
@@ -304,9 +323,15 @@ def _cross_link(body_md: str, type_home: dict[str, str], self_href: str) -> str:
     return "".join(out)
 
 
-def _md_to_html_fragment(md: str) -> str:
+def _md_to_html_fragment(md: str, hljs_lang: str = "") -> str:
     """viewer.html'deki mdToHtml'in Python karşılığı — aynı minimal alt küme
-    (başlık/kalın/italik/kod/link/liste), tam CommonMark değil, bilinçli."""
+    (başlık/kalın/italik/kod/link/liste), tam CommonMark değil, bilinçli.
+
+    Sıra 5 (kullanıcı): kod gösteriminde her yerde highlight.js kullanılsın —
+    body_md içindeki ```kod bloğu``` parçaları burada da var (ör. "Public API"
+    örnekleri); document_unit() tüm body_md'yi TEK bir dosya/dil için ürettiğinden
+    (bkz. build_manual) o bölümün `sec["lang"]`ı BURADAKİ TÜM kod bloklarına da
+    uygulanır — ayrı ayrı dil tespiti gerekmez."""
     def esc(s): return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     blocks = []
     code_blocks = []
@@ -339,8 +364,9 @@ def _md_to_html_fragment(md: str) -> str:
             html.append(f"<p>{inline(esc(line))}</p>")
     if in_list: html.append("</ul>")
     out = "\n".join(html)
+    code_cls = f' class="language-{hljs_lang}"' if hljs_lang else ""
     for i, code in enumerate(code_blocks):
-        out = out.replace(f"\x00CODE{i}\x00", f"<pre><code>{esc(code)}</code></pre>")
+        out = out.replace(f"\x00CODE{i}\x00", f"<pre><code{code_cls}>{esc(code)}</code></pre>")
     return out
 
 
@@ -404,6 +430,16 @@ main pre code{background:none;border:0;padding:0}
 .sp-close:hover{color:var(--amber)}
 .sp-body{flex:1;overflow:auto;padding:0}
 .sp-body pre{margin:0;padding:16px 20px;font:12.5px/1.6 var(--mono);color:#d8cbb0;white-space:pre;overflow-x:auto}
+.hljs{background:transparent;color:var(--txt)}
+.hljs-comment,.hljs-quote{color:var(--faint);font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-subst,.hljs-name,.hljs-tag{color:var(--amber)}
+.hljs-string,.hljs-doctag,.hljs-regexp,.hljs-addition{color:var(--teal)}
+.hljs-number,.hljs-symbol,.hljs-bullet,.hljs-link{color:var(--amber-d)}
+.hljs-title,.hljs-type,.hljs-class .hljs-title,.hljs-built_in,.hljs-attr,.hljs-attribute{color:var(--teal-d)}
+.hljs-variable,.hljs-template-variable,.hljs-params{color:var(--dim)}
+.hljs-deletion{color:var(--err)}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:700}
 .sp-err{padding:20px;color:var(--err)}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line2);border-top-color:var(--amber);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:7px}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -531,7 +567,7 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
                 actions = (f'<span class="sec-actions">'
                           f'<button type="button" onclick="manualOpen(\'{coll_esc}\',{cid},this)" title="Kayıtlı varsayılan uygulamada aç">📂 Aç</button>'
                           f'<button type="button" onclick="manualOpenFolder(\'{coll_esc}\',{cid},this)" title="Dosya gezgininde, seçili olarak göster">🗂️ Klasörde Aç</button>'
-                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{_esc(sec["title"])}\',this)">🖥️ Tarayıcıda Göster</button>'
+                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{_esc(sec["title"])}\',this,\'{_hljs_lang(sec["lang"])}\')">🖥️ Tarayıcıda Göster</button>'
                           f'</span>')
             # madde 2. tur, 2 (kullanıcı): "browserde aç" bölümün İÇİNE gömülü render
             # ediyordu, mantıksız — artık index.html'deki #sidepanel ile AYNI sağdan
@@ -539,13 +575,14 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
             # .sec-code div'i KALDIRILDI.
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
                          f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
-                         f'{_md_to_html_fragment(linked)}</div>')
+                         f'{_md_to_html_fragment(linked, _hljs_lang(sec["lang"]))}</div>')
         body = "\n".join(parts)
 
     html_lang = active_lang if active_lang in ("tr", "en") else "en"
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
 <title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style>
-<script src="/static/vendor/sweetalert2.min.js"></script></head>
+<script src="/static/vendor/sweetalert2.min.js"></script>
+<script src="/static/vendor/highlightjs/highlight.min.js"></script></head>
 <body><nav id="manualnav">{nav}<div id="navresize"></div></nav><main>{body}</main>
 <div id="sidepanel">
   <div id="sp-resize"></div>
@@ -578,6 +615,22 @@ var MANUAL_COLLECTION={json.dumps(model["collection"])}, MANUAL_PAGE={json.dumps
 // madde 2. tur, 2 (kullanıcı): "browserde aç" sağdan kayan panelde açılmalı —
 // index.html'deki #sidepanel/#sp-resize deseniyle AYNI (sürükle-genişlet dahil).
 var SP_CONTENT='';
+// madde 2. tur, 3/4/5 (kullanıcı): highlight.js self-hosted — dil dosyası YALNIZ
+// gerektiğinde (kaynak gösterildiğinde) dinamik <script> ile yüklenir, tekrar
+// yüklenmez (HLJS_LOADED). Dosya yoksa (bkz. _hljs_lang — birkaç niş dil hljs'te
+// yok) onerror SESSİZCE düz metne düşer, kullanıcı hata görmez.
+var HLJS_LOADED={{}};
+function manualHL(codeEl,hljsLang){{
+  if(!hljsLang||typeof hljs==='undefined')return;
+  codeEl.className='language-'+hljsLang;
+  if(HLJS_LOADED[hljsLang]==='ok'){{hljs.highlightElement(codeEl);return;}}
+  if(HLJS_LOADED[hljsLang]==='error')return;
+  var s=document.createElement('script');
+  s.src='/static/vendor/highlightjs/languages/'+hljsLang+'.min.js';
+  s.onload=function(){{HLJS_LOADED[hljsLang]='ok';hljs.highlightElement(codeEl);}};
+  s.onerror=function(){{HLJS_LOADED[hljsLang]='error';}};
+  document.head.appendChild(s);
+}}
 function closeSidePanel(){{document.getElementById('sidepanel').classList.remove('show');}}
 async function copySidePanel(){{
   if(!SP_CONTENT)return;
@@ -658,7 +711,7 @@ async function manualOpenFolder(collection,id,btn){{
   }}catch(e){{ciError(e);}}
   btn.disabled=false;btn.textContent=old;
 }}
-async function manualShowInBrowser(collection,id,secTitle,btn){{
+async function manualShowInBrowser(collection,id,secTitle,btn,hljsLang){{
   var old=btn.textContent;btn.disabled=true;btn.innerHTML='<span class="spin"></span>';
   var esc=function(s){{return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}};
   try{{
@@ -669,13 +722,20 @@ async function manualShowInBrowser(collection,id,secTitle,btn){{
       SP_CONTENT='';
     }}else{{
       document.getElementById('sp-fname').textContent=r.name||r.path||secTitle;
-      document.getElementById('sp-body').innerHTML='<pre><code>'+esc(r.content)+'</code></pre>';
+      document.getElementById('sp-body').innerHTML='<pre><code></code></pre>';
+      document.querySelector('#sp-body code').textContent=r.content;
+      manualHL(document.querySelector('#sp-body code'),hljsLang);
       SP_CONTENT=r.content;
     }}
     document.getElementById('sidepanel').classList.add('show');
   }}catch(e){{ciError(e);}}
   btn.disabled=false;btn.textContent=old;
 }}
+// madde 2. tur, 5 (kullanıcı): body_md içindeki kod örnekleri (ör. "Public API")
+// de highlight.js kullanmalı — sağ panel dışındaki TEK statik kaynak bu.
+document.querySelectorAll('main pre code[class^="language-"]').forEach(function(el){{
+  manualHL(el, el.className.replace('language-',''));
+}});
 </script></body></html>"""
 
 
@@ -744,17 +804,18 @@ def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str
                 # (aşağıdaki #sidepanel) — fetch YOK, kaynak <template> içine üretim
                 # anında GÖMÜLÜ, panel onu oradan okuyup gösteriyor (offline çalışır).
                 actions = (f'<span class="sec-actions">'
-                          f'<button type="button" onclick="manualShowSource(\'code-{sec["slug"]}\',\'{_esc(sec["title"])}\')">🖥️ Kaynağı Göster</button>'
+                          f'<button type="button" onclick="manualShowSource(\'code-{sec["slug"]}\',\'{_esc(sec["title"])}\',\'{_hljs_lang(sec["lang"])}\')">🖥️ Kaynağı Göster</button>'
                           f'</span>')
                 code_html = f'<template id="code-{sec["slug"]}">{_esc(src_text)}</template>'
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
                          f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
-                         f'{_md_to_html_fragment(linked)}{code_html}</div>')
+                         f'{_md_to_html_fragment(linked, _hljs_lang(sec["lang"]))}{code_html}</div>')
         body = "\n".join(parts)
 
     html_lang = lang if lang in ("tr", "en") else "en"
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
-<title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style></head>
+<title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style>
+<script src="highlightjs/highlight.min.js"></script></head>
 <body><nav id="manualnav">{nav}<div id="navresize"></div></nav><main>{body}</main>
 <div id="sidepanel">
   <div id="sp-resize"></div>
@@ -787,13 +848,26 @@ function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter
   }});
 }})();
 var SP_CONTENT='';
-function manualShowSource(tplId,title){{
+var HLJS_LOADED={{}};
+function manualHL(codeEl,hljsLang){{
+  if(!hljsLang||typeof hljs==='undefined')return;
+  codeEl.className='language-'+hljsLang;
+  if(HLJS_LOADED[hljsLang]==='ok'){{hljs.highlightElement(codeEl);return;}}
+  if(HLJS_LOADED[hljsLang]==='error')return;
+  var s=document.createElement('script');
+  s.src='highlightjs/languages/'+hljsLang+'.min.js';
+  s.onload=function(){{HLJS_LOADED[hljsLang]='ok';hljs.highlightElement(codeEl);}};
+  s.onerror=function(){{HLJS_LOADED[hljsLang]='error';}};
+  document.head.appendChild(s);
+}}
+function manualShowSource(tplId,title,hljsLang){{
   var t=document.getElementById(tplId);
   if(!t)return;
   var text=t.content.textContent;
   document.getElementById('sp-fname').textContent=title;
   document.getElementById('sp-body').innerHTML='<pre><code></code></pre>';
   document.querySelector('#sp-body code').textContent=text;
+  manualHL(document.querySelector('#sp-body code'),hljsLang);
   SP_CONTENT=text;
   document.getElementById('sidepanel').classList.add('show');
 }}
@@ -826,6 +900,9 @@ document.addEventListener('keydown',function(e){{
     localStorage.setItem('ci-manual-spwidth',parseInt(panel.style.width));
   }});
 }})();
+document.querySelectorAll('main pre code[class^="language-"]').forEach(function(el){{
+  manualHL(el, el.className.replace('language-',''));
+}});
 </script></body></html>"""
 
 
@@ -833,16 +910,31 @@ def render_manual_zip(model: dict, lang: str = "") -> bytes:
     """Sıra 8 (kullanıcı): "statik html export eklenmesini istiyorum. Bütün
     dosyalar tek zip dosyasında." `model` ÇAĞIRAN tarafından zaten
     model_for_lang() ile dönüştürülmüş olmalı (docx/pdf render'larıyla AYNI
-    sözleşme) — burada yalnız `lang` html lang= özniteliği için kullanılır."""
+    sözleşme) — burada yalnız `lang` html lang= özniteliği için kullanılır.
+
+    Sıra 3/4/5 (kullanıcı, highlight.js): statik paket `/static/vendor/...`
+    (SUNUCU-bağımlı, mutlak yol) kullanamaz — bu yüzden highlight.js çekirdeği
+    + YALNIZ bu manuelde GERÇEKTEN kullanılan dil dosyaları ZIP'in İÇİNE,
+    GÖRECELİ "highlightjs/" alt klasörü olarak kopyalanır (192 dilin TAMAMI
+    değil — çoğu koleksiyon 1-3 dil kullanır, gereksiz şişirme önlenir)."""
     active_lang = lang or model.get("lang", "en")
     prof = retrieval.get_profile_payload(model["collection"])
     src_root = prof.get("path") or None
+    needed_hljs = sorted({hl for ch in model["chapters"] for sec in ch["sections"]
+                          if (hl := _hljs_lang(sec.get("lang", "")))})
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("index.html", _static_page(model, "index", active_lang, src_root))
         for ch in model["chapters"]:
             zf.writestr(f'{ch["slug"]}.html', _static_page(model, ch["slug"], active_lang, src_root))
+        hljs_core = ROOT / "static" / "vendor" / "highlightjs" / "highlight.min.js"
+        if hljs_core.exists():
+            zf.write(hljs_core, "highlightjs/highlight.min.js")
+            for hl in needed_hljs:
+                langfile = ROOT / "static" / "vendor" / "highlightjs" / "languages" / f"{hl}.min.js"
+                if langfile.exists():
+                    zf.write(langfile, f"highlightjs/languages/{hl}.min.js")
     return buf.getvalue()
 
 
