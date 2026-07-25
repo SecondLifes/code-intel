@@ -363,10 +363,31 @@ def test_render_html_links_are_absolute_not_relative():
             f"{href!r} göreceli çözüldü ve koleksiyon adını kaybetti: {resolved}"
 
 
+def test_pygments_lex_colors_keywords_and_falls_back_gracefully():
+    """Sıra 3. tur (kullanıcı): "PDF/DOCX'te de syntax highlighting kullanılacak"
+    — pygments taklit EDİLMEDEN gerçek tokenize sonucu doğrulanır (kütüphane
+    zaten hafif/hızlı, Ollama gibi yavaş/kararsız değil)."""
+    parts = manual._pygments_lex("TFoo = class(TBar)\nend;", "pascal")
+    colored = [(c, t) for c, t in parts if c]
+    assert any(c == "C58A37" and "class" in t for c, t in colored)   # keyword -> amber-d
+    # dil boşsa ya da pygments tanımıyorsa TEK renksiz parçaya sessizce düşer
+    assert manual._pygments_lex("foo bar", "") == [(None, "foo bar")]
+    assert manual._pygments_lex("foo bar", "__kesinlikle-yok-boyle-bir-dil__") == [(None, "foo bar")]
+
+
 def test_render_docx_produces_valid_zip():
     data = manual.render_manual_docx(FAKE_MODEL)
     assert data[:2] == b"PK"   # docx bir zip arşividir
     assert len(data) > 1000
+
+
+def test_render_docx_code_block_has_pygments_colored_runs():
+    """Sıra 3. tur: DOCX'teki kod bloğunda GERÇEKTEN renkli run'lar var mı —
+    üretilen .docx (bir zip) açılıp document.xml içinde amber-d rengi aranır."""
+    data = manual.render_manual_docx(FAKE_MODEL)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        xml = z.read("word/document.xml").decode("utf-8")
+    assert 'w:val="C58A37"' in xml   # UnitA'nın body_md'sindeki ```class``` bloğu
 
 
 def test_render_pdf_produces_valid_pdf():

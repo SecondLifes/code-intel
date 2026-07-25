@@ -1160,6 +1160,47 @@ def render_manual_zip(model: dict, lang: str = "") -> bytes:
 
 # ---------------- DOCX / PDF (aynı model, farklı render — HTML'in aksine
 # çapraz-link YOK; sade akış metni, kod blokları anlaşılır biçimde ayrılmış) ----------------
+
+# Sıra 3. tur (kullanıcı, "PDF/DOCX'te de syntax highlighting kullanılacak" —
+# önceden kapsam dışı bırakılmıştı, kullanıcı geri açtı): highlight.js
+# TARAYICI'da çalışır, DOCX/PDF'in DOM'u yok — bu yüzden burada AYRI, Python
+# tarafında çalışan bir kütüphane (pygments) kullanılıyor. python-docx/
+# reportlab zaten LAZY import ediliyor (bkz. render_manual_docx/pdf), pygments
+# de AYNI disiplinle burada lazy import edilir.
+def _pygments_color_for(token_type) -> str | None:
+    """3 renkli kısıtlı eşleme — HTML/CSS temasının AÇIK-ZEMİN ("-d", koyu)
+    varyantlarıyla tutarlı (DOCX/PDF sayfaları beyaz zemin, panelin koyu
+    zemini DEĞİL): Keyword/Number->amber-d, String/Name.Class/Function->
+    teal-d, Comment->dim gri. Geri kalanı (Punctuation/Text/Operator vb.)
+    None döner — sayfanın varsayılan (siyah) metin rengiyle kalır."""
+    from pygments.token import Token
+    if token_type in Token.Keyword or token_type in Token.Operator.Word or token_type in Token.Literal.Number:
+        return "C58A37"
+    if (token_type in Token.Literal.String or token_type in Token.Name.Class
+            or token_type in Token.Name.Function or token_type in Token.Name.Builtin):
+        return "2F7E6C"
+    if token_type in Token.Comment:
+        return "6F6555"
+    return None
+
+
+def _pygments_lex(code: str, lang: str) -> list[tuple[str | None, str]]:
+    """(hex_renk_veya_None, metin_parçası) çiftleri — DOCX (per-run renk) ve
+    PDF (reportlab <font color> markup) render'ları AYNI tek listeyi kullanır
+    (HTML/DOCX/PDF'in "tek model, üç render" ilkesiyle tutarlı). `lang` boşsa
+    veya pygments o dil için bir lexer bulamazsa (ör. proje-özel bir dil adı)
+    SESSİZCE tek parça, renksiz metne düşer — üretim asla çökmez."""
+    if not lang:
+        return [(None, code)]
+    try:
+        from pygments import lex
+        from pygments.lexers import get_lexer_by_name
+        lexer = get_lexer_by_name(lang, stripnl=False)
+        return [(_pygments_color_for(tok), val) for tok, val in lex(code, lexer)]
+    except Exception:
+        return [(None, code)]
+
+
 def _plain_blocks(body_md: str) -> list[tuple[str, str]]:
     """(tür, metin) çiftleri: tür = "h2"|"h3"|"p"|"li"|"code". Basit satır bazlı
     ayrıştırma — hem DOCX hem PDF render'ı bunu ortak kullanır."""
@@ -1212,8 +1253,11 @@ def render_manual_docx(model: dict) -> bytes:
                     doc.add_paragraph(text, style="List Bullet")
                 elif kind == "code":
                     p = doc.add_paragraph()
-                    r = p.add_run(text); r.font.name = "Consolas"; r.font.size = Pt(9)
                     p.paragraph_format.left_indent = Pt(18)
+                    for color, tok_text in _pygments_lex(text, sec["lang"]):
+                        r = p.add_run(tok_text); r.font.name = "Consolas"; r.font.size = Pt(9)
+                        if color:
+                            r.font.color.rgb = RGBColor.from_string(color)
                 else:
                     doc.add_paragraph(text)
     buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
@@ -1295,7 +1339,11 @@ def render_manual_pdf(model: dict) -> bytes:
                 elif kind == "li":
                     items.append(ListItem(Paragraph(esc(text), body)))
                 elif kind == "code":
-                    story.append(Paragraph(esc(text).replace("\n", "<br/>"), codep))
+                    marked = "".join(
+                        (f'<font color="#{color}">{esc(tok).replace(chr(10), "<br/>")}</font>' if color
+                         else esc(tok).replace(chr(10), "<br/>"))
+                        for color, tok in _pygments_lex(text, sec["lang"]))
+                    story.append(Paragraph(marked, codep))
                 else:
                     if items:
                         story.append(ListFlowable(items, bulletType="bullet")); items = []
