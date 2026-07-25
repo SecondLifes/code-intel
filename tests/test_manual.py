@@ -109,6 +109,11 @@ def test_render_html_index_and_chapter():
     assert '/static/vendor/sweetalert2.min.js' in ch
     assert "alert(" not in ch and "prompt(" not in ch
     assert "ciError(" in ch and "ciPrompt(" in ch
+
+    # madde 2. tur, 3 (kullanıcı): sol menü index.html'deki sağ panel gibi
+    # sürükle-daralt/genişlet olabilmeli, genişlik oturumlar arası hatırlanmalı
+    assert 'id="manualnav"' in ch and 'id="navresize"' in ch
+    assert "ci-manual-navw" in ch
     # chunk_id'si OLMAYAN eski-model bölümü (UnitB) için düğme HİÇ üretilmemeli — çökmemeli;
     # test fixture'ında tek chunk_id var, bu yüzden onclick çağrısı tam bir kez görünmeli
     # ("manualOpen(" kendisi ayrıca <script> içindeki fonksiyon TANIMINDA da geçiyor,

@@ -352,6 +352,9 @@ MANUAL_CSS = """
 *{box-sizing:border-box;margin:0}
 body{background:var(--bg);color:var(--txt);font:15px/1.7 'Segoe UI',system-ui,sans-serif;display:flex;min-height:100vh}
 nav{width:300px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:22px 18px;overflow-y:auto;overflow-x:hidden;position:sticky;top:0;height:100vh}
+#navresize{position:absolute;right:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5}
+#navresize:hover,#navresize.dragging{background:rgba(224,162,74,.18)}
+nav.dragging{transition:none}
 nav h1{font-family:var(--serif);font-size:18px;color:var(--amber);margin-bottom:4px;line-height:1.3}
 nav h1 a{color:inherit;text-decoration:none}
 nav h1 a:hover{color:var(--teal)}
@@ -505,9 +508,26 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
 <title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style>
 <script src="/static/vendor/sweetalert2.min.js"></script></head>
-<body><nav>{nav}</nav><main>{body}</main>
+<body><nav id="manualnav">{nav}<div id="navresize"></div></nav><main>{body}</main>
 <script>
 var MANUAL_COLLECTION={json.dumps(model["collection"])}, MANUAL_PAGE={json.dumps(page)};
+(function(){{
+  var nav=document.getElementById('manualnav'),handle=document.getElementById('navresize');
+  var saved=parseInt(localStorage.getItem('ci-manual-navw'));
+  if(saved)nav.style.width=saved+'px';
+  var dragging=false;
+  handle.addEventListener('mousedown',function(e){{dragging=true;nav.classList.add('dragging');handle.classList.add('dragging');e.preventDefault();}});
+  window.addEventListener('mousemove',function(e){{
+    if(!dragging)return;
+    var w=Math.min(window.innerWidth*0.6,Math.max(200,e.clientX));
+    nav.style.width=w+'px';
+  }});
+  window.addEventListener('mouseup',function(){{
+    if(!dragging)return;
+    dragging=false;nav.classList.remove('dragging');handle.classList.remove('dragging');
+    localStorage.setItem('ci-manual-navw',parseInt(nav.style.width));
+  }});
+}})();
 var SWAL_BASE={{background:undefined,customClass:{{popup:'ci-swal',confirmButton:'ci-swal-btn',cancelButton:'ci-swal-btn-cancel'}},buttonsStyling:false}};
 function ciError(msg){{return Swal.fire(Object.assign({{}},SWAL_BASE,{{icon:'error',html:String(msg&&msg.message||msg),confirmButtonText:'Tamam'}}));}}
 function ciPrompt(title,defaultValue){{
