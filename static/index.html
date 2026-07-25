@@ -93,6 +93,18 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 pre{background:var(--code);margin:0;padding:12px 16px;font:12.5px/1.55 var(--mono);color:#d8cbb0;overflow-x:auto}
 pre .kw{color:var(--amber)}
 pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding:0 1px}
+/* Sıra 1 (kullanıcı): "highlighting arama sayfasında kullanılmamış... heryerde
+   kullanılacak" — manual.py'deki AYNI tema (self-hosted highlight.js) */
+.hljs{background:transparent;color:var(--txt)}
+.hljs-comment,.hljs-quote{color:var(--faint);font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-subst,.hljs-name,.hljs-tag{color:var(--amber)}
+.hljs-string,.hljs-doctag,.hljs-regexp,.hljs-addition{color:var(--teal)}
+.hljs-number,.hljs-symbol,.hljs-bullet,.hljs-link{color:var(--amber-d)}
+.hljs-title,.hljs-type,.hljs-class .hljs-title,.hljs-built_in,.hljs-attr,.hljs-attribute{color:var(--teal-d)}
+.hljs-variable,.hljs-template-variable,.hljs-params{color:var(--dim)}
+.hljs-deletion{color:var(--err)}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:700}
 .exp{display:none;padding:11px 16px;background:rgba(73,179,156,.06);border-top:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;color:#dfe8e3}
 .exp.has{display:block}
 .rel{display:none;padding:11px 16px;background:rgba(224,162,74,.05);border-top:1px solid var(--line);font-size:12.5px}
@@ -159,6 +171,7 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
 .ci-swal-toast .swal2-title{font-size:14px;color:var(--txt)}
 </style>
 <script src="/static/vendor/sweetalert2.min.js"></script>
+<script src="/static/vendor/highlightjs/highlight.min.js"></script>
 </head>
 <body>
 <div class="top">
@@ -364,6 +377,44 @@ health();jobPeek();loadWorkspaces();setInterval(()=>{health();jobPeek();},8000);
 
 function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function hl(code){return esc(code).replace(/\b(procedure|function|begin|end|var|const|type|if|then|else|try|finally|except|for|while|do|class|record|nil|inherited|override|virtual)\b/g,'<span class="kw">$1</span>');}
+// Sıra 1 (kullanıcı): "highlighting arama sayfasında kullanılmamış... heryerde
+// kullanılacak" — manual.py'deki AYNI 3 bilinen istisna eşlemesi (dosya adları
+// static/vendor/highlightjs/languages'e göre doğrulandı).
+const HLJS_ALIAS={pascal:'delphi',objc:'objectivec',vb:'vbnet'};
+const HLJS_UNSUPPORTED=new Set(['zig','solidity','gdscript','odin','gleam']);
+// eski (v1 chunker ile) indekslenmiş koleksiyonlarda "lang" alanı hiç YOK —
+// bu proje temelde Delphi olduğu için ".pas" uzantısından çıkarım yapılıyor
+// (canlı testte fark edildi: unidac gibi eski indekslerde h.lang null geliyordu).
+function inferLangFromUnit(unit){
+  const m=/\.([a-z0-9]+)$/i.exec(unit||'');
+  return m&&['pas','pp','dpr','dpk','inc','lpr'].includes(m[1].toLowerCase())?'pascal':'';
+}
+function hljsLangFor(lang){
+  if(!lang||HLJS_UNSUPPORTED.has(lang))return '';
+  return HLJS_ALIAS[lang]||lang;
+}
+var HLJS_LOADED={};
+function hlApply(codeEl,hljsLang,done){
+  if(!hljsLang||typeof hljs==='undefined'){if(done)done();return;}
+  codeEl.className='language-'+hljsLang;
+  function finish(){hljs.highlightElement(codeEl);if(done)done();}
+  if(HLJS_LOADED[hljsLang]==='ok'){finish();return;}
+  if(HLJS_LOADED[hljsLang]==='error'){if(done)done();return;}
+  const s=document.createElement('script');
+  s.src='/static/vendor/highlightjs/languages/'+hljsLang+'.min.js';
+  s.onload=()=>{HLJS_LOADED[hljsLang]='ok';finish();};
+  s.onerror=()=>{HLJS_LOADED[hljsLang]='error';if(done)done();};
+  document.head.appendChild(s);
+}
+// hljs tokenize ettikten SONRA sorgu terimlerini işaretle (markQuery innerHTML
+// üstünde tag-güvenli çalışıyor) — sırayı TERSİNE çevirmek (önce mark, sonra
+// hljs) mark'ları SİLER, çünkü highlightElement innerHTML'i TAMAMEN değiştirir.
+function applyCodeEnhancements(root){
+  (root||document).querySelectorAll('.codewrap code').forEach(el=>{
+    const lang=el.dataset.hljsLang||'';
+    hlApply(el,lang,()=>{el.innerHTML=markQuery(el.innerHTML);});
+  });
+}
 // Sorgu terimlerini kod önizlemesinde işaretle — "bu sonuç neden geldi"nin
 // satır-düzeyi yanıtı. Tag içlerine (span/mark) bulaşmasın diye tag-dışı guard'lı.
 function markQuery(html){
@@ -435,7 +486,9 @@ async function sendFeedback(id,collection,name,verdict,btn){
     btn.textContent='✓';setTimeout(()=>{btn.textContent=old;btn.disabled=false;},1500);
   }catch(e){btn.disabled=false;}
 }
-function srcCard(h,i){return `
+function srcCard(h,i){
+  const hljsLang=hljsLangFor(h.lang||inferLangFromUnit(h.unit));
+  return `
   <div class="src" id="s${h.id}">
     <div class="head" onclick="tog('${h.id}')">
       <span class="idx">[${i+1}]</span>
@@ -446,7 +499,7 @@ function srcCard(h,i){return `
       ${whyText(h.why)?`<span class="m" style="cursor:help" title="${esc(whyText(h.why))}">ⓘ</span>`:''}
       <span class="sc">${h.score}</span>
     </div>
-    <div class="codewrap"><pre>${markQuery(hl(h.code))}</pre></div>
+    <div class="codewrap"><pre><code${hljsLang?` data-hljs-lang="${hljsLang}"`:''}>${esc(h.code)}</code></pre></div>
     <div class="exp ${h.tr?'has':''}" id="e${h.id}">${esc(h.tr||'')}</div>
     <div class="rel" id="r${h.id}"></div>
     <div class="tools">
@@ -485,6 +538,7 @@ function toggleGrouping(checked){
   localStorage.setItem('ci-groupmode',checked?'1':'0');
   if(ALL_HITS.length){
     $('hitlist').innerHTML=renderHitList(ALL_HITS);
+    applyCodeEnhancements();
   }
 }
 function renderHitList(hits){
@@ -537,6 +591,7 @@ async function run(){
           `<div id="hitlist">${renderHitList(ALL_HITS)}</div>`+
           (r.has_more?`<button class="loadmore" id="loadmore" onclick="loadMore()">${T('Daha Fazla Göster','Show More')} ▾</button>`:'')
         :none());
+      applyCodeEnhancements();
     }else{
       await runAskStream(q, ACT==='research');
     }
@@ -602,6 +657,7 @@ async function loadMore(){
     // gruplama tam yeniden çizim gerektirir (yeni gelen sonuçlar var olan bir
     // gruba ait olabilir) — insertAdjacentHTML ile sona eklemek burada yanlış olurdu
     $('hitlist').innerHTML=renderHitList(ALL_HITS);
+    applyCodeEnhancements();
     const shownNow=ALL_HITS.length;
     $('reslabel').textContent=`${shownNow} / ${r.total} ${T('sonuç gösteriliyor','results shown')} · ${r.ms} ms · ${MODE}`;
     if(r.has_more){btn.disabled=false;btn.innerHTML=T('Daha Fazla Göster','Show More')+' ▾';}
