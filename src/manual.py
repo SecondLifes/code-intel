@@ -547,19 +547,40 @@ main pre code{background:none;border:0;padding:0}
 .ctree span.ext{color:var(--faint);font-style:italic}
 .ctree .other{margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
 .ctree .other-label{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;padding-left:4px}
+/* Sıra B/2. tur (kullanıcı): sınıf ağacı açılır/kapanır — native <details>
+   kullanılıyor (JS/max-height transition YOK — bu oturumda max-height geçişi
+   iki kez donma hatası verdi, bkz. Sıra 5/7; <details> tarayıcı-yerli, JS'siz
+   ve o hata sınıfından bağışık). Varsayılan: kapalı; yalnız o an görüntülenen
+   bölümün ağacı açık gelir ("auto_open" — render zamanında hesaplanır).*/
+.ctree details{margin:0}
+.ctree summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:2px}
+.ctree summary::-webkit-details-marker{display:none}
+.ctree summary::before{content:'▸';color:var(--faint);font-size:9px;flex:none;width:12px;transition:transform .15s ease}
+.ctree details[open]>summary::before{transform:rotate(90deg)}
+.ctree summary a,.ctree summary span.ext{flex:1;min-width:0;padding-left:0}
+.ctree li>a,.ctree li>span.ext{padding-left:16px}
 """
 
 
-def _render_ctree_node(n: dict, ch_slug: str, base: str, qs: str) -> str:
+def _render_ctree_node(n: dict, ch_slug: str, base: str, qs: str, auto_open: bool = False) -> str:
     """_build_class_tree'nin döndürdüğü TEK bir düğümü (ve alt ağacını) HTML'e
     çevirir. "external" düğümler (kullanıcı kararı: gri/tıklanamaz kök) `<span>`
-    olarak, kendi bölümü olanlar `<a>` olarak render edilir."""
+    olarak, kendi bölümü olanlar `<a>` olarak render edilir.
+
+    Sıra B/2. tur (kullanıcı): "Sınıf Ağacını Açılır Kapanır TreeList yap" —
+    çocuğu olan düğümler <details>/<summary> ile (JS'siz, tarayıcı-yerli)
+    aç/kapa olur; yapraklar (çocuksuz) düz link/span kalır. `auto_open`
+    (çağıran taraf: `page == ch["slug"]`) o an görüntülenen bölümün ağacını
+    varsayılan AÇIK, diğer bölümlerinkini KAPALI başlatır."""
     if n["href"]:
         label = f'<a href="{base}{ch_slug}.html{qs}{n["href"]}">{_esc(n["name"])}</a>'
     else:
         label = f'<span class="ext" title="Bu koleksiyonda tanımlı değil (harici sınıf veya başka bir bölümde)">{_esc(n["name"])}</span>'
-    kids = "".join(f'<li>{_render_ctree_node(c, ch_slug, base, qs)}</li>' for c in n["children"])
-    return label + (f'<ul>{kids}</ul>' if kids else "")
+    if not n["children"]:
+        return label
+    kids = "".join(f'<li>{_render_ctree_node(c, ch_slug, base, qs, auto_open)}</li>' for c in n["children"])
+    open_attr = " open" if auto_open else ""
+    return f'<details{open_attr}><summary>{label}</summary><ul>{kids}</ul></details>'
 
 
 def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
@@ -643,7 +664,7 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
         active_ch = " active" if page == ch["slug"] else ""
         class_view.append(f'<div class="chapter"><a href="{base}{ch["slug"]}.html{qs}" class="{active_ch}">{_esc(ch["title"])}</a>')
         if ct["roots"]:
-            items = "".join(f'<li>{_render_ctree_node(n, ch["slug"], base, qs)}</li>' for n in ct["roots"])
+            items = "".join(f'<li>{_render_ctree_node(n, ch["slug"], base, qs, page == ch["slug"])}</li>' for n in ct["roots"])
             class_view.append(f'<ul class="ctree">{items}</ul>')
         if ct["other_files"]:
             of = "".join(f'<li><a href="{base}{ch["slug"]}.html{qs}{f["href"]}">{_esc(f["title"])}</a></li>' for f in ct["other_files"])
@@ -939,7 +960,7 @@ def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str
         active_ch = " active" if page == ch["slug"] else ""
         class_view.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
         if ct["roots"]:
-            items = "".join(f'<li>{_render_ctree_node(n, ch["slug"], "", "")}</li>' for n in ct["roots"])
+            items = "".join(f'<li>{_render_ctree_node(n, ch["slug"], "", "", page == ch["slug"])}</li>' for n in ct["roots"])
             class_view.append(f'<ul class="ctree">{items}</ul>')
         if ct["other_files"]:
             of = "".join(f'<li><a href="{ch["slug"]}.html{f["href"]}">{_esc(f["title"])}</a></li>' for f in ct["other_files"])

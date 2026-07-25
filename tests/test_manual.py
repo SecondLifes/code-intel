@@ -242,6 +242,30 @@ def test_render_html_shows_class_tree_tab_when_present():
     assert '<a href="/manual/test-coll/src.html#unitb-pas">TBar</a>' in ch   # kendi bölümü var -> link
     assert "function manualNavTab(" in ch
 
+    # Sıra B/2. tur (kullanıcı): "Sınıf Ağacını Açılır Kapanır TreeList yap" —
+    # çocuğu olan düğümler <details>/<summary>; yaprak (TFoo, çocuksuz) DEĞİL.
+    assert "<details" in ch and "<summary>" in ch
+    assert "<summary><a href=\"/manual/test-coll/src.html#unitb-pas\">TBar</a></summary>" in ch
+    assert '<details open><summary><span class="ext"' in ch   # page="src"=ch.slug -> auto_open
+    # yaprak TFoo <details> İÇİNDE DEĞİL, düz <a> kalmalı (çocuğu yok)
+    assert '<li><a href="/manual/test-coll/src.html#unita-pas">TFoo</a></li>' in ch
+
+
+def test_render_html_class_tree_collapsed_for_non_active_chapter():
+    """Şu an görüntülenmeyen bir bölümün ağacı varsayılan KAPALI (no "open") gelmeli."""
+    m = {**FAKE_MODEL, "chapters": [{
+        **FAKE_MODEL["chapters"][0],
+        "class_tree": {
+            "roots": [{"name": "TFoo", "href": "#unita-pas", "external": False, "children": [
+                {"name": "TSub", "href": "#unitb-pas", "external": False, "children": []},
+            ]}],
+            "other_files": [],
+        },
+    }]}
+    idx = manual.render_manual_html(m, "index")   # "index" != "src" -> auto_open olmamalı
+    assert "<details><summary>" in idx   # "open" ÖZNİTELİĞİ YOK
+    assert "<details open>" not in idx
+
 
 def test_render_manual_zip_is_relative_and_navigable_without_server():
     """Sıra 8 (kullanıcı): statik HTML export, tek ZIP, hepsi göreli linkli —
