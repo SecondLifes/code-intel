@@ -17,10 +17,13 @@ kitap yapısı. `scope` verilirse yalnız o önekle başlayan dosyalar dahil
 edilir (17K+ sembollü Jedi gibi bir koleksiyonun TAMAMI yerine bir alt-ağaç
 için manual üretilebilsin diye).
 """
+import io
 import json
 import pathlib
 import re
+import zipfile
 from datetime import datetime, timezone
+from urllib.parse import quote as _urlq
 
 from qdrant_client import models
 
@@ -399,6 +402,9 @@ main pre code{background:none;border:0;padding:0}
 .langsw a.cur{background:var(--amber);border-color:var(--amber);color:#1a1305!important;font-weight:700}
 .langsw a.addlang{color:var(--teal);border-style:dashed}
 .langsw a.addlang:hover{border-color:var(--teal-d);color:var(--teal-d)}
+.exportmenu{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.exportmenu a{font-size:11.5px;padding:3px 9px;border-radius:99px;border:1px solid var(--line2);color:var(--dim);text-decoration:none}
+.exportmenu a:hover{border-color:var(--teal-d);color:var(--teal)}
 .swal2-popup.ci-swal{background:var(--panel);color:var(--txt);border:1px solid var(--line2);border-radius:14px;font:15px/1.6 'Segoe UI',system-ui,sans-serif}
 .ci-swal .swal2-title{color:var(--txt);font-size:18px}
 .ci-swal .swal2-html-container{color:var(--dim)}
@@ -453,11 +459,22 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
         for l in langs_avail) + (
         '<a href="#" class="addlang" onclick="manualAddLang(event)" title="Yapay zeka ile yeni bir dile çevir">+ Dil ekle</a>'
     ) + '</div><div id="langjob" class="note" style="display:none"></div>'
+    # Sıra 9 (kullanıcı): "dil menüsünün altına Export menüsü eklensin" — PDF/DOCX
+    # zaten çalışan uçları + Sıra 8'in statik ZIP ucu, hepsi lang= parametresiyle
+    # şu an görüntülenen dili dışa aktarır (baz dilse lang parametresi eklenmez).
+    export_qs = f"&lang={_urlq(active_lang)}" if active_lang != base_lang else ""
+    coll_q = _urlq(model["collection"])
+    export_menu = ('<div class="exportmenu">'
+        f'<a href="/api/manual/export?collection={coll_q}&format=pdf{export_qs}" title="PDF olarak indir">📄 PDF</a>'
+        f'<a href="/api/manual/export?collection={coll_q}&format=docx{export_qs}" title="Word (DOCX) olarak indir">📝 DOCX</a>'
+        f'<a href="/api/manual/export?collection={coll_q}&format=zip{export_qs}" title="Sunucu gerekmeden dosyada gezinilebilen statik HTML paketi (ZIP)">🗂️ Statik HTML (ZIP)</a>'
+        '</div>')
     nav_html = ([f'<a class="home" href="{index_url}">← İndeks / Kapak</a>'] if page != "index" else []) + [
                 f'<h1><a href="{index_url}">{_esc(model["title"])}</a></h1>',
                 f'<div class="meta">{_esc(model.get("version",""))} '
                 f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
                 lang_switcher,
+                export_menu,
                 '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
     for ch in model["chapters"]:
         active_ch = " active" if page == ch["slug"] else ""
@@ -600,6 +617,118 @@ async function manualShowInBrowser(collection,id,secSlug,btn){{
 
 def _esc(s):
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _read_source_for_static(src_root: str, unit: str) -> str | None:
+    """`/api/reveal` mode=browser ile AYNI okuma mantığı — ama burada canlı
+    fetch YOK, ZIP üretim ANINDA diskten okunup sayfaya GÖMÜLÜYOR (Sıra 8'in
+    kısıtı: statik paket sunucu olmadan file://'dan gezilebilmeli)."""
+    try:
+        p = pathlib.Path(src_root) / unit
+        if not p.exists() or not p.is_file() or p.stat().st_size > 3_000_000:
+            return None
+        return p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str:
+    """render_manual_html'in statik/taşınabilir kardeşi (Sıra 8, kullanıcı):
+    TÜM hrefler GÖRECELİ (tek düz klasörde index.html + {chapter}.html yan
+    yana) — dil seçici/"+ Dil ekle" ve Aç/Klasörde Aç YOK (biri canlı Ollama
+    çağrısı, diğer ikisi BU makinenin dosya sistemine bağlı — taşınan ZIP'te
+    hiçbiri çalışmaz). "Kaynağı Göster" kalıyor ama /api/reveal'a fetch ATMAZ:
+    kaynak metni üretim anında okunup sayfaya doğrudan GÖMÜLÜ (offline çalışır)."""
+    nav_html = ([f'<a class="home" href="index.html">← İndeks / Kapak</a>'] if page != "index" else []) + [
+                f'<h1><a href="index.html">{_esc(model["title"])}</a></h1>',
+                f'<div class="meta">{_esc(model.get("version",""))} '
+                f'{"· " + _esc(model["owner"]) if model.get("owner") else ""}</div>',
+                '<input placeholder="Ara…" onkeyup="filterNav(this.value)" id="navsearch">']
+    for ch in model["chapters"]:
+        active_ch = " active" if page == ch["slug"] else ""
+        nav_html.append(f'<div class="chapter"><a href="{ch["slug"]}.html" class="{active_ch}">{_esc(ch["title"])}</a>')
+        for sec in ch["sections"]:
+            nav_html.append(f'<a class="sec" href="{ch["slug"]}.html#{sec["slug"]}">{_esc(sec["title"])}</a>')
+        nav_html.append("</div>")
+    nav = "\n".join(nav_html)
+
+    if page == "index":
+        pl = ", ".join(f"{k} ({v})" for k, v in sorted(model["stats"]["languages"].items(), key=lambda kv: -kv[1]))
+        body = f"""<h1>{_esc(model["title"])}</h1>
+<p>{_esc(model.get("group","") or "")}</p>
+<div class="overview-grid">
+  <div class="stat"><b>{model["stats"]["units"]}</b><span>Dosya</span></div>
+  <div class="stat"><b>{model["stats"]["chapters"]}</b><span>Bölüm</span></div>
+</div>
+<p><b>Diller:</b> {_esc(pl)}</p>
+{"<p><b>Kaynak:</b> " + _esc(model.get("kaynak","")) + (" — " + _esc(model.get("url","")) if model.get("url") else "") + "</p>" if model.get("kaynak") else ""}
+<h2>İçindekiler</h2>
+<ul>{"".join(f'<li><a href="{c["slug"]}.html">{_esc(c["title"])}</a> ({len(c["sections"])})</li>' for c in model["chapters"])}</ul>"""
+    else:
+        ch = next((c for c in model["chapters"] if c["slug"] == page), None)
+        if ch is None:
+            return "<h1>404</h1>"
+        type_home_rel = model.get("type_home", {})   # zaten göreli ("chapter.html#section")
+        parts = [f'<h1>{_esc(ch["title"])}</h1>']
+        for sec in ch["sections"]:
+            linked = _cross_link(sec["body_md"], type_home_rel, f'{ch["slug"]}.html#{sec["slug"]}')
+            actions = ""
+            code_html = ""
+            src_text = _read_source_for_static(src_root, sec["unit"]) if src_root and sec.get("chunk_id") is not None else None
+            if src_text is not None:
+                actions = (f'<span class="sec-actions">'
+                          f'<button type="button" onclick="var b=document.getElementById(\'code-{sec["slug"]}\');'
+                          f"b.classList.toggle('show');b.scrollIntoView({{block:'nearest',behavior:'smooth'}});"
+                          f'">🖥️ Kaynağı Göster/Gizle</button></span>')
+                code_html = f'<pre><code>{_esc(src_text)}</code></pre>'
+            parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
+                         f'<span class="badge">{_esc(sec["lang"])}</span>{actions}</h2>'
+                         f'{_md_to_html_fragment(linked)}<div class="sec-code" id="code-{sec["slug"]}">{code_html}</div></div>')
+        body = "\n".join(parts)
+
+    html_lang = lang if lang in ("tr", "en") else "en"
+    return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
+<title>{_esc(model["title"])}</title><style>{MANUAL_CSS}</style></head>
+<body><nav id="manualnav">{nav}<div id="navresize"></div></nav><main>{body}</main>
+<script>
+function filterNav(q){{q=q.toLowerCase();document.querySelectorAll('nav .chapter').forEach(function(ch){{
+  var any=false;ch.querySelectorAll('a.sec').forEach(function(a){{var m=a.textContent.toLowerCase().includes(q);a.style.display=m?'':'none';if(m)any=true;}});
+  ch.style.display=(!q||any)?'':'none';}});}}
+(function(){{
+  var nav=document.getElementById('manualnav'),handle=document.getElementById('navresize');
+  var saved=parseInt(localStorage.getItem('ci-manual-navw'));
+  if(saved)nav.style.width=saved+'px';
+  var dragging=false;
+  handle.addEventListener('mousedown',function(e){{dragging=true;nav.classList.add('dragging');handle.classList.add('dragging');e.preventDefault();}});
+  window.addEventListener('mousemove',function(e){{
+    if(!dragging)return;
+    var w=Math.min(window.innerWidth*0.6,Math.max(200,e.clientX));
+    nav.style.width=w+'px';
+  }});
+  window.addEventListener('mouseup',function(){{
+    if(!dragging)return;
+    dragging=false;nav.classList.remove('dragging');handle.classList.remove('dragging');
+    localStorage.setItem('ci-manual-navw',parseInt(nav.style.width));
+  }});
+}})();
+</script></body></html>"""
+
+
+def render_manual_zip(model: dict, lang: str = "") -> bytes:
+    """Sıra 8 (kullanıcı): "statik html export eklenmesini istiyorum. Bütün
+    dosyalar tek zip dosyasında." `model` ÇAĞIRAN tarafından zaten
+    model_for_lang() ile dönüştürülmüş olmalı (docx/pdf render'larıyla AYNI
+    sözleşme) — burada yalnız `lang` html lang= özniteliği için kullanılır."""
+    active_lang = lang or model.get("lang", "en")
+    prof = retrieval.get_profile_payload(model["collection"])
+    src_root = prof.get("path") or None
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("index.html", _static_page(model, "index", active_lang, src_root))
+        for ch in model["chapters"]:
+            zf.writestr(f'{ch["slug"]}.html', _static_page(model, ch["slug"], active_lang, src_root))
+    return buf.getvalue()
 
 
 # ---------------- DOCX / PDF (aynı model, farklı render — HTML'in aksine

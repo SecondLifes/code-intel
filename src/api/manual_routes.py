@@ -118,8 +118,12 @@ def manual_export(collection: str, format: str = "pdf", lang: str = ""):
         data = manual.render_manual_pdf(model)
         media = "application/pdf"
         ext = "pdf"
+    elif format == "zip":
+        data = manual.render_manual_zip(model, lang)
+        media = "application/zip"
+        ext = "zip"
     else:
-        return JSONResponse({"error": "format 'pdf' veya 'docx' olmalı"}, status_code=400)
+        return JSONResponse({"error": "format 'pdf', 'docx' veya 'zip' olmalı"}, status_code=400)
     suffix = f"-{lang}" if lang and lang != model.get("lang", "en") else ""
     return Response(content=data, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{collection}-manual{suffix}.{ext}"'})

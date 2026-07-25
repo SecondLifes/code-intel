@@ -6,9 +6,11 @@ KOŞULMAZ (pahalı/yavaş, panel.py ile canlı doğrulandı) — bu dosya yalnı
 LLM'siz saf fonksiyonları (render_*, _cross_link, _md_to_html_fragment,
 _chapter_key, _slug) ve API sözleşmesini test eder.
 """
+import io
 import json
 import pathlib
 import sys
+import zipfile
 
 import pytest
 
@@ -114,12 +116,44 @@ def test_render_html_index_and_chapter():
     # sürükle-daralt/genişlet olabilmeli, genişlik oturumlar arası hatırlanmalı
     assert 'id="manualnav"' in ch and 'id="navresize"' in ch
     assert "ci-manual-navw" in ch
-    # chunk_id'si OLMAYAN eski-model bölümü (UnitB) için düğme HİÇ üretilmemeli — çökmemeli;
-    # test fixture'ında tek chunk_id var, bu yüzden onclick çağrısı tam bir kez görünmeli
-    # ("manualOpen(" kendisi ayrıca <script> içindeki fonksiyon TANIMINDA da geçiyor,
-    # o yüzden tam çağrı imzasıyla (tırnaklı argümanlarla) sayıyoruz)
-    assert ch.count("manualOpen('test-coll',") == 1
 
+    # madde 2. tur, 9 (kullanıcı): dil menüsünün ALTINA export menüsü — PDF/DOCX/ZIP
+    assert 'class="exportmenu"' in ch
+    assert "/api/manual/export?collection=test-coll&format=pdf" in ch
+    assert "/api/manual/export?collection=test-coll&format=docx" in ch
+    assert "/api/manual/export?collection=test-coll&format=zip" in ch
+    assert ch.index('class="langsw"') < ch.index('class="exportmenu"')   # dil menüsünün ALTINDA
+
+
+def test_render_manual_zip_is_relative_and_navigable_without_server():
+    """Sıra 8 (kullanıcı): statik HTML export, tek ZIP, hepsi göreli linkli —
+    kullanıcının netleştirdiği kısıt: sunucu olmadan file://'dan gezinilebilmeli."""
+    data = manual.render_manual_zip(FAKE_MODEL)
+    assert isinstance(data, bytes) and len(data) > 0
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        names = zf.namelist()
+        assert "index.html" in names and "src.html" in names
+        idx = zf.read("index.html").decode("utf-8")
+        src = zf.read("src.html").decode("utf-8")
+    # index.html src.html'e GÖRECELİ link vermeli (mutlak /manual/... veya http YOK) —
+    # "Kaynak: git — https://x" metnindeki DIŞ referans hariç (gezinme linki değil, düz metin)
+    assert 'href="src.html"' in idx
+    import re as _re2
+    nav_hrefs_idx = _re2.findall(r'href="([^"]+)"', idx)
+    nav_hrefs_src = _re2.findall(r'href="([^"]+)"', src)
+    for href in nav_hrefs_idx + nav_hrefs_src:
+        assert not href.startswith(("http://", "https://", "/manual/", "/api/")), \
+            f"statik pakette mutlak/harici gezinme linki olmamalı: {href!r}"
+    assert "/manual/" not in src
+    # dil seçici / "+ Dil ekle" statik pakette YOK (canlı Ollama çağrısı gerektirir)
+    assert "manualAddLang" not in src and 'class="langsw"' not in src
+    # Aç / Klasörde Aç YOK (bu makinenin dosya sistemine bağlı, taşınan zip'te anlamsız)
+    assert "manualOpen(" not in src and "manualOpenFolder(" not in src
+    # cross-link de göreli olmalı ("[TBar](src.html#unitb-pas)")
+    assert 'href="src.html#unitb-pas"' in src
+
+
+def test_render_html_missing_chapter_is_404():
     missing = manual.render_manual_html(FAKE_MODEL, "hic-yok")
     assert "404" in missing
 
@@ -144,6 +178,8 @@ def test_render_html_links_are_absolute_not_relative():
             continue   # yalnız-fragment (ör. "+ Dil ekle") — mevcut sayfaya işaret eder, JS ile ele alınır
         if href == "/manual/test-coll":
             continue   # koleksiyon KÖKÜNE (indekse) mutlak-yol linki — trailing slash sorunundan bağımsız güvenli
+        if href.startswith("/api/"):
+            continue   # Sıra 9: export menüsü — kök-mutlak API ucu, /manual/{collection} altında DEĞİL (kasıtlı)
         resolved = urljoin(page_url_no_trailing_slash, href)
         assert resolved.startswith("http://x/manual/test-coll/"), \
             f"{href!r} göreceli çözüldü ve koleksiyon adını kaybetti: {resolved}"
