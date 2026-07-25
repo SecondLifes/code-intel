@@ -64,8 +64,13 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 'Segoe UI',system-ui,sa
 /* ── results (scrolls) ── */
 .scroll{flex:1;overflow-y:auto;padding:22px 24px 40px}
 .scroll .inner{max-width:900px;margin:0 auto}
-.answer{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:12px;padding:16px 20px;font-size:14.5px;white-space:pre-wrap;margin-bottom:8px}
+.answer{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:12px;padding:16px 20px;font-size:14.5px;white-space:pre-wrap;margin-bottom:8px;position:relative;max-height:340px;overflow:hidden}
+.answer.open,.answer.noclamp{max-height:none}
+.answer::after{content:'';position:absolute;left:0;right:0;bottom:0;height:40px;background:linear-gradient(transparent,var(--card));pointer-events:none;opacity:1;transition:opacity .2s}
+.answer.open::after,.answer.noclamp::after{opacity:0}
 .answer b.cite{color:var(--amber);font-weight:600}
+.ans-toggle{display:none;margin:-2px 0 10px;font-size:12px;color:var(--teal);cursor:pointer;text-align:center;padding:5px;user-select:none;border:1px dashed var(--line2);border-radius:8px}
+.ans-toggle:hover{color:var(--amber);border-color:var(--amber-d)}
 .metaline{font-size:11.5px;color:var(--faint);font-family:var(--mono);margin:2px 4px 20px}
 .reslabel{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:0 2px 12px}
 
@@ -609,7 +614,7 @@ async function runAskStream(q, research){
   const resp=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(bodyObj)});
   if(!resp.ok||!resp.body){$('out').innerHTML=err('HTTP '+resp.status);return;}
-  $('out').innerHTML=`<div class="answer" id="ans"><span class="spin"></span></div><div class="metaline" id="ansmeta"></div><div id="anssrc"></div>`;
+  $('out').innerHTML=`<div class="answer" id="ans"><span class="spin"></span></div><div id="anstoggle" class="ans-toggle" onclick="togAns()"></div><div class="metaline" id="ansmeta"></div><div id="anssrc"></div>`;
   let meta=null,text='',sec='?';
   const reader=resp.body.getReader(),dec=new TextDecoder();
   let buf='';
@@ -643,6 +648,27 @@ async function runAskStream(q, research){
   $('ans').innerHTML=text?citeFmt(text):$('ans').innerHTML.replace('<span class="spin"></span>','');
   if(text){CHAT_HISTORY.push({q,a:text});if(CHAT_HISTORY.length>8)CHAT_HISTORY.shift();persistChat();}
   $('ansmeta').innerHTML=`${esc((meta&&meta.model)||model)} · ${T('yanıt','answer')} ${sec}s · ${T('arama','search')} ${(meta&&meta.ms_search)||'?'}ms · ${MODE}${chatChip()}`;
+  updateAnsToggle();
+}
+// Sıra 7 (kullanıcı): id="ans" (derin/normal araştırma cevabı) büyüdükçe
+// ekrana sığmıyordu — kod bloklarındaki (.codewrap) AYNI aç/kapa deseni
+// (max-height + gradient fade), yalnız uzunsa düğme gösterilir.
+function updateAnsToggle(){
+  const el=$('ans'),btn=$('anstoggle');
+  if(!el||!btn)return;
+  if(el.classList.contains('open')||el.scrollHeight<=360){
+    btn.style.display='none';
+    if(el.scrollHeight<=360)el.classList.add('noclamp');
+  }else{
+    btn.style.display='block';
+    btn.textContent=T('Devamını Göster ▾','Show more ▾');
+  }
+}
+function togAns(){
+  const el=$('ans'),btn=$('anstoggle');
+  el.classList.toggle('open');
+  void el.offsetHeight;   // Sıra 5 bulgusu: reflow zorlamadan transition bazen takılı kalıyor
+  btn.textContent=el.classList.contains('open')?T('Daralt ▴','Collapse ▴'):T('Devamını Göster ▾','Show more ▾');
 }
 function err(m){return `<div class="answer" style="border-left-color:#c65">⚠️ ${esc(m)}</div>`;}
 function none(){return `<div class="hero"><div class="mark">∅</div><p>${T('Sonuç bulunamadı — başka bir ifadeyle dene.','No results — try rephrasing.')}</p></div>`;}
