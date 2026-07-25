@@ -507,3 +507,29 @@ def test_manual_api_endpoints_shape():
         assert exp.status_code == 404
         bad_fmt = client.get("/api/manual/export", params={"collection": "__kesinlikle_yok", "format": "xyz"})
         assert bad_fmt.status_code in (400, 404)   # önce manual-yok kontrolü de gelebilir, ikisi de kabul
+
+
+# ---------------- Dış analiz (Codex, 2026-07-25): _esc()/_esc_js() escaping ----------------
+# _esc() önceden yalnız &<> kaçırıyordu (tırnak işaretleri hariç) — öznitelik
+# bağlamlarında (title="...") stored-XSS'e izin verebilirdi. _esc_js() ise
+# onclick="fn('...')" gibi iç içe JS bağlamları için: HTML kaçırma TEK BAŞINA
+# yetersizdir çünkü tarayıcı özniteliği önce HTML olarak çözer (&#39; -> ')
+# sonra bu çözülmüş metni JS kodu gibi ayrıştırır.
+def test_esc_escapes_quotes_not_just_angle_brackets():
+    assert manual._esc('x" onmouseover="alert(1)') == 'x&quot; onmouseover=&quot;alert(1)'
+    assert manual._esc("it's") == "it&#39;s"
+    assert manual._esc("<script>") == "&lt;script&gt;"
+
+
+def test_esc_js_survives_html_decode_then_js_parse():
+    # _esc_js çıktısı HTML olarak çözüldükten SONRA JS string sabiti olarak
+    # ayrıştırıldığında hâlâ TEK bir string kalmalı — string'den erken çıkış olmamalı.
+    payload = "x'); alert(document.cookie); //"
+    escaped = manual._esc_js(payload)
+    # Çıktı bir HTML özniteliği İÇİNDE yaşayacağı için " kaçmış olmalı (varsa)
+    assert '"' not in escaped or "&quot;" in escaped
+    # Ham tek tırnak, JS string sabitini kırmadan asla çıplak durmamalı —
+    # ya kaçırılmış (\') ya da hiç yok.
+    import re
+    bare_quote = re.search(r"(?<!\\)'", escaped)
+    assert bare_quote is None, f"kaçırılmamış tek tırnak JS string'ini kırabilir: {escaped!r}"

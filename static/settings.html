@@ -475,8 +475,8 @@ async function loadIndexes(refreshDetail){
   const d=await(await fetch('/api/indexes')).json();
   INDEXES={};(d.indexes||[]).forEach(ix=>INDEXES[ix.name]=ix);
   $('coll-rows').innerHTML=(d.indexes||[]).map(ix=>`
-    <tr class="collrow${ix.name===SELECTED?' sel':''}" onclick="selectCollection('${ix.name}')">
-      <td class="mergecol" style="display:${MERGE_MODE?'table-cell':'none'}" onclick="event.stopPropagation()"><input type="checkbox" value="${esc(ix.name)}" onchange="toggleMergeSel('${esc(ix.name)}',this.checked)"></td>
+    <tr class="collrow${ix.name===SELECTED?' sel':''}" onclick="selectCollection('${escJs(ix.name)}')">
+      <td class="mergecol" style="display:${MERGE_MODE?'table-cell':'none'}" onclick="event.stopPropagation()"><input type="checkbox" value="${esc(ix.name)}" onchange="toggleMergeSel('${escJs(ix.name)}',this.checked)"></td>
       <td class="mono">${esc(ix.name)}${ix.priority?' '+'★'.repeat(ix.priority):''}${ix.owner?` <span style="color:var(--teal);font-size:11px">(${esc(ix.owner)}${ix.group?' · '+esc(ix.group):''})</span>`:''}</td>
       <td>${vecCell(ix.sparse)}</td>
       <td>${vecCell(ix.dense)}</td>
@@ -861,7 +861,7 @@ function renderDetail(name){
     (e.commit?`<span class="v" title="${esc(e.branch||'')}${e.git_dirty?' · '+T('kirli çalışma ağacı','dirty worktree'):''}">⎇ ${esc(e.commit.slice(0,7))}${e.git_dirty?'*':''}</span>`:'')+
     `<span class="c">${(e.chunks||0).toLocaleString('tr')} chunk</span>`+
     `<span class="d">${fmtDate(e.date)}</span>`+
-    `<button onclick="useHistPath('${esc(e.path).replace(/'/g,"\\'")}')">${T('Bu klasörü kullan','Use this folder')}</button></div>`
+    `<button onclick="useHistPath('${escJs(e.path)}')">${T('Bu klasörü kullan','Use this folder')}</button></div>`
   ).join(''):`<div class="note">${T('Bu indeks için henüz geçmiş yok.','No history for this index yet.')}</div>`;
 }
 function useHistPath(path){$('det-path').value=path;}
@@ -908,7 +908,7 @@ async function scanHardware(){
       `<b>${esc(h.cpu)}</b> (${h.cores} ${T('çekirdek','threads')}) · ${h.ram_gb}GB RAM · <b>${esc(h.gpu)}</b> (${h.vram_gb}GB VRAM)<br>`+
       esc(d.reason)+
       (d.fast&&d.deep?`<br>${T('Önerilen','Suggested')}: ⚡ <b>${esc(d.fast)}</b> · 🔬 <b>${esc(d.deep)}</b> — `+
-       `<button onclick="applySuggestion('${esc(d.fast)}','${esc(d.deep)}')" style="padding:4px 10px;font-size:12px;margin-left:4px">${T('Uygula','Apply')}</button>`:'');
+       `<button onclick="applySuggestion('${escJs(d.fast)}','${escJs(d.deep)}')" style="padding:4px 10px;font-size:12px;margin-left:4px">${T('Uygula','Apply')}</button>`:'');
   }catch(e){$('hw-result').textContent='⚠️ '+e;}
   $('btn-scan').disabled=false;
 }
@@ -1012,7 +1012,7 @@ async function loadApiKeys(){
       <td class="mono" style="font-size:12px">${esc(k.prefix||'')}</td>
       <td style="color:var(--faint);font-size:12px">${esc((k.created_at||'').replace('T',' ').slice(0,16))}</td>
       <td style="color:var(--faint);font-size:12px">${k.last_used_at?esc(k.last_used_at.replace('T',' ').slice(0,16)):T('hiç','never')}</td>
-      <td><button type="button" onclick="revokeApiKey('${k.id}','${esc(k.name).replace(/'/g,"\\'")}')" style="padding:3px 8px;font-size:11px;background:var(--card);border:1px solid var(--line2);color:var(--faint)">🗑</button></td>
+      <td><button type="button" onclick="revokeApiKey('${k.id}','${escJs(k.name)}')" style="padding:3px 8px;font-size:11px;background:var(--card);border:1px solid var(--line2);color:var(--faint)">🗑</button></td>
     </tr>`).join(''):`<tr><td colspan="6" class="note">${T('Henüz anahtar yok.','No keys yet.')}</td></tr>`;
   }catch(e){$('apikey-rows').innerHTML=`<tr><td colspan="6">⚠️ ${e}</td></tr>`;}
 }
@@ -1052,7 +1052,18 @@ health();loadModels();loadOwners();loadGroups();loadIndexes().then(fillDupColls)
 setInterval(health,10000);setInterval(()=>{loadIndexes(false).then(fillDupColls);},10000);
 
 let jobTimer=null;
-function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+// Dış analiz (Codex, 2026-07-25): esc() yalnız &<> kaçırıyordu, tırnakları
+// kaçırmıyordu — bkz. index.html'deki aynı not. " ve ' de artık kaçıyor.
+function esc(s){return (s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// onclick="fn('${x}')" gibi iç içe JS bağlamları için: esc() TEK BAŞINA
+// yetmez (tarayıcı özniteliği HTML olarak çözüp SONRA JS olarak ayrıştırır,
+// yani &#39; yine ' olur ve string'den çıkar). Önce JS-string kaçışı,
+// sonra öznitelik kaçışı uygulanır — bu satırlarda daha önce elle/tutarsız
+// yapılan esc(x).replace(/'/g,"\\'") deseninin genelleştirilmiş hali.
+function escJs(s){
+  const j=(s||'').toString().replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'\\r');
+  return j.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 async function startIndex(vectors){
   const path=$('idx-path').value.trim();
   const collection=$('idx-coll').value.trim()||'unidac';

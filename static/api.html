@@ -254,6 +254,11 @@ pre.out.err{color:var(--err)}
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr';
 const T=(tr,en)=>LANG==='tr'?tr:en, $=id=>document.getElementById(id);
+// Dış analiz (Codex, 2026-07-25): koleksiyon adları (ör. loadCollections()
+// altında) HİÇ kaçırılmadan innerHTML'e basılıyordu — <option value="${c.name}">
+// bir " ve > içeren bir koleksiyon adıyla tamamen yeni bir eleman/etiket
+// enjekte edebilirdi. Bu dosyada esc() hiç yoktu, eklendi.
+function esc(s){return (s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function toggleLang(){LANG=LANG==='tr'?'en':'tr';localStorage.setItem('ci-lang',LANG);applyLang();}
 function applyLang(){
   $('lang-now').textContent=LANG.toUpperCase();$('lang-alt').textContent=LANG==='tr'?'EN':'TR';
@@ -272,7 +277,7 @@ applyLang();
 async function loadCollections(){
   try{
     const d=await(await fetch('/api/mcp/list_collections')).json();
-    $('coll-list').innerHTML=(d.collections||[]).map(c=>`<option value="${c.name}">`).join('');
+    $('coll-list').innerHTML=(d.collections||[]).map(c=>`<option value="${esc(c.name)}">`).join('');
   }catch(e){}
 }
 loadCollections();

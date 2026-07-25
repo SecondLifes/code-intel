@@ -407,7 +407,22 @@ async function jobPeek(){try{
 }catch(e){}}
 health();jobPeek();loadWorkspaces();setInterval(()=>{health();jobPeek();},8000);
 
-function esc(s){return (s||'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+// Dış analiz (Codex, 2026-07-25) bulgusu: esc() yalnız &<> kaçırıyordu, tırnak
+// işaretlerini KAÇIRMIYORDU — title="${esc(x)}" gibi öznitelik bağlamlarında
+// x bir " içeriyorsa özniteliğin dışına çıkılabiliyordu. Artık " ve ' da kaçıyor.
+function esc(s){return (s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// esc() TEK BAŞINA onclick="fn('${x}')" gibi iç içe JS bağlamlarını GÜVENLİ
+// KILMAZ: tarayıcı onclick özniteliğini ÖNCE HTML olarak çözer (ör. &#39; -> ')
+// SONRA bu çözülmüş metni JS kodu gibi ayrıştırır — yani HTML kaçırma tek
+// başına ' karakterinin JS string'inden çıkmasını engellemez (dış analizde
+// bulunan gerçek stored-XSS vektörü: h.collection/h.kind hiç kaçırılmadan,
+// h.name yalnız esc() ile onclick içine gömülüyordu). escJs() önce JS string
+// kaçışı (\, ', \n) uygular, SONRA öznitelik (çift tırnak/&) kaçışı — bu sırayla
+// tarayıcı HTML'i çözüp JS'i ayrıştırdığında değer güvenli bir string sabiti olarak kalır.
+function escJs(s){
+  const j=(s||'').toString().replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'\\r');
+  return j.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 // Sıra 1 (kullanıcı): "highlighting arama sayfasında kullanılmamış... heryerde
 // kullanılacak" — manual.py'deki AYNI 3 bilinen istisna eşlemesi (dosya adları
 // static/vendor/highlightjs/languages'e göre doğrulandı).
@@ -534,14 +549,14 @@ function srcCard(h,i){
     <div class="exp ${h.tr?'has':''}" id="e${h.id}">${esc(h.tr||'')}</div>
     <div class="rel" id="r${h.id}"></div>
     <div class="tools">
-      <button onclick="explain('${h.id}','${h.collection}','fast',this)">⚡ ${T('Açıkla','Explain')}</button>
-      <button onclick="explain('${h.id}','${h.collection}','deep',this)">🔬 ${T('Derin','Deep')}</button>
-      <button onclick="showRelations('${h.id}','${h.collection}',this,'${h.kind}','${esc((h.name||'').split('=')[0].trim())}')">🔗 ${T('İlişkiler','Relations')}</button>
-      <button onclick="reveal('${h.id}','${h.collection}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
-      <button onclick="reveal('${h.id}','${h.collection}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
-      <button onclick="showInBrowser('${h.id}','${h.collection}',this,${h.line_start||0},'${hljsLang}')">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
-      <button title="${T('İyi sonuç','Good result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','up',this)">👍</button>
-      <button title="${T('Alakasız sonuç','Irrelevant result')}" onclick="sendFeedback('${h.id}','${h.collection}','${esc(h.name)}','down',this)">👎</button>
+      <button onclick="explain('${h.id}','${escJs(h.collection)}','fast',this)">⚡ ${T('Açıkla','Explain')}</button>
+      <button onclick="explain('${h.id}','${escJs(h.collection)}','deep',this)">🔬 ${T('Derin','Deep')}</button>
+      <button onclick="showRelations('${h.id}','${escJs(h.collection)}',this,'${escJs(h.kind)}','${escJs((h.name||'').split('=')[0].trim())}')">🔗 ${T('İlişkiler','Relations')}</button>
+      <button onclick="reveal('${h.id}','${escJs(h.collection)}','file',this)">📄 ${T('Dosyayı Aç','Open File')}</button>
+      <button onclick="reveal('${h.id}','${escJs(h.collection)}','folder',this)">📂 ${T('Klasörü Aç','Open Folder')}</button>
+      <button onclick="showInBrowser('${h.id}','${escJs(h.collection)}',this,${h.line_start||0},'${escJs(hljsLang)}')">🌐 ${T('Tarayıcıda Göster','Show in Browser')}</button>
+      <button title="${T('İyi sonuç','Good result')}" onclick="sendFeedback('${h.id}','${escJs(h.collection)}','${escJs(h.name)}','up',this)">👍</button>
+      <button title="${T('Alakasız sonuç','Irrelevant result')}" onclick="sendFeedback('${h.id}','${escJs(h.collection)}','${escJs(h.name)}','down',this)">👎</button>
       <button class="more" onclick="tog('${h.id}')">${T('genişlet ▾','expand ▾')}</button>
     </div>
   </div>`;}
@@ -797,7 +812,7 @@ async function explain(id,collection,depth,btn){
   btn.disabled=false;btn.innerHTML=old;
 }
 
-function relItem(it){return `<span class="rel-item" onclick="jumpTo('${esc(it.name)}')">${esc(it.name)} <span class="u">${esc(it.unit||'')}${it.line_start?':'+it.line_start:''}</span></span>`;}
+function relItem(it){return `<span class="rel-item" onclick="jumpTo('${escJs(it.name)}')">${esc(it.name)} <span class="u">${esc(it.unit||'')}${it.line_start?':'+it.line_start:''}</span></span>`;}
 function relGroup(title,items){
   if(!items||!items.length)return `<div class="rel-group"><h4>${title}</h4><div class="rel-empty">${T('yok','none')}</div></div>`;
   return `<div class="rel-group"><h4>${title} (${items.length})</h4>${items.map(relItem).join('')}</div>`;

@@ -716,11 +716,11 @@ def render_manual_html(model: dict, page: str = "index", lang: str = "") -> str:
             actions = ""
             if sec.get("chunk_id") is not None:
                 cid = sec["chunk_id"]
-                coll_esc = _esc(model["collection"])
+                coll_esc = _esc_js(model["collection"])
                 actions = (f'<span class="sec-actions">'
                           f'<button type="button" onclick="manualOpen(\'{coll_esc}\',{cid},this)" title="Kayıtlı varsayılan uygulamada aç">📂 Aç</button>'
                           f'<button type="button" onclick="manualOpenFolder(\'{coll_esc}\',{cid},this)" title="Dosya gezgininde, seçili olarak göster">🗂️ Klasörde Aç</button>'
-                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{_esc(sec["title"])}\',this,\'{_hljs_lang(sec["lang"])}\')">🖥️ Tarayıcıda Göster</button>'
+                          f'<button type="button" onclick="manualShowInBrowser(\'{coll_esc}\',{cid},\'{_esc_js(sec["title"])}\',this,\'{_hljs_lang(sec["lang"])}\')">🖥️ Tarayıcıda Göster</button>'
                           f'</span>')
             # madde 2. tur, 2 (kullanıcı): "browserde aç" bölümün İÇİNE gömülü render
             # ediyordu, mantıksız — artık index.html'deki #sidepanel ile AYNI sağdan
@@ -910,8 +910,22 @@ document.querySelectorAll('main pre code[class^="language-"]').forEach(function(
 </script></body></html>"""
 
 
+# Dış analiz (Codex, 2026-07-25): _esc() yalnız &<> kaçırıyordu, tırnak
+# işaretlerini KAÇIRMIYORDU — öznitelik bağlamlarında (title="...") " ile
+# dışarı çıkılabiliyordu. Artık " ve ' de kaçıyor.
 def _esc(s):
-    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return ((s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+# _esc() TEK BAŞINA onclick="fn('...')" gibi iç içe JS bağlamlarını GÜVENLİ
+# KILMAZ: tarayıcı özniteliği ÖNCE HTML olarak çözer (&#39; -> ') SONRA bu
+# çözülmüş metni JS kodu gibi ayrıştırır. _esc_js() önce JS string kaçışı
+# (\, ', \n) uygular, SONRA öznitelik kaçışı — bkz. static/index.html'deki
+# escJs() ile aynı mantık, bu kez Python tarafında (statik HTML üretimi).
+def _esc_js(s):
+    j = (s or "").replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
+    return j.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _read_source_for_static(src_root: str, unit: str) -> str | None:
@@ -1008,7 +1022,7 @@ def _static_page(model: dict, page: str, lang: str, src_root: str | None) -> str
                 # (aşağıdaki #sidepanel) — fetch YOK, kaynak <template> içine üretim
                 # anında GÖMÜLÜ, panel onu oradan okuyup gösteriyor (offline çalışır).
                 actions = (f'<span class="sec-actions">'
-                          f'<button type="button" onclick="manualShowSource(\'code-{sec["slug"]}\',\'{_esc(sec["title"])}\',\'{_hljs_lang(sec["lang"])}\')">🖥️ Kaynağı Göster</button>'
+                          f'<button type="button" onclick="manualShowSource(\'code-{sec["slug"]}\',\'{_esc_js(sec["title"])}\',\'{_hljs_lang(sec["lang"])}\')">🖥️ Kaynağı Göster</button>'
                           f'</span>')
                 code_html = f'<template id="code-{sec["slug"]}">{_esc(src_text)}</template>'
             parts.append(f'<div class="section" id="{sec["slug"]}"><h2>{_esc(sec["title"])}'
