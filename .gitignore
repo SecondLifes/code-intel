@@ -10,3 +10,5 @@ __pycache__/
 logs/
 panel-restart.log
 backups/
+.qdrant-initialized
+analysis/
