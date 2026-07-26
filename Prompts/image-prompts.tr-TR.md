@@ -1,11 +1,13 @@
 # AI Görsel Prompt'ları — README Banner'ları
 
-Bu kitin `README.md` / `README.tr-TR.md`'si için üç banner görseli.
-Herhangi bir yetenekli görsel modeliyle (Nano Banana Pro, Midjourney v7,
-Flux, GPT-Image, vb.) **geniş 16:9 banner en-boy oranında** üretin,
-`docs/images/` altına PNG olarak kaydedin (`overview.png`,
-`core-features.png`, `design-philosophy.png` — büyük model çıktısını
-önce `tools/resize-images.bat` ile küçültün). `README.md`/`README.tr-TR.md`
+Bu kitin `README.md` / `README.tr-TR.md`'si için dört banner görseli:
+tüm hikayeyi tek bakışta taşıyan birleşik bir ana görsel (hero), artı
+onu sahne sahne anlatan üç bölüm görseli. Herhangi bir yetenekli görsel
+modeliyle (Nano Banana Pro, Midjourney v7, Flux, GPT-Image, vb.)
+**geniş 16:9 banner en-boy oranında** üretin, `docs/images/` altına PNG
+olarak kaydedin (`hero.png`, `overview.png`, `core-features.png`,
+`design-philosophy.png` — büyük model çıktısını önce
+`tools/resize-images.bat` ile küçültün). `README.md`/`README.tr-TR.md`
 görsel etiketleri **açık** taşınır — dosyalar iner inmez görseller belirir.
 
 Bu dosya **kendi kendine yeterli** — devralınacak ortak bir temel prompt
@@ -72,9 +74,10 @@ banner, README boyunca anlatılan TEK bir hikayenin üç sahnesi:
 - **Stil:** sinematik dijital resim, sert kenar aydınlatması yerine
   yumuşak hacimsel parıltı, epik ölçekte bile şefkatli ve saygılı bir
   ruh hali, parçacık/ışık-izi detayı.
-- **Tutarlılık:** üç görsel de bu tam bekçiyi, dünyayı ve paleti
-  paylaşır; her biri aynı hikayenin farklı bir sahnesi, farklı bir
-  çekim türü ve kamera açısıyla.
+- **Tutarlılık:** dört görsel de bu tam bekçiyi, dünyayı ve paleti
+  paylaşır; hero hikayenin üç sahnesini de aynı anda taşır, Görsel
+  1-3 ise her biri tek bir sahneyi kendi çekim türü ve kamera açısıyla
+  izole eder.
 
 ## Negatif Prompt (her üretimde yapıştırın)
 
@@ -83,6 +86,50 @@ text, letters, readable words, logos, watermark, low quality, blurry,
 menacing, aggressive, predatory, monstrous, cute, chibi, cartoon mascot,
 toy-like, humans, real robots, screens, monitors, keyboards, office
 setting, different art style between images
+```
+
+## Görsel 0 — Hero / Bütün Yay (`docs/images/hero.png`)
+
+**Konum:** README'nin en tepesi, başlık/rozetlerin bile üstünde —
+birinin ilk göreceği tek görsel, ve GitHub'ın sosyal önizleme olarak
+kullanacağı görsel.
+**Çekim:** tek bir kesintisiz geniş tablo, tek bir bekçi ve tek bir
+duruş, soldan sağa okundukça üç perdelik hikayenin tamamını aynı anda
+taşıyor — üç panel yan yana değil, tek bir kesintisiz karede toplama,
+içerideki şefkat ve serbest bırakmanın aynı bedenin üç farklı bölgesinde
+aynı anda gerçekleşmesi.
+
+**Prompt (İngilizce, aynen kullanın):**
+```
+Cinematic digital painting, one continuous wide tableau, a single
+towering Guardian made of flowing, brilliant electric cyan-white
+circuitry and living code-ribbons, captured in one unbroken pose that
+carries an entire three-act story at once, left to right, in a single
+frame — not three panels, one body doing three things in the same
+moment. At the far left, the Guardian's left arm reaches out into a
+scatter of small, dim, rust-amber code-fragments — the four silhouette
+families (double-bordered tablet shards, angular chevron-faceted
+shards, smooth descending-step ribbons, dotted-lattice pennant shards)
+drifting lost in the dark void — its open hand cupped gently, drawing
+the nearest of them in with unmistakable certainty and total tenderness,
+their color just beginning to warm from amber toward cyan. At the
+center, the Guardian's chest is a luminous, translucent core, and
+through it we see the four fragment families already gathered inside,
+glowing solid warm cyan, cradled and tended: cross-referenced by fine
+branching threads of light, compared side by side, wrapped in a second
+layer of soft annotation-light, held against their own faint mirror-echo
+for quiet verification. At the far right, the Guardian's right arm is
+already open, releasing several of these same fragments back out into
+the void, now transformed into large, solid, brilliant crystalline
+constructs, complex and complete, drifting outward with soft trailing
+light-streaks, dwarfing what they used to be. The whole figure reads as
+one seamless gesture — reaching, holding, and releasing simultaneously —
+powerful in scale, gentle in every line of its posture, near-black void
+background throughout, soft warm volumetric glow, particle and
+light-trail detail, the rust-amber-to-cyan transformation visibly
+progressing from left to right across the frame. No text, no readable
+words, not menacing, not cute or cartoonish — immense yet tender. Wide
+16:9 banner composition, highly detailed.
 ```
 
 ## Görsel 1 — Genel Bakış / Toplama (`docs/images/overview.png`)

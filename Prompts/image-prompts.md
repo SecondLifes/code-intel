@@ -1,9 +1,11 @@
 # AI Image Prompts — README Banners
 
-Three banner images for this kit's `README.md` / `README.tr-TR.md`.
-Generate with any capable image model (Nano Banana Pro, Midjourney v7,
-Flux, GPT-Image, etc.) at a **wide 16:9 banner aspect ratio**, save as
-PNG under `docs/images/` (`overview.png`, `core-features.png`,
+Four banner images for this kit's `README.md` / `README.tr-TR.md`: one
+combined hero that carries the whole story at a glance, plus the three
+sectional images that walk through it beat by beat. Generate with any
+capable image model (Nano Banana Pro, Midjourney v7, Flux, GPT-Image,
+etc.) at a **wide 16:9 banner aspect ratio**, save as PNG under
+`docs/images/` (`hero.png`, `overview.png`, `core-features.png`,
 `design-philosophy.png` — shrink oversized model output first with
 `tools/resize-images.bat`). The `README.md`/`README.tr-TR.md` image tags
 ship **uncommented** — the pictures appear as soon as the files land.
@@ -75,9 +77,10 @@ README:
 - **Style:** cinematic digital-painting, soft volumetric glow rather than
   harsh rim lighting, tender and reverent mood even at epic scale,
   particle/light-trail detail.
-- **Consistency:** all three images share this exact Guardian, world,
-  and palette; each is a different beat of the same story, a different
-  shot type and camera angle.
+- **Consistency:** all four images share this exact Guardian, world,
+  and palette; the hero holds all three beats of the story at once,
+  while Images 1–3 each isolate one beat with its own shot type and
+  camera angle.
 
 ## Negative Prompt (paste into every generation)
 
@@ -86,6 +89,50 @@ text, letters, readable words, logos, watermark, low quality, blurry,
 menacing, aggressive, predatory, monstrous, cute, chibi, cartoon mascot,
 toy-like, humans, real robots, screens, monitors, keyboards, office
 setting, different art style between images
+```
+
+## Image 0 — Hero / The Full Arc (`docs/images/hero.png`)
+
+**Slot:** the very top of the README, above the title/badges — the
+single image someone sees first, and the one GitHub uses as the social
+preview.
+**Shot:** one continuous wide tableau, a single Guardian and a single
+pose, that reads left-to-right as the entire three-act story at once —
+not three panels stitched together, one unbroken frame where gathering,
+nurturing, and release are simply three regions of the same body doing
+three things at the same moment.
+
+**Prompt:**
+```
+Cinematic digital painting, one continuous wide tableau, a single
+towering Guardian made of flowing, brilliant electric cyan-white
+circuitry and living code-ribbons, captured in one unbroken pose that
+carries an entire three-act story at once, left to right, in a single
+frame — not three panels, one body doing three things in the same
+moment. At the far left, the Guardian's left arm reaches out into a
+scatter of small, dim, rust-amber code-fragments — the four silhouette
+families (double-bordered tablet shards, angular chevron-faceted
+shards, smooth descending-step ribbons, dotted-lattice pennant shards)
+drifting lost in the dark void — its open hand cupped gently, drawing
+the nearest of them in with unmistakable certainty and total tenderness,
+their color just beginning to warm from amber toward cyan. At the
+center, the Guardian's chest is a luminous, translucent core, and
+through it we see the four fragment families already gathered inside,
+glowing solid warm cyan, cradled and tended: cross-referenced by fine
+branching threads of light, compared side by side, wrapped in a second
+layer of soft annotation-light, held against their own faint mirror-echo
+for quiet verification. At the far right, the Guardian's right arm is
+already open, releasing several of these same fragments back out into
+the void, now transformed into large, solid, brilliant crystalline
+constructs, complex and complete, drifting outward with soft trailing
+light-streaks, dwarfing what they used to be. The whole figure reads as
+one seamless gesture — reaching, holding, and releasing simultaneously —
+powerful in scale, gentle in every line of its posture, near-black void
+background throughout, soft warm volumetric glow, particle and
+light-trail detail, the rust-amber-to-cyan transformation visibly
+progressing from left to right across the frame. No text, no readable
+words, not menacing, not cute or cartoonish — immense yet tender. Wide
+16:9 banner composition, highly detailed.
 ```
 
 ## Image 1 — Overview / The Gathering (`docs/images/overview.png`)

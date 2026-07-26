@@ -15,7 +15,7 @@
 
 *[🇹🇷 Türkçe](README.tr-TR.md) · [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md) · [Acknowledgments](ACKNOWLEDGMENTS.md)*
 
-![Overview](docs/images/overview.png)
+![Overview](docs/images/hero.png)
 
 </div>
 

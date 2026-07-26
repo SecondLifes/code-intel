@@ -1,3 +1,4 @@
+
 # 🧠 CodeIntel
 
 <div align="center">
@@ -15,7 +16,7 @@
 
 *[🇬🇧 English](README.md) · [Katkıda Bulunma](CONTRIBUTING.tr-TR.md) · [Davranış Kuralları](CODE_OF_CONDUCT.md) · [Güvenlik](SECURITY.tr-TR.md) · [Teşekkürler](ACKNOWLEDGMENTS.tr-TR.md)*
 
-![Overview](docs/images/overview.png)
+![Overview](docs/images/hero.png)
 
 </div>
 
