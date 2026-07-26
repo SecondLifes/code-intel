@@ -13,7 +13,9 @@
 [![MCP](https://img.shields.io/badge/MCP-17%20araç-purple)](https://modelcontextprotocol.io/)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-brown?logo=anthropic)](https://claude.ai)
 
-*[Katkıda Bulunma](CONTRIBUTING.tr-TR.md) · [Davranış Kuralları](CODE_OF_CONDUCT.md) · [Güvenlik](SECURITY.tr-TR.md) · [Teşekkürler](ACKNOWLEDGMENTS.tr-TR.md)*
+*[🇬🇧 English](README.md) · [Katkıda Bulunma](CONTRIBUTING.tr-TR.md) · [Davranış Kuralları](CODE_OF_CONDUCT.md) · [Güvenlik](SECURITY.tr-TR.md) · [Teşekkürler](ACKNOWLEDGMENTS.tr-TR.md)*
+
+![Overview](docs/images/overview.png)
 
 </div>
 
@@ -63,6 +65,8 @@ Normal bir kod tabanı arama kutusunun cevaplayamayacağı soruları cevaplıyor
 ---
 
 ## 🌟 Temel Yetenekler
+
+![Core Features](docs/images/core-features.png)
 
 - **Hibrit RRF arama** — aynı anda birden fazla koleksiyonda, dil bazlı filtrelerle, cross-encoder rerank ile ve her sonuç için "neden burada sıralandı" dökümüyle.
 - **RAG sohbet** (`/api/ask`, `/api/ask/stream`) ve **derin araştırma** (`/api/research/stream`, token bütçeli bağlam paketleri) — ikisi de SSE akışlı, ikisi de önbellekli, ikisi de kesilme-farkında (Ollama'nın kendi `done_reason` sinyalini, sessizce kesik bir cevap sunmak yerine kullanıcıya gösterir).
@@ -175,6 +179,8 @@ Varsayılan olarak `127.0.0.1`'e bağlanır; LAN'a açılma rol-ayrımlı API an
 ---
 
 ## 🎯 Tasarım ve Felsefe
+
+![Design & Philosophy](docs/images/design-philosophy.png)
 
 **Doğrula, varsayma.** Bu kod tabanının git geçmişinde kayıtlı her düzeltme — SSRF kısıtlaması, kaçış düzeltmesi, atomik-import yeniden tasarımı, check-then-set yarış düzeltmesi — sadece muhakeme edilip test edilmeden bırakılmadı, eski kodda BAŞARISIZ olan yeni kodda GEÇEN bir testle kanıtlandı. Aynı disiplin arama sıralamasına (`tests/eval.py`'nin altın-sorgu ölçütü) ve cevapların kendisine de uzanır (her iki sohbet modu da, sessizce kesilmiş bir cevabı eksiksizmiş gibi sunmak yerine Ollama'nın kendi kesilme sinyalini bildirir). Bilinçli ödünleşim: bir düzeltmeyi "okuyunca doğru görünüyor" demekten daha yavaş yayınlamak, karşılığında "testler geçti" ifadesinin gerçekten bir anlam taşıdığı bir kod tabanı.
 

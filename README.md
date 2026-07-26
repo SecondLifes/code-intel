@@ -13,13 +13,15 @@
 [![MCP](https://img.shields.io/badge/MCP-17%20tools-purple)](https://modelcontextprotocol.io/)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-brown?logo=anthropic)](https://claude.ai)
 
-*[Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md) · [Acknowledgments](ACKNOWLEDGMENTS.md)*
+*[🇹🇷 Türkçe](README.tr-TR.md) · [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md) · [Acknowledgments](ACKNOWLEDGMENTS.md)*
+
+![Overview](docs/images/overview.png)
 
 </div>
 
 ## 📋 Index
 
-- [Turkish-](README.tr-TR.md)Türkçe
+- [Turkish-Türkçe](README.tr-TR.md)
 - [What is this project?](#-what-is-this-project)
 - [Why use it?](#-why-use-it)
 - [Core Capabilities](#-core-capabilities)
@@ -63,6 +65,8 @@ It answers questions a codebase search box normally can't:
 ---
 
 ## 🌟 Core Capabilities
+
+![Core Features](docs/images/core-features.png)
 
 - **Hybrid RRF search** across multiple collections at once, with per-language filters, cross-encoder reranking, and a "why this ranked here" breakdown per result.
 - **RAG chat** (`/api/ask`, `/api/ask/stream`) and **deep research** (`/api/research/stream`, token-budgeted context packs) — both SSE-streamed, both cached, both truncation-aware (surfaces Ollama's own `done_reason` instead of silently returning a cut-off answer).
@@ -175,6 +179,8 @@ Binds to `127.0.0.1` by default; LAN exposure is opt-in via role-separated API k
 ---
 
 ## 🎯 Design & Philosophy
+
+![Design & Philosophy](docs/images/design-philosophy.png)
 
 **Verify, don't assume.** Every fix recorded in this codebase's git history — the SSRF restriction, the escaping fix, the atomic-import redesign, the check-then-set race fix — was proven with a test that fails against the old code and passes against the new, not just reasoned about and left untested. The same discipline extends to search ranking (`tests/eval.py`'s golden-query benchmark) and to answers themselves (both chat modes report Ollama's own truncation signal rather than presenting a silently cut-off response as complete). The deliberate tradeoff: slower to ship a fix than "looks right on read," in exchange for a codebase where "the tests pass" actually means something.
 
