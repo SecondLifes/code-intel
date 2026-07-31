@@ -6,8 +6,8 @@ sectional images that walk through it beat by beat. Generate with any
 capable image model (Nano Banana Pro, Midjourney v7, Flux, GPT-Image,
 etc.) at a **wide 16:9 banner aspect ratio**, save as PNG under
 `docs/images/` (`hero.png`, `overview.png`, `core-features.png`,
-`design-philosophy.png` — shrink oversized model output first with
-`tools/resize-images.bat`). The `README.md`/`README.tr-TR.md` image tags
+`design-philosophy.png` — shrink oversized model output first; no bundled script for this in a
+kit, use whatever image tool is at hand). The `README.md`/`README.tr-TR.md` image tags
 ship **uncommented** — the pictures appear as soon as the files land.
 
 This file is **self-contained** — there is no shared base prompt to

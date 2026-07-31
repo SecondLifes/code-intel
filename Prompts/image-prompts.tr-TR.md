@@ -7,7 +7,7 @@ modeliyle (Nano Banana Pro, Midjourney v7, Flux, GPT-Image, vb.)
 **geniş 16:9 banner en-boy oranında** üretin, `docs/images/` altına PNG
 olarak kaydedin (`hero.png`, `overview.png`, `core-features.png`,
 `design-philosophy.png` — büyük model çıktısını önce
-`tools/resize-images.bat` ile küçültün). `README.md`/`README.tr-TR.md`
+kit içinde bu işe özel bir script bulunmaz, elindeki herhangi bir görsel aracını kullan). `README.md`/`README.tr-TR.md`
 görsel etiketleri **açık** taşınır — dosyalar iner inmez görseller belirir.
 
 Bu dosya **kendi kendine yeterli** — devralınacak ortak bir temel prompt
