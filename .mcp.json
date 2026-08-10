@@ -1,0 +1,7 @@
+{
+  "codeintel": {
+    "command": "python",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/src/mcp_server.py"],
+    "env": {}
+  }
+}

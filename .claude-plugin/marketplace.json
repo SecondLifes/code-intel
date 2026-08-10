@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "codeintel-marketplace",
+  "version": "1.0.0",
+  "description": "CodeIntel — hybrid code search, RAG chat, and MCP server for Delphi/Pascal and ~45 other languages.",
+  "owner": {
+    "name": "Emrah BAŞPINAR",
+    "email": "baspinar99@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "codeintel",
+      "description": "17-tool MCP server for hybrid code search, explanations, and code review. Requires a local CodeIntel installation already set up (Qdrant + Python deps — see tools/install.ps1); this plugin only registers the MCP connection, it does not bundle the app itself.",
+      "version": "1.0.0",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

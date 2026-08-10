@@ -1,0 +1,13 @@
+{
+  "name": "codeintel",
+  "version": "1.0.0",
+  "description": "Hybrid (semantic + keyword) code search, RAG chat, and code-review tools for Delphi/Pascal — and ~45 other languages — via a 17-tool MCP server. Requires a local CodeIntel installation (Qdrant + Python deps) already set up — see tools/install.ps1.",
+  "author": {
+    "name": "Emrah BAŞPINAR",
+    "email": "baspinar99@gmail.com"
+  },
+  "homepage": "https://github.com/SecondLifes/code-intel",
+  "repository": "https://github.com/SecondLifes/code-intel",
+  "license": "Apache-2.0",
+  "keywords": ["code-search", "delphi", "pascal", "rag", "mcp", "qdrant", "code-intelligence", "code-review"]
+}

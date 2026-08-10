@@ -111,6 +111,16 @@ A generic Tree-sitter-based engine covers **~45 languages** structurally; **8 la
 | `list_domain_models` | List configured domain-specific models |
 | `list_collections` | List indexed collections and their stats |
 
+**Connecting an AI agent:**
+
+- **Claude Code plugin (recommended, works across ALL your projects, not just this folder):**
+  ```
+  /plugin marketplace add SecondLifes/code-intel
+  /plugin install codeintel@codeintel-marketplace
+  ```
+  Once installed, every Claude Code session on that machine gets the `codeintel` MCP server — no per-project `.mcp.json` needed, so it's available whether you're working in this repo or in some unrelated project. Requires a local CodeIntel install already set up first (`tools/install.ps1` + a running Qdrant — the plugin only *registers the connection*, it doesn't bundle the app).
+- **Manual (any MCP-compatible client — Claude Code, Codex CLI, Gemini CLI, ...):** point your client's MCP config at `python <this-repo>/src/mcp_server.py` (stdio). See `mcp-config.json` for the defaults it reads (Qdrant/Ollama URLs, fast/deep model names).
+
 ---
 
 ## 📂 Project Structure

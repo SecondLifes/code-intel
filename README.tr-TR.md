@@ -112,6 +112,16 @@ Jenerik bir Tree-sitter tabanlı motor yapısal olarak **~45 dili** kapsıyor; *
 | `list_domain_models` | Yapılandırılmış alana-özel modelleri listeler |
 | `list_collections` | İndekslenmiş koleksiyonları ve istatistiklerini listeler |
 
+**Bir AI ajanını bağlama:**
+
+- **Claude Code plugin'i (önerilen — TÜM projelerinde çalışır, sadece bu klasörde değil):**
+  ```
+  /plugin marketplace add SecondLifes/code-intel
+  /plugin install codeintel@codeintel-marketplace
+  ```
+  Bir kez kurulduğunda, o makinedeki her Claude Code oturumu `codeintel` MCP sunucusuna erişir — proje-başı ayrı `.mcp.json` gerekmez, bu repoda çalışırken de tamamen ilgisiz bir projede çalışırken de kullanılabilir. Önce yerel bir CodeIntel kurulumunun (`tools/install.ps1` + çalışan bir Qdrant) hazır olması gerekir — plugin sadece *bağlantıyı kaydeder*, uygulamanın kendisini paketlemez.
+- **Elle (herhangi bir MCP-uyumlu istemci — Claude Code, Codex CLI, Gemini CLI, ...):** istemcinizin MCP yapılandırmasını `python <bu-repo>/src/mcp_server.py`'a (stdio) yönlendirin. Okuduğu varsayılanlar (Qdrant/Ollama URL'leri, hızlı/derin model adları) için `mcp-config.json`'a bakın.
+
 ---
 
 ## 📂 Proje Yapısı
