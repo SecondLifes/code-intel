@@ -38,6 +38,17 @@
     new rule/skill/command actually does. Whoever adds the file (human or AI)
     must still write that description by hand in the same turn.
 
+    Finally, it cross-checks the folders this kit ships "empty" (src/,
+    examples/, docs/images/) against what the AI-primary files actually
+    reference. It does NOT demand all three — a kit may legitimately drop one
+    it doesn't use. It flags the two real inconsistencies: a folder that an
+    AI-primary file names but that doesn't exist (dead reference), and a folder
+    that exists but is empty (git drops empty directories, so it vanishes on
+    the next clone). This check exists because that failure was real and
+    shipped: examples/ went without a placeholder for months and one kit ended
+    up with no examples/ folder at all while three of its own files still
+    promised it.
+
 .NOTES
     Run this every time a file under .agents/rules/ or .agents/commands/ is
     added, edited or removed, OR a skill is added/removed under
@@ -55,6 +66,15 @@ $AgentsSkills   = Join-Path $RepoRoot ".agents/skills"
 $RuleTargets    = @(".claude/rules", ".cursor/rules")
 $CommandTargets = @(".claude/commands")
 $SkillCommandMarker = "AUTO-GENERATED from .agents/skills"
+
+# Folders this kit ships "empty" — each MUST carry its own README.md, because
+# git does not track empty directories. Without that file the folder silently
+# disappears from a fresh clone while AGENTS.md / copilot-instructions.md /
+# docs/ai-ignore-strategy.md still name it as always-load context, leaving a
+# dead reference in the kit. Real, observed failure: examples/ shipped with no
+# placeholder for months; one kit ended up with no examples/ folder at all
+# while three of its own files still promised it.
+$ShipEmptyFolders = @("src", "examples", "docs/images")
 
 function Sync-GeneratedDirectory {
     param(
@@ -218,4 +238,55 @@ if (Test-Path $MapFile) {
 } else {
     Write-Host ""
     Write-Host "NOTE: docs/proje-haritasi.md not found — skipping coverage check." -ForegroundColor Yellow
+}
+
+# --- Ship-empty folder / dead-reference consistency check ---------------------
+# The real invariant is NOT "every kit must have all three folders" — a kit
+# legitimately drops one it doesn't use (a retrofitted real project has no
+# examples/, for instance). The invariant is CONSISTENCY: a folder the kit's own
+# AI-primary files point at must actually exist with content, and a folder that
+# exists must not be empty (git drops empty directories on the next clone).
+
+$AiPrimaryFiles = @(
+    "AGENTS.md",
+    ".claude/CLAUDE.md",
+    ".github/copilot-instructions.md",
+    ".gemini/rules/project-rules.md",
+    "docs/ai-ignore-strategy.md"
+)
+
+$primaryText = ($AiPrimaryFiles | ForEach-Object {
+    $p = Join-Path $RepoRoot $_
+    if (Test-Path $p) { Get-Content -Path $p -Raw }
+}) -join "`n"
+
+$folderProblems = [System.Collections.Generic.List[string]]::new()
+
+foreach ($rel in $ShipEmptyFolders) {
+    $full       = Join-Path $RepoRoot $rel
+    $exists     = Test-Path $full
+    $entries    = if ($exists) { @(Get-ChildItem -Path $full -Force -ErrorAction SilentlyContinue) } else { @() }
+    # Only a GLOB-form reference ("examples/**", "src/**/*.pas") counts as the kit
+    # structurally promising the path — that is how the always-load context lists
+    # and the ai-ignore tables write it. A bare prose mention ("...saved scripts
+    # into `examples/` anyway...") is narrative, not a claim the folder exists,
+    # and must not trip this check.
+    $referenced = $primaryText -match ([regex]::Escape("$rel/**"))
+
+    if ($referenced -and -not $exists) {
+        $folderProblems.Add("$rel/ — DEAD REFERENCE: named in an AI-primary file but the folder does not exist. Create it with a README.md, or drop the reference.")
+    }
+    elseif ($exists -and $entries.Count -eq 0) {
+        $folderProblems.Add("$rel/ — EMPTY: git will drop it on the next clone. Add its README.md placeholder" + $(if ($referenced) { " (an AI-primary file already promises it)." } else { ", or remove the folder." }))
+    }
+}
+
+if ($folderProblems.Count -gt 0) {
+    Write-Host ""
+    Write-Host "WARNING: folder/reference mismatch:" -ForegroundColor Yellow
+    $folderProblems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host "Git does not track empty directories, so an empty folder vanishes on" -ForegroundColor Yellow
+    Write-Host "clone while the files naming it as always-load context stay behind." -ForegroundColor Yellow
+} else {
+    Write-Host "folder/reference consistency: OK ($($ShipEmptyFolders -join ', '))."
 }
