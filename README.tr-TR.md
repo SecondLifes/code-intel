@@ -141,7 +141,7 @@ code-intel/
 └── pyproject.toml
 ```
 
-> Bu kopyada YOK: `data/` (Qdrant depolama + chunk önbellekleri), `.venv/`, `backups/`, `logs/` — hepsi yerelde yeniden üretilir, hepsi `.gitignore`'lu.
+> Bu kopyada YOK: `data/` (Qdrant depolama + chunk önbellekleri), `backups/`, `logs/` — hepsi yerelde yeniden üretilir, hepsi `.gitignore`'lu. `.venv/` de yok, ve bu kasıtlı — aşağıdaki Hızlı Başlangıç'a bakın.
 
 ---
 
@@ -159,7 +159,9 @@ code-intel/
 
 ```bash
 # 1. Bağımlılıkları kur (pinlenmiş sürümler — requirements.txt'nin onnxruntime-gpu notuna bakın)
-uv pip install -r requirements.txt --python .venv/Scripts/python.exe
+#    Kasıtlı olarak sistemde kurulu Python kullanılıyor, proje-lokal .venv/uv DEĞİL —
+#    neden için CONTRIBUTING.tr-TR.md "Antivirüs uyarıları"na bakın.
+pip install -r requirements.txt
 
 # 2. Qdrant + Ollama + paneli başlat (Windows)
 pwsh tools/start-system.ps1 -NoBrowser

@@ -1,5 +1,5 @@
 """Code-Intel Yönetim Paneli — uygulama MONTAJI (modüler monolit, Sıra 2).
-Çalıştır:  .venv/Scripts/python.exe -m uvicorn src.panel:app --port 8500
+Çalıştır:  python -m uvicorn src.panel:app --port 8500  (sistemde kurulu Python; .venv KULLANMAYIN — bkz. CONTRIBUTING.md "Antivirüs uyarıları")
 
 Yapı (birleşik analiz kararı — mikroservis DEĞİL, tek süreçte modüler monolit):
   services/common.py          ortak sabitler + paylaşılan STATE

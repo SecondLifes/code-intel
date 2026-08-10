@@ -48,6 +48,16 @@ MCP araçları TEK bir yerde kayıtlıdır (`src/mcp_server.py`'nin `TOOLS` kay�
 
 `src/chunker.py`'nin jenerik Tree-sitter motoru zaten yapısal olarak ~45 dili kapsıyor; 8 dilin (Delphi/Pascal dahil) daha derin desteği var (iç içe sınıf metotları için ebeveyn/çocuk AST bölmesi, `uses`/import çıkarımı). Yeni bir dil eklemek genelde şunu gerektirir: `tree-sitter-language-pack`'in o dil için bir gramer sunduğunu doğrulayın, dosya-uzantısı eşlemesini ekleyin, ve — derin destek isterseniz — `src/chunker.py`'deki mevcutlarla birlikte node-tipi eşlemesini ekleyin. Desteği iddia etmeden önce `tests/test_chunker.py`'ye fixture tabanlı bir test ekleyin.
 
+## Antivirüs uyarıları
+
+CodeIntel'i **sistemde kurulu Python** ile kurun ve çalıştırın (`pip install -r requirements.txt`, `python -m uvicorn src.panel:app ...`) — `uv venv` / `uv pip install` ile oluşturulan proje-lokal bir `.venv` DEĞİL. `tools/start-system.ps1` zaten bunu yapıyor.
+
+Neden: Windows'ta `uv venv`, `.venv\Scripts\python.exe`'i gerçek yorumlayıcıyı yeniden başlatan küçük, imzasız bir "trampoline" ikili dosyası olarak oluşturuyor, ve `uv.exe`'nin kendisi de imzasız, sık güncellenen bir Rust ikili dosyası. İkisi de davranışsal/ML tabanlı antivirüs motorlarının özellikle izlediği "living-off-the-land binary" (LOLBin) desenine uyuyor — güvenilir görünen, proje klasöründe taze oluşturulmuş, hiç itibar geçmişi olmayan bir ikili dosya. `uv.exe`/`uvw.exe`'nin, Windows Defender'ın ML motorundan (`Trojan:Script/Phonzy.A!ml`, [astral-sh/uv#15011](https://github.com/astral-sh/uv/issues/15011)) 2025-2026'da kadar yakın tarihte belgelenmiş, kabul edilmiş yanlış-pozitif işaretlemeleri var.
+
+CodeIntel'in kendi çalışma zamanı davranışı da bunu güçlendiriyor: chunker çok sayıda kısa ömürlü alt Python süreci başlatıyor (`src/services/indexing_svc.py`, `sys.executable` üzerinden), panel `data/` altına çok sayıda dosya yazıyor (embedding'ler, ONNX modelleri), ve `src/api/admin_routes.py` `powershell` ve `nvidia-smi`'ye kabuk açıyor. Bunların hiçbiri kötü niyetli değil, ama kombinasyonu heuristik motorların şüpheli olarak puanladığı tam desen — ve bunu yapan süreç, çoğu AV satıcısının zaten itibar verisine sahip olduğu uzun süredir kurulu sistem yorumlayıcısı yerine yepyeni, imzasız, proje-lokal bir `python.exe` olduğunda daha kötü puanlanıyor.
+
+Yine de bir venv ile bağımlılık izolasyonu istiyorsanız, `uv venv` yerine `python -m venv --symlinks .venv`'i tercih edin (Windows Geliştirici Modu gerektirir) — bir sembolik bağlantı, yeni bir dosya oluşturmak yerine sistemin zaten güvendiği AYNI python.exe dosyasına işaret eder.
+
 ## Teknik Standartlar
 
 * **Güvenlikle ilgili değişiklikler** (`ollama_url`/giden HTTP'ye, frontend'de `esc()`/`escJs()` veya `src/manual.py`'de `_esc()`/`_esc_js()` ile HTML render'a, `STATE_LOCK` check-then-set desenine, veya `src/services/generations.py`'deki staging+alias nesil modeline dokunan her şey) sadece okuma değil, düzeltmeyi KANITLAYAN bir regresyon testi gerektirir — desen için 2026-07-25 civarındaki git geçmişine bakın (SSRF, saklı-XSS, import atomikliği, check-then-set yarışı) — her biri eski kodda BAŞARISIZ olan, yeni kodda GEÇEN bir testle düzeltildi.

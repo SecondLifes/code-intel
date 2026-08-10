@@ -12,3 +12,4 @@ panel-restart.log
 backups/
 .qdrant-initialized
 analysis/
+.serena/

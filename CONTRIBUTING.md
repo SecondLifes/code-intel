@@ -48,6 +48,16 @@ MCP tools are registered in exactly one place (`src/mcp_server.py`'s `TOOLS` reg
 
 `src/chunker.py`'s generic Tree-sitter engine already covers ~45 languages structurally; 8 languages (including Pascal/Delphi) have deeper support (parent/child AST splitting for nested class methods, `uses`/import extraction). Adding a new language usually means: verify `tree-sitter-language-pack` ships a grammar for it, add its file-extension mapping, and — if you want deep support — add its node-type mapping alongside the existing ones in `src/chunker.py`. Add a fixture-based test in `tests/test_chunker.py` before claiming support.
 
+## Antivirus warnings
+
+Install and run CodeIntel with your **system-installed Python** (`pip install -r requirements.txt`, `python -m uvicorn src.panel:app ...`), not a project-local `.venv` created via `uv venv` / `uv pip install`. `tools/start-system.ps1` already does this.
+
+Why: on Windows, `uv venv` creates `.venv\Scripts\python.exe` as a small unsigned "trampoline" binary that re-launches the real interpreter, and `uv.exe` itself is an unsigned, frequently-updated Rust binary. Both match a "living-off-the-land binary" (LOLBin) pattern that behavioral/ML antivirus engines specifically watch for — a trusted-looking binary, freshly created in a project folder, with no prior reputation. `uv.exe`/`uvw.exe` has documented, acknowledged false-positive flags from Windows Defender's ML engine (`Trojan:Script/Phonzy.A!ml`, [astral-sh/uv#15011](https://github.com/astral-sh/uv/issues/15011)) as recently as 2025-2026.
+
+CodeIntel's own runtime behavior compounds this: the chunker spawns many short-lived child Python processes (`src/services/indexing_svc.py`, via `sys.executable`), the panel writes large numbers of files under `data/` (embeddings, ONNX models), and `src/api/admin_routes.py` shells out to `powershell` and `nvidia-smi`. None of this is malicious, but the combination is exactly the shape heuristic engines score as suspicious — and it scores worse when the process doing it is a brand-new, unsigned, project-local `python.exe` instead of the long-installed system interpreter most AV vendors already have reputation data for.
+
+If you still want dependency isolation via a venv, prefer `python -m venv --symlinks .venv` (requires Windows Developer Mode) over `uv venv` — a symlink points at the *same* python.exe file the system already trusts, rather than creating a new one.
+
 ## Technical Standards
 
 * **Security-sensitive changes** (anything touching `ollama_url`/outbound HTTP, HTML rendering via `esc()`/`escJs()` in the frontend or `_esc()`/`_esc_js()` in `src/manual.py`, the `STATE_LOCK` check-then-set pattern, or the staging+alias generation model in `src/services/generations.py`) need a regression test proving the fix, not just a read-through — see the git history around 2026-07-25 for the pattern (SSRF, stored-XSS, import atomicity, check-then-set race) each fixed with a test that fails against the old code and passes against the new.

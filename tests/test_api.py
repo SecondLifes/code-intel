@@ -7,7 +7,7 @@
 2. SÖZLEŞME: MCP tool'ları ile /api/mcp/* REST test uçlarının PARİTESİ —
    tool tanımları elle çoğaltıldığı için (bilinen borç #23) kayma burada yakalanır.
 
-Çalıştır: .venv/Scripts/python.exe -m pytest tests/test_api.py -q
+Çalıştır: python -m pytest tests/test_api.py -q  (sistemde kurulu Python)
 """
 import json
 import pathlib

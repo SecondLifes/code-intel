@@ -5,7 +5,7 @@
 .DESCRIPTION
     1. Qdrant  (qdrant-bin\qdrant.exe, veri: data\qdrant)  -> http://127.0.0.1:6333
     2. Ollama  (genelde kendiliğinden açık; kapalıysa 'ollama serve' denenir) -> :11434
-    3. Panel   (.venv + uvicorn src.panel:app)             -> http://127.0.0.1:8500
+    3. Panel   (sistemde kurulu Python + uvicorn src.panel:app) -> http://127.0.0.1:8500
     Her adımda port zaten dinleniyorsa o servis atlanır (tekrar çalıştırmak güvenlidir).
     Servisler gizli pencerede açılır, çıktıları logs\ altına yazılır.
     Panel sağlık kontrolünü geçince varsayılan tarayıcı açılır (-NoBrowser ile kapatılabilir).
@@ -23,7 +23,7 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
-$VenvPython  = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$SystemPython = (Get-Command python -ErrorAction SilentlyContinue).Source
 $QdrantExe   = Join-Path $ProjectRoot "qdrant-bin\qdrant.exe"
 $QdrantData  = Join-Path $ProjectRoot "data\qdrant"
 $LogDir      = Join-Path $ProjectRoot "logs"
@@ -98,39 +98,33 @@ if (Test-PortListening 11434) {
 }
 
 # ---------- 3) PANEL ----------
+# Kasıtlı olarak sistemde kurulu Python kullanılıyor, proje-lokal .venv/uv
+# DEĞİL: .venv\Scripts\python.exe (uv'nin oluşturduğu "trampoline" stub) ve
+# uv.exe'nin kendisi imzasız + taze/taşınabilir exe oldukları için bazı
+# antivirüs motorlarında yanlış-pozitif (Trojan) tetikliyor — bkz.
+# CONTRIBUTING.md "Antivirüs uyarıları". Sistem Python'u uzun süredir aynı
+# yolda durduğu, çoğu AV'nin itibar veritabanında zaten tanındığı için bu
+# riski büyük ölçüde azaltıyor.
 if (Test-PortListening 8500) {
     Write-Host "[Panel] zaten çalışıyor (:8500) — atlandı" -ForegroundColor Yellow
 } else {
-    if (-not (Test-Path $VenvPython)) {
-        Write-Host "[Panel] .venv yok — oluşturuluyor (uv gerekli)..." -ForegroundColor Yellow
-        Push-Location $ProjectRoot
-        try {
-            uv venv
-            # Kesin (pinli) bağımlılıklar — GPU pinleri dahil; ayrıntı requirements.txt başında.
-            uv pip install -r requirements.txt --python $VenvPython
-        } finally { Pop-Location }
-        if (-not (Test-Path $VenvPython)) { throw "Sanal ortam kurulamadı: $VenvPython" }
+    if (-not $SystemPython) {
+        throw "Sistemde kurulu 'python' PATH'te bulunamadı. Python 3.12+ kurun (https://www.python.org/downloads/) ve PATH'e eklendiğinden emin olun."
     }
 
-    # .venv\Scripts\python.exe bir uv "trampoline"idir: gerçek yorumlayıcıya
-    # (pyvenv.cfg'deki home yoluna) yönlendirir. O taban kurulum bozulur/silinirse
-    # (YAŞANDI: yarıda kesilen bir uv işlemi sonrası klasör var ama python.exe yoktu,
-    # panel "uv trampoline failed to spawn" ile hiç açılamıyordu) dosya diskte
-    # görünse bile çalışmaz — bu yüzden varlık kontrolü yetmez, GERÇEKTEN çalıştırıp
-    # deniyoruz ve gerekirse taban yorumlayıcıyı uv ile onarıyoruz.
-    & $VenvPython --version *> $null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[Panel] .venv python'u çalışmıyor — taban yorumlayıcı onarılıyor (uv python install)..." -ForegroundColor Yellow
-        $pyVer = (Select-String -Path (Join-Path $ProjectRoot ".venv\pyvenv.cfg") -Pattern '^version_info\s*=\s*(.+)$').Matches.Groups[1].Value.Trim()
-        uv python install $pyVer --reinstall
-        & $VenvPython --version *> $null
-        if ($LASTEXITCODE -ne 0) {
-            throw ".venv python'u onarılamadı — '.venv' klasörünü silip betiği yeniden çalıştırın (ortam sıfırdan kurulur)."
-        }
-        Write-Host "[Panel] taban yorumlayıcı onarıldı" -ForegroundColor Green
+    & $SystemPython -c "import fastapi" *> $null
+    $depsOk = ($LASTEXITCODE -eq 0)
+    if (-not $depsOk) {
+        Write-Host "[Panel] bağımlılıklar eksik — kuruluyor (pip)..." -ForegroundColor Yellow
+        Push-Location $ProjectRoot
+        try {
+            & $SystemPython -m pip install -r requirements.txt
+        } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { throw "Bağımlılık kurulumu başarısız oldu (pip install -r requirements.txt)." }
     }
+
     Write-Host "[Panel] başlatılıyor -> http://127.0.0.1:8500" -ForegroundColor Green
-    Start-Process -FilePath $VenvPython `
+    Start-Process -FilePath $SystemPython `
         -ArgumentList @("-m", "uvicorn", "src.panel:app", "--host", "127.0.0.1", "--port", "8500") `
         -WorkingDirectory $ProjectRoot `
         -WindowStyle Hidden `

@@ -1,5 +1,12 @@
-# Code-Intel bağımlılıkları — `uv pip freeze` çıktısı, .venv'in tam durumu.
-# Kurulum: uv pip install -r requirements.txt --python .venv/Scripts/python.exe
+# Code-Intel bağımlılıkları — tarihsel olarak `uv pip freeze` çıktısıydı; pin'ler
+# hâlâ geçerli ama artık sistemde kurulu Python'a kuruluyor (aşağıya bakın).
+# Kurulum: pip install -r requirements.txt
+#
+# NEDEN .venv/uv DEĞİL: proje-lokal .venv/Scripts/python.exe (uv'nin oluşturduğu
+# "trampoline") ve uv.exe'nin kendisi, imzasız + taze kopyalanmış/taşınabilir exe
+# oldukları için bazı antivirüs motorlarında yanlış-pozitif (Trojan) tetikliyor
+# (bkz. CONTRIBUTING.md "Antivirüs uyarıları"). Sistemde kurulu, uzun süredir
+# tanınan Python bu riski büyük ölçüde azaltıyor.
 #
 # ÖNEMLİ PIN — asla gelişigüzel güncellemeyin:
 #   onnxruntime-gpu==1.22.0

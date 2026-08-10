@@ -4,7 +4,7 @@ gibi MCP-uyumlu ajanlara Delphi kod tabanı arama/açıklama/inceleme araçları
 get_type_hierarchy, find_references, get_unit_deps, get_context_pack, analyze_impact, document_unit, explain_chunk, review_code,
 propose_edit, ask_domain_model, list_domain_models, list_collections.
 
-Çalıştır:  .venv/Scripts/python.exe -m src.mcp_server
+Çalıştır:  python -m src.mcp_server  (sistemde kurulu Python; .venv KULLANMAYIN — bkz. CONTRIBUTING.md "Antivirüs uyarıları")
 (Claude Code / Codex / Gemini CLI'nin kendi MCP client ayarına bu komutu ekleyin.)
 
 Otonom DEĞİLDİR — hiçbir tool arka planda kendiliğinden çalışmaz, sadece çağıran

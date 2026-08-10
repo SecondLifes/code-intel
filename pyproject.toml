@@ -5,8 +5,9 @@
 # projenin kimliği ve GEVŞEK bağımlılık aralıklarıdır; temiz kurulumda önce
 # requirements.txt tercih edilmelidir.
 #
-# Kurulum (geliştirme):
-#   uv pip install -r requirements.txt --python .venv/Scripts/python.exe
+# Kurulum (geliştirme, sistemde kurulu Python — .venv/uv KULLANMAYIN, bkz.
+# CONTRIBUTING.md "Antivirüs uyarıları"):
+#   pip install -r requirements.txt
 # veya paket olarak:
 #   pip install -e .
 

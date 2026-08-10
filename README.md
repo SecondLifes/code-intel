@@ -140,7 +140,7 @@ code-intel/
 └── pyproject.toml
 ```
 
-> Not included in this copy: `data/` (Qdrant storage + chunk caches), `.venv/`, `backups/`, `logs/` — all regenerated locally, all `.gitignore`d.
+> Not included in this copy: `data/` (Qdrant storage + chunk caches), `backups/`, `logs/` — all regenerated locally, all `.gitignore`d. No `.venv/` either, and deliberately so — see Quick Start below.
 
 ---
 
@@ -158,7 +158,9 @@ code-intel/
 
 ```bash
 # 1. Install dependencies (pinned versions — see requirements.txt's onnxruntime-gpu note)
-uv pip install -r requirements.txt --python .venv/Scripts/python.exe
+#    Uses your system-installed Python on purpose, not a project-local .venv/uv —
+#    see CONTRIBUTING.md "Antivirus warnings" for why.
+pip install -r requirements.txt
 
 # 2. Start Qdrant + Ollama + the panel (Windows)
 pwsh tools/start-system.ps1 -NoBrowser

@@ -4,11 +4,11 @@ golden_qa.json artık ÇOK KOLEKSİYONLU: her kayıtta "collection" alanı var
 (60 soru: unidac 22, Jedi 12, Synopse-mORMot2 14, RESTRequest4Delphi 12).
 Metrikler: Recall@k, MRR, nDCG@k (binary, ilk isabet), gecikme p50/p95.
 
-Çalıştır (Qdrant + ilgili indeksler ayakta olmalı):
-  .venv/Scripts/python.exe tests/eval.py                      # tüm koleksiyonlar
-  .venv/Scripts/python.exe tests/eval.py --collection unidac  # tek koleksiyon
-  .venv/Scripts/python.exe tests/eval.py --rerank             # rerank açık ölç
-  .venv/Scripts/python.exe tests/eval.py --compare            # baseline vs rerank yan yana
+Çalıştır (Qdrant + ilgili indeksler ayakta olmalı; sistemde kurulu Python):
+  python tests/eval.py                      # tüm koleksiyonlar
+  python tests/eval.py --collection unidac  # tek koleksiyon
+  python tests/eval.py --rerank             # rerank açık ölç
+  python tests/eval.py --compare            # baseline vs rerank yan yana
 """
 import argparse
 import json
