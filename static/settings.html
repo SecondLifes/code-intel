@@ -877,17 +877,14 @@ async function pickFolder(){
       if(target==='idx-path'&&!$('idx-coll').value.trim()){
         const base=r.path.replace(/[\\\/]+$/,'').split(/[\\\/]/).pop()||'';
         $('idx-coll').value=base.toLowerCase().replace(/[^a-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'');
-        localStorage.setItem('ci-lastcoll',$('idx-coll').value);
       }
     }
   }catch(e){}
   btn.disabled=false;btn.innerHTML=orig;
   window._pickTarget=null;
 }
-{const savedColl=localStorage.getItem('ci-lastcoll');if(savedColl)$('idx-coll').value=savedColl;}
 $('idx-coll').addEventListener('change',refreshHistory);
 $('idx-coll').addEventListener('blur',refreshHistory);
-$('idx-coll').addEventListener('input',()=>localStorage.setItem('ci-lastcoll',$('idx-coll').value));
 async function loadModels(){try{
   const d=await(await fetch('/api/ollama/models')).json();
   for(const [sel,def,key] of [['m-fast','gemma4','ci-mfast'],['m-deep','qwen3.6','ci-mdeep']]){

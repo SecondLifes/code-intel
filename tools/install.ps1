@@ -179,6 +179,19 @@ try {
         Write-Host "[Bağımlılıklar] pip install -r requirements.txt (GPU dahil) ..." -ForegroundColor Yellow
         & $SystemPython -m pip install -r requirements.txt
         if ($LASTEXITCODE -ne 0) { throw "Bağımlılık kurulumu başarısız oldu (pip install -r requirements.txt) — çıktıdaki hataya bakın." }
+
+        # onnxruntime-gpu VE düz onnxruntime, aynı `onnxruntime/` dosyalarını
+        # paylaşıyor ama pip'e göre AYRI paketler (fastembed==0.8.0 düz
+        # "onnxruntime"a bağımlı) — pip'in çözümleme sırası deterministik
+        # değil, yani `pip install -r requirements.txt` bazen düz onnxruntime'ı
+        # SONRADAN kurup onnxruntime-gpu'nun dosyalarının üzerine yazabiliyor
+        # (canlı tekrarlandı: GPU pill'i kırmızıya döndü, gpu_available() False
+        # oldu). Düzeltme: iki paketi de kaldırıp onnxruntime-gpu'yu TEK BAŞINA
+        # yeniden kurarak GPU'nun her zaman kazandığını garanti ediyoruz.
+        Write-Host "[Bağımlılıklar] onnxruntime-gpu/onnxruntime çakışması gideriliyor (GPU'nun kazandığından emin oluyoruz) ..." -ForegroundColor Yellow
+        & $SystemPython -m pip uninstall -y onnxruntime onnxruntime-gpu 2>&1 | Out-Null
+        & $SystemPython -m pip install --no-deps "onnxruntime-gpu==1.22.0"
+        if ($LASTEXITCODE -ne 0) { throw "onnxruntime-gpu yeniden kurulumu başarısız oldu." }
     }
 } finally { Pop-Location }
 Write-Host "[Bağımlılıklar] kuruldu" -ForegroundColor Green

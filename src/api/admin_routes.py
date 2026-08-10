@@ -402,12 +402,24 @@ def indexes_get():
 # ---------------- yerel klasör seçim diyaloğu (aynı makinede çalıştığı için) ----------------
 @router.get("/api/pick-folder")
 def pick_folder():
-    ps = ("Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
-          "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
-          "$f.Description = 'Kaynak klasoru sec'; "
-          "if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }")
+    # Bir HTML <input type=file webkitdirectory> ya da sürükle-bırak İŞE YARAMAZ:
+    # tarayıcı güvenlik nedeniyle gerçek mutlak dosya sistemi yolunu asla vermiyor
+    # (sahte "C:\fakepath\..." döner) — chunker.py'nin ihtiyaç duyduğu şey ise
+    # tam olarak bu gerçek yol. Bu yüzden native bir Windows diyaloğu şart.
+    #
+    # Diyalog sunucu sürecinden subprocess olarak tetiklendiği için (panel bir
+    # HTTP isteğine cevaben açıyor) Windows'un "foreground lock" kısıtına takılır:
+    # basit TopMost/Activate pencereyi GÖRÜNÜR yapar (Win32 EnumWindows ile canlı
+    # doğrulandı — "Klasöre Gözat" başlıklı gerçek bir pencere) ama tarayıcının
+    # ARKASINDA kalabiliyordu — kullanıcı görmediği için "çalışmıyor" sanılıyordu.
+    # (.NET'in Process.MainWindowHandle'ı bu pencere türünü tanımadığından
+    # MainWindowHandle=0 görülmesi de ayrıca YANILTICIYDI.)
+    # tools/pick-folder.ps1, AttachThreadInput Win32 tekniğiyle mevcut ön-plan
+    # penceresinin thread-input'una geçici olarak ilişip SetForegroundWindow
+    # çağırıyor — farklı süreçler arasında bu kısıtı aşmanın bilinen yolu.
+    script = str(ROOT / "tools" / "pick-folder.ps1")
     try:
-        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+        out = subprocess.run(["powershell", "-NoProfile", "-STA", "-File", script],
                               capture_output=True, text=True, timeout=120)
         return {"path": out.stdout.strip()}
     except Exception as e:

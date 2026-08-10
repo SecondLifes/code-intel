@@ -20,6 +20,20 @@
 #
 # fastembed VE fastembed-gpu birlikte kurulu — panel.py cuda= parametresiyle
 # ikisi arasında (CPU/GPU cihaz seçimi) çalışma zamanında geçiş yapıyor.
+#
+# BİLİNEN TUZAK — onnxruntime-gpu vs düz onnxruntime çakışması: fastembed==0.8.0
+# düz "onnxruntime"a bağımlı, ama biz onnxruntime-gpu==1.22.0 kuruyoruz — ikisi
+# AYNI onnxruntime/ dosyalarını paylaşıyor ama pip'e göre AYRI paketler. Sonuç:
+# `pip install -r requirements.txt`'in HER çalıştırılışında (ilk kurulum ya da
+# sonraki bir "reconcile" çalıştırması fark etmez) pip'in çözümleme sırası
+# deterministik değil — bazen düz onnxruntime SONRADAN kurulup onnxruntime-gpu'nun
+# dosyalarının üzerine yazıyor (canlı tekrarlandı: GPU aniden CPU'ya düşüyor,
+# /api/health'teki "gpu" alanı false oluyor, hiçbir hata/uyarı BASILMADAN).
+# tools/install.ps1'in GPU dalı bu yüzden ana kurulumdan SONRA ayrıca
+# `pip uninstall -y onnxruntime onnxruntime-gpu` + `pip install --no-deps
+# onnxruntime-gpu==1.22.0` çalıştırıp GPU'nun kazandığını garanti ediyor — bunu
+# elle bir `pip install -r requirements.txt` daha çalıştırırsanız (örn. yeni bir
+# bağımlılık eklerken) SİZ DE tekrarlamanız gerekir.
 
 annotated-doc==0.0.4
 annotated-types==0.7.0
