@@ -43,7 +43,7 @@ src/api/*_routes.py → src/services/*_svc.py → chunker.py / retrieval.py / Qd
 - ❌ Global mutable state
 - ❌ Business logic in a route handler
 - ❌ Generic/broad exception catch without handling
-- ❌ A new MCP tool without its REST parity endpoint (`test_api.py::test_mcp_rest_parity`)
+- ❌ A new MCP tool defined with raw `mcp.tool()` instead of this project's `@tool` decorator (breaks the automatic REST parity `test_api.py::test_mcp_rest_parity` verifies)
 - ❌ Bumping `onnxruntime-gpu==1.22.0`, or re-running `pip install -r requirements.txt`, without re-verifying GPU activation afterward
 
 ## Development Process

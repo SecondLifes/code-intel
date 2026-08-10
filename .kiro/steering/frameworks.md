@@ -13,7 +13,7 @@
 ### MCP SDK
 
 - **When to use:** exposing a capability to AI coding agents (Claude Code, Codex CLI, Gemini CLI) via `src/mcp_server.py`.
-- **Style:** every MCP tool needs a matching REST test endpoint under `/api/mcp/*` — parity enforced by `tests/test_api.py::test_mcp_rest_parity`.
+- **Style:** define every tool with the `@tool` decorator (not raw `mcp.tool()`) — it registers with FastMCP and auto-generates the matching `/api/mcp/*` REST endpoint; `tests/test_api.py::test_mcp_rest_parity` verifies this, it isn't satisfied by hand.
 - **Features:** stdio transport (default) and optional LAN-facing Streamable HTTP.
 - **Skills:** `.agents/skills/python-mcp-server-generator/SKILL.md`
 
@@ -29,7 +29,7 @@
 
 ```
 Need an HTTP endpoint? → FastAPI router under src/api/
-Need to expose a capability to an AI agent? → MCP tool in src/mcp_server.py + REST parity endpoint
+Need to expose a capability to an AI agent? → MCP tool in src/mcp_server.py, defined with the `@tool` decorator (auto-generates its REST parity endpoint)
 Need persistence/search? → Qdrant, through a service in src/services/
 Need local LLM inference? → Ollama HTTP call, through a service
 ```

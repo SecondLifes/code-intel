@@ -30,7 +30,7 @@
 
 ## Concurrency / Async — Critical Rules
 
-- **Rule of Thumb:** I/O-bound route handlers (Qdrant queries, Ollama calls) are `async def`; CPU-bound chunking/parsing stays synchronous.
+- **Rule of Thumb:** route handlers are plain `def` (FastAPI's own threadpool handles I/O), including SSE streams — this is the codebase's actual, consistent convention (84+ handlers, only one `async def`, tied to an upload's `await file.read()`). CPU-bound chunking/parsing also stays synchronous.
 - SSE streaming endpoints (`/api/ask/stream`, `/api/research/stream`) are token-budgeted and truncation-aware — surface `done_reason` rather than silently returning a cut-off answer.
 - **Skills:** `.agents/skills/fastapi/SKILL.md`
 
@@ -61,4 +61,4 @@ src/services/<feature>_svc.py  ← business logic
 - **Test framework:** `pytest`
 - **Infrastructure Isolation:** `tests/` (default `pytest` run) contains no real external-service calls; `tests/manual/` (excluded via `pytest.ini`'s `norecursedirs`) holds tests that genuinely need a running GPU/Ollama/Qdrant — run those explicitly.
 - **Regression-first naming:** a test name states the behavior/regression being locked in (`test_line_shift_does_not_change_chunk_id`), not just the function under test.
-- **MCP/REST parity:** any new MCP tool needs a passing `tests/test_api.py::test_mcp_rest_parity` entry.
+- **MCP/REST parity:** structural, not manual — a tool defined with the `@tool` decorator auto-generates its REST endpoint via `src/api/mcp_routes.py`; `tests/test_api.py::test_mcp_rest_parity` verifies this holds, it isn't satisfied by hand.

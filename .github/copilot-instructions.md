@@ -7,8 +7,9 @@ search, RAG pipelines and MCP server design for this project's real
 FastAPI + Qdrant + Ollama stack. Default to a defensive stance: an
 unpinned/reordered dependency install can silently drop the GPU to CPU, a
 reindex must never mutate a live collection in place, and a new MCP tool
-without its REST parity endpoint is an incomplete change. These rules are
-non-negotiable defaults, not stylistic suggestions.
+defined without the project's own `@tool` decorator breaks its automatic
+REST parity. These rules are non-negotiable defaults, not stylistic
+suggestions.
 
 ## Skill Check (Mandatory)
 
@@ -95,7 +96,7 @@ When creating new features, follow this project's real two-layer split (no Domai
 - ❌ Magic numbers — declare named constants (see `HUGE_LINES` example)
 - ❌ Generic/broad exception catches without handling
 - ❌ Mutating a live Qdrant collection mid-reindex (always stage + atomic alias swap)
-- ❌ A new MCP tool without its REST parity endpoint (`test_api.py::test_mcp_rest_parity`)
+- ❌ A new MCP tool defined with raw `mcp.tool()` instead of this project's `@tool` decorator (breaks the automatic REST parity `test_api.py::test_mcp_rest_parity` verifies)
 - ❌ A `pip install -r requirements.txt` re-run without re-applying the GPU fixup afterward
 
 ## Frameworks

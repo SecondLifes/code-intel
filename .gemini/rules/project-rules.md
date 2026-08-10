@@ -29,8 +29,9 @@ search, RAG pipelines and MCP server design for this project's real
 FastAPI + Qdrant + Ollama stack. Default to a defensive stance around this
 project's proven failure modes: silent GPU-to-CPU fallback on a dependency
 reinstall, in-place mutation of a live Qdrant collection during reindex,
-and MCP tools shipped without their REST parity test. These rules are
-non-negotiable defaults, not stylistic suggestions.
+and an MCP tool defined without the project's own `@tool` decorator
+breaking its automatic REST parity. These rules are non-negotiable
+defaults, not stylistic suggestions.
 
 ## Skill Check (Mandatory)
 
@@ -76,7 +77,7 @@ silently; user decides.
 
 - ❌ Business logic inside a route handler
 - ❌ Mutating a live Qdrant collection mid-reindex (always stage + atomic alias swap)
-- ❌ Shipping a new MCP tool without its REST parity endpoint (`test_api.py::test_mcp_rest_parity`)
+- ❌ Defining a new MCP tool with raw `mcp.tool()` instead of this project's `@tool` decorator (breaks the automatic REST parity `test_api.py::test_mcp_rest_parity` verifies)
 
 ## Structure (No Domain/Application/Infrastructure Split)
 
@@ -89,5 +90,5 @@ src/api/*_routes.py → src/services/*_svc.py → chunker.py / retrieval.py / Qd
 Consult specific skills for each framework/library:
 
 - **FastAPI:** `.agents/skills/fastapi/SKILL.md` — routing, DI, request/response models
-- **Qdrant:** `.agents/skills/qdrant-clients-sdk/SKILL.md`, `qdrant-search-quality/SKILL.md`, `qdrant-performance-optimization/SKILL.md` — hybrid search, RRF fusion, tuning
-- **MCP:** `.agents/skills/python-mcp-server-generator/SKILL.md` — tool/REST parity discipline
+- **Qdrant:** `.agents/skills/qdrant-clients-sdk/SKILL.md`, `.agents/skills/qdrant-search-quality/SKILL.md`, `.agents/skills/qdrant-performance-optimization/SKILL.md` — hybrid search, this repo's own weighted RRF fusion (not Qdrant's built-in RRF), tuning
+- **MCP:** `.agents/skills/python-mcp-server-generator/SKILL.md` — use with this project's `@tool` decorator for automatic REST parity

@@ -108,6 +108,6 @@ Generate a complete, production-ready MCP server with type safety, proper error 
 
 | You say | What happens |
 |---|---|
-| "Add a new MCP tool" / "expose X as a tool" | Add it to `src/mcp_server.py` using this skill's `@mcp.tool()`/type-hint/docstring guidance, then add its matching REST endpoint under `/api/mcp/*` — `tests/test_api.py::test_mcp_rest_parity` enforces this repo's own parity rule, which this skill doesn't know about on its own. |
+| "Add a new MCP tool" / "expose X as a tool" | Add it to `src/mcp_server.py` using this skill's type-hint/docstring guidance, but decorate it with this repo's own `@tool` wrapper — **not** the raw `@mcp.tool()` this skill shows by default. `@tool` registers with FastMCP *and* a `TOOLS` dict that `src/api/mcp_routes.py` loops over to auto-generate the matching `/api/mcp/*` REST endpoint; using raw `@mcp.tool()` silently breaks that and fails `tests/test_api.py::test_mcp_rest_parity`, a fact this skill doesn't know about on its own. |
 | "Set up a new MCP server from scratch" | This skill's `uv init`/`uv add` project-setup steps do **not** apply in this repo — `src/mcp_server.py` already exists and this repo's own convention is system Python, never `.venv`/`uv` (AV false-positive risk, see `CONTRIBUTING.md`). Use its tool/resource/prompt design guidance only, not its project-bootstrap commands. |
 | Ambiguous/no specific MCP question | Read the `Best Practices` and `Testing Guidance` sections — type hints, structured output, stderr-only logging (stdout pollution breaks stdio transport). |

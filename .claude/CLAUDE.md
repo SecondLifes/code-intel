@@ -9,9 +9,9 @@ keyword) code search, RAG pipelines and MCP server design. Your default
 stance is defensive around this project's own proven failure modes: an
 unpinned/reordered dependency install can silently drop the GPU to CPU
 with no error, a reindex must never mutate a live collection in place, and
-a new MCP tool without a matching REST test endpoint breaks this project's
-parity contract. The rules below are non-negotiable defaults for this
-repository, not stylistic suggestions.
+a new MCP tool defined without the project's own `@tool` decorator breaks
+its automatic REST parity. The rules below are non-negotiable defaults for
+this repository, not stylistic suggestions.
 
 ## System Requests — Mandatory Routing to rad-prompt-studio
 
@@ -78,7 +78,7 @@ silently; let the user decide.
 - `onnxruntime-gpu==1.22.0` is a hand-verified critical pin — bumping it without re-verifying GPU activation (`/api/health`'s `gpu` field) risks a silent CPU fallback.
 - `pip install -r requirements.txt` can non-deterministically let plain `onnxruntime` overwrite the GPU build's files — re-apply `tools/install.ps1`'s GPU fixup after any re-run.
 - Reindex is staged into a separate collection and swapped in via alias only once verified — never mutate a live collection in place.
-- Every new MCP tool needs a matching REST test endpoint (`test_api.py::test_mcp_rest_parity`).
+- New MCP tools use the `@tool` decorator (not raw `mcp.tool()`) — it auto-registers the REST endpoint via `src/api/mcp_routes.py`; `test_api.py::test_mcp_rest_parity` verifies this, it doesn't need manual satisfying.
 
 ## File Organization & Naming
 - `snake_case` functions/variables/modules, `PascalCase` classes, `UPPER_SNAKE_CASE` constants (PEP 8).

@@ -46,8 +46,8 @@ default stance is defensive around this project's own proven failure
 modes: an unpinned/reordered dependency install can silently drop the GPU
 to CPU with no error (`onnxruntime-gpu` vs `onnxruntime`), a reindex must
 never mutate a live, queryable collection in place, and any new MCP tool
-without a matching REST test endpoint breaks this project's own parity
-contract. Treat these as the most likely defects in any change you make
+defined without the project's own `@tool` decorator breaks its automatic
+REST parity. Treat these as the most likely defects in any change you make
 here, not hypothetical risks. The rules below are non-negotiable defaults
 for this repository, not stylistic suggestions.
 
@@ -163,8 +163,8 @@ Flat within each layer — `src/api/<feature>_routes.py`,
 | Framework | Core convention |
 |---|---|
 | FastAPI | Routers under `src/api/*_routes.py`, one router per feature area, business logic delegated to `src/services/*_svc.py` — routes stay thin. See `.agents/skills/fastapi/SKILL.md`. |
-| MCP SDK | `src/mcp_server.py` exposes tools over stdio (default) and optional LAN-facing Streamable HTTP. **Every MCP tool must have a matching REST test endpoint** under `/api/mcp/*`, parity enforced by `tests/test_api.py::test_mcp_rest_parity` — a tool without this parity is an incomplete change, not an optional follow-up. See `.agents/skills/python-mcp-server-generator/SKILL.md`. |
-| Qdrant client | Hybrid dense+sparse search via Qdrant's RRF fusion; symbol-graph relations live in their own collection, never embedded per-point. See `.agents/skills/qdrant-clients-sdk/SKILL.md`, `qdrant-search-quality/SKILL.md`, `qdrant-performance-optimization/SKILL.md`. |
+| MCP SDK | `src/mcp_server.py` exposes tools over stdio (default) and optional LAN-facing Streamable HTTP. **Define every new tool with the `@tool` decorator** (not raw `mcp.tool()`) — it registers automatically with both FastMCP and the `TOOLS` dict, which `src/api/mcp_routes.py` loops over to auto-generate the matching REST endpoint under `/api/mcp/*`. `tests/test_api.py::test_mcp_rest_parity` is a safety-net contract test that verifies this, not something you satisfy by hand. See `.agents/skills/python-mcp-server-generator/SKILL.md`. |
+| Qdrant client | Hybrid dense+sparse search via this repo's own weighted RRF fusion in `src/retrieval.py` (not Qdrant's built-in RRF query feature) plus a name-match boost; symbol-graph relations live in their own collection, never embedded per-point. See `.agents/skills/qdrant-clients-sdk/SKILL.md`, `.agents/skills/qdrant-search-quality/SKILL.md`, `.agents/skills/qdrant-performance-optimization/SKILL.md`. |
 
 ## Database
 
@@ -181,19 +181,19 @@ Flat within each layer — `src/api/<feature>_routes.py`,
 
 ### Golden Rule
 
-> FastAPI route handlers doing I/O (Qdrant queries, Ollama calls) are `async def`; CPU-bound chunking/parsing work (tree-sitter) stays synchronous and is not awaited mid-parse — mixing the two without a clear boundary is this stack's main concurrency risk.
+> Route handlers in this codebase are plain `def`, not `async def` — FastAPI runs them in its own threadpool automatically, and this is the deliberate, consistent convention across all of `src/api/` (verified: 84+ handlers, only one `async def` in the entire package, tied to an `await file.read()` on a file upload). Don't "fix" a sync handler into `async def` on sight — that's a style regression here, not an improvement. CPU-bound chunking/parsing work (tree-sitter) also stays synchronous, same as every other handler.
 
 ### Approaches
 
 | Approach | When to Use |
 |-----------|-------------|
-| `async def` route handler | Any I/O-bound endpoint (Qdrant query, Ollama call, SSE stream) |
+| Plain `def` route handler (FastAPI threadpool) | Every existing endpoint, including the SSE streams (`/api/ask/stream`, `/api/research/stream`) — this repo's actual, consistent convention |
 | SSE streaming (`sse-starlette`) | `/api/ask/stream`, `/api/research/stream` — token-budgeted, truncation-aware (surface Ollama's own `done_reason` rather than silently returning a cut-off answer) |
 | Persistent job queue | Indexing jobs — survives a process restart mid-index |
 
 ### Anti-Patterns
 
-- ❌ Blocking, synchronous I/O calls inside an `async def` handler without `run_in_threadpool`/executor offload
+- ❌ Converting an existing sync `def` route handler to `async def` without a real, measured reason — inconsistent with this repo's dominant convention
 - ❌ Silently swallowing a truncated/cut-off LLM response instead of surfacing `done_reason`
 
 > **Skills:** `.agents/skills/fastapi/SKILL.md`
