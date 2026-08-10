@@ -30,6 +30,7 @@
 - [Project Structure](#-project-structure)
 - [Prerequisites](#-prerequisites)
 - [Quick Start](#-quick-start)
+- [Remote GPU Offload (optional)](#-remote-gpu-offload-optional)
 - [Security Posture](#-security-posture)
 - [Design & Philosophy](#-design--philosophy)
 - [Acknowledgments](#-acknowledgments)
@@ -174,6 +175,12 @@ Other lifecycle scripts: `pwsh tools/stop-system.ps1` (stop panel + Qdrant), `pw
 ```bash
 pytest tests/ -q   # needs a live Qdrant (tools/start-system.ps1) for most tests; the rest skip cleanly
 ```
+
+---
+
+## 🖧 Remote GPU Offload (optional)
+
+Working on a machine without a GPU? `remote-client/` is an optional, separately-distributed sync client: it watches a local folder and pushes changed files to a GPU-equipped CodeIntel server over HTTP (`POST /api/remote-mirror/{client_id}/...`, admin-key gated, path-traversal-hardened — see `src/api/remote_routes.py`). The server writes them into a per-client mirror directory; if that directory is registered as a collection's `path` with `auto_refresh: true`, the **existing** watcher/incremental-reindex pipeline picks it up automatically — no new indexing logic, just a safe way to get files onto the server's disk from elsewhere. Zero impact on the server if you never use it. See [remote-client/README.md](remote-client/README.md).
 
 ---
 

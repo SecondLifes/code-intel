@@ -23,7 +23,7 @@ just link to them once in a README aside.
 | [python-docx](https://github.com/python-openxml/python-docx) | DOCX manual export | MIT |
 | [ReportLab](https://www.reportlab.com/opensource/) | PDF manual export | BSD-derived (ReportLab's own license) |
 | [xxhash](https://github.com/ifduyue/python-xxhash) (XXH3-64) | Content-hash based incremental reindexing (skip unchanged chunks) | BSD-2-Clause |
-| [watchdog](https://github.com/gorakhargosh/watchdog) | Auto-refresh source-folder watcher for collections with `auto_refresh` enabled | Apache-2.0 |
+| [watchdog](https://github.com/gorakhargosh/watchdog) | File-change detection in `remote-client/watch_client.py` (the optional remote sync client) | Apache-2.0 |
 
 ## 📚 References & Inspiration
 

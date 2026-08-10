@@ -37,6 +37,13 @@ STATE = {"index_job": None}   # TEK paylaşılan iş durumu — tüm modüller a
 STATE_LOCK = threading.Lock()
 WATCH_INTERVAL_SEC = 600      # auto_refresh kaynak tarama aralığı
 
+# ---------------- uzak istemci dosya senkronu (ayna klasörler) ----------------
+# bkz. api/remote_routes.py — her client_id kendi alt klasörüne yazar, bir
+# koleksiyon profilinin `path`i buraya işaret edip auto_refresh=true olursa
+# mevcut _watch_loop (indexing_svc.py) mtime değişikliğini görüp otomatik
+# artımlı yeniden-indeksleme tetikler.
+REMOTE_MIRROR_DIR = ROOT / "data" / "remote_mirrors"
+
 # ---------------- otomatik/elle yedekleme (rotasyonlu) ----------------
 BACKUP_DIR = ROOT / "backups"
 BACKUP_KEEP = 3                 # koleksiyon başına saklanan yedek sayısı

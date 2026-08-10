@@ -31,6 +31,7 @@
 - [Proje Yapısı](#-proje-yapısı)
 - [Ön Koşullar](#-ön-koşullar)
 - [Hızlı Başlangıç](#-hızlı-başlangıç)
+- [Uzak GPU Devretme (opsiyonel)](#-uzak-gpu-devretme-opsiyonel)
 - [Güvenlik Duruşu](#-güvenlik-duruşu)
 - [Tasarım ve Felsefe](#-tasarım-ve-felsefe)
 - [Teşekkürler](#-teşekkürler)
@@ -175,6 +176,12 @@ Diğer yaşam döngüsü script'leri: `pwsh tools/stop-system.ps1` (panel + Qdra
 ```bash
 pytest tests/ -q   # testlerin çoğu için canlı bir Qdrant gerekir (tools/start-system.ps1); geri kalanı sorunsuzca atlanır
 ```
+
+---
+
+## 🖧 Uzak GPU Devretme (opsiyonel)
+
+GPU'suz bir makinede mi çalışıyorsunuz? `remote-client/`, ayrı dağıtılan opsiyonel bir senkron istemcisi: yerel bir klasörü izler, değişen dosyaları HTTP ile GPU'lu bir CodeIntel sunucusuna gönderir (`POST /api/remote-mirror/{client_id}/...`, admin-anahtarı gerektirir, path-traversal'a karşı sıkı doğrulanır — bkz. `src/api/remote_routes.py`). Sunucu bunları istemciye özel bir ayna klasöre yazar; o klasör bir koleksiyonun `path`i olarak `auto_refresh: true` ile kayıtlıysa, **mevcut** watcher/artımlı-yeniden-indeksleme hattı otomatik devreye girer — yeni indeksleme mantığı yok, sadece dosyaları başka bir yerden sunucunun diskine güvenle getirmenin bir yolu. Hiç kullanmazsanız sunucuda sıfır etki. Bkz. [remote-client/README.md](remote-client/README.md).
 
 ---
 

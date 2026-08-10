@@ -23,7 +23,7 @@ bir kez link vermekle yetinmek yerine.
 | [python-docx](https://github.com/python-openxml/python-docx) | DOCX manual export | MIT |
 | [ReportLab](https://www.reportlab.com/opensource/) | PDF manual export | BSD-türevi (ReportLab'in kendi lisansı) |
 | [xxhash](https://github.com/ifduyue/python-xxhash) (XXH3-64) | İçerik-hash tabanlı artımlı yeniden indeksleme (değişmeyen chunk'ları atlama) | BSD-2-Clause |
-| [watchdog](https://github.com/gorakhargosh/watchdog) | `auto_refresh` açık koleksiyonlar için otomatik kaynak-klasör izleyicisi | Apache-2.0 |
+| [watchdog](https://github.com/gorakhargosh/watchdog) | `remote-client/watch_client.py`'de (opsiyonel uzak senkron istemcisi) dosya-değişikliği algılama | Apache-2.0 |
 
 ## 📚 Referanslar ve İlham
 

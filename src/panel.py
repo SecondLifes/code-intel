@@ -31,14 +31,14 @@ try:
     from .services import common
     from .services.indexing_svc import _watch_loop, _run_index, load_pending_job
     from .services.apikeys import validate_api_key
-    from .api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
+    from .api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes, remote_routes
 except ImportError:
     # `uvicorn src.panel:app` paket-göreli çalışır; `python src/panel.py` (paketsiz) düşülür.
     import retrieval
     from services import common
     from services.indexing_svc import _watch_loop, _run_index, load_pending_job
     from services.apikeys import validate_api_key
-    from api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes
+    from api import admin_routes, index_routes, mcp_routes, search_routes, manual_routes, remote_routes
 
 # Geriye dönük takma adlar — testler ve dış kullanıcılar panel.X olarak erişebilir.
 ROOT = common.ROOT
@@ -71,7 +71,8 @@ LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 ADMIN_PREFIXES = ("/api/collection", "/api/index/start", "/api/backup/run",
                    "/api/duplicates/start", "/api/symbols/rebuild", "/api/profile",
                    "/api/owners", "/api/groups", "/api/apikeys", "/api/git-update-all",
-                   "/api/index/migrate-ids", "/api/manual/build", "/api/manual/translate")
+                   "/api/index/migrate-ids", "/api/manual/build", "/api/manual/translate",
+                   "/api/remote-mirror")
 RATE_WINDOW_SEC, RATE_MAX = 10, 300
 _rate: dict[str, deque] = {}
 _AUDIT_FILE = common.ROOT / "logs" / "admin-audit.log"
@@ -130,6 +131,7 @@ app.include_router(search_routes.router)
 app.include_router(index_routes.router)
 app.include_router(mcp_routes.router)
 app.include_router(manual_routes.router)
+app.include_router(remote_routes.router)
 
 # Statik varlıklar (ör. yerelde barındırılan SweetAlert2) — proje CDN'siz/çevrimdışı
 # çalışma ilkesine bağlı (bkz. Help/Manual sistemindeki aynı karar), bu yüzden

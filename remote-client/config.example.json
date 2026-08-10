@@ -1,0 +1,8 @@
+{
+  "server_url": "http://SUNUCU-IP:8500",
+  "client_id": "istemci1",
+  "api_key": "sunucuda uretilen role=admin bir API anahtari (Ayarlar > API Anahtarlari)",
+  "watch_path": "C:\\Projelerim\\benim-kod-tabanim",
+  "patterns": ["*.pas", "*.dpr", "*.dpk", "*.inc"],
+  "initial_sync": true
+}

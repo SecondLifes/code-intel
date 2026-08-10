@@ -1,0 +1,9 @@
+# Uzak istemci bagimliliklari - CodeIntel sunucusunun kendi requirements.txt'inden
+# TAMAMEN AYRI ve cok daha hafif: burada onnxruntime/qdrant-client/fastapi YOK,
+# cunku istemci hicbir embedding/indeksleme yapmiyor, sadece dosya izleyip HTTP
+# ile sunucuya gonderiyor. HTTP icin de stdlib urllib kullaniliyor (ekstra
+# bagimlilik yok) - amac, derlenmis .exe'yi olabildigince kucuk/basit tutup
+# antivirus yanlis-pozitif yuzeyini azaltmak (bkz. ../CONTRIBUTING.md
+# "Antivirus uyarilari").
+watchdog==6.0.0
+pyinstaller==6.16.0

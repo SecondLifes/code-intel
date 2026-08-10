@@ -33,12 +33,12 @@ CodeIntel modüler bir FastAPI monolitidir, bir eklenti/kural çerçevesi değil
 |---|---|
 | Çekirdek arama/RAG mantığı (hibrit RRF, chunk getirme, açıklamalar, bağlam paketleri) | `src/retrieval.py` — hem panel hem MCP sunucusu tarafından ortak kullanılır, asla kopyalanmaz |
 | Çok dilli parçalama (Tree-sitter) | `src/chunker.py` |
-| Web paneli rotaları | `src/api/{search,index,admin,manual,mcp}_routes.py`, `src/panel.py`'den monte edilir |
+| Web paneli rotaları | `src/api/{search,index,admin,manual,mcp,remote}_routes.py`, `src/panel.py`'den monte edilir |
 | Ortak servisler (durum, profiller, API anahtarları, yedekler, indeksleme hattı) | `src/services/*.py` |
 | MCP sunucusu (17 araç, stdio + Streamable HTTP) | `src/mcp_server.py` |
 | Dokümantasyon/manual üretici | `src/manual.py` |
 | Frontend (build adımsız, framework'süz) | `static/index.html` (arama), `static/settings.html` (koleksiyon/indeks yönetimi), `static/api.html` (REST + MCP araç test sayfası), `static/viewer.html` |
-| Testler | `tests/test_api.py` (API + güvenlik regresyonu), `tests/test_chunker.py`, `tests/test_collection_ops.py`, `tests/test_generations.py`, `tests/test_manual.py`, `tests/test_security.py`, `tests/eval.py` (arama kalitesi ölçütü) |
+| Testler | `tests/test_api.py` (API + güvenlik regresyonu), `tests/test_chunker.py`, `tests/test_collection_ops.py`, `tests/test_generations.py`, `tests/test_manual.py`, `tests/test_security.py`, `tests/test_remote_mirror.py` (remote-mirror uçları için path-traversal regresyonu), `tests/eval.py` (arama kalitesi ölçütü) |
 
 ## Yeni Bir MCP Aracı Ekleme
 

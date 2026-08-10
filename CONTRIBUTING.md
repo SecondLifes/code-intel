@@ -33,12 +33,12 @@ CodeIntel is a modular FastAPI monolith, not a plugin/rules framework — there 
 |---|---|
 | Core search/RAG logic (hybrid RRF, chunk retrieval, explanations, context packs) | `src/retrieval.py` — shared by both the panel and the MCP server, never duplicated |
 | Multi-language chunking (Tree-sitter) | `src/chunker.py` |
-| Web panel routes | `src/api/{search,index,admin,manual,mcp}_routes.py`, mounted from `src/panel.py` |
+| Web panel routes | `src/api/{search,index,admin,manual,mcp,remote}_routes.py`, mounted from `src/panel.py` |
 | Shared services (state, profiles, API keys, backups, indexing pipeline) | `src/services/*.py` |
 | MCP server (17 tools, stdio + Streamable HTTP) | `src/mcp_server.py` |
 | Documentation/manual generator | `src/manual.py` |
 | Frontend (no build step, no framework) | `static/index.html` (search), `static/settings.html` (collection/index management), `static/api.html` (REST + MCP tool tester), `static/viewer.html` |
-| Tests | `tests/test_api.py` (API + security regression), `tests/test_chunker.py`, `tests/test_collection_ops.py`, `tests/test_generations.py`, `tests/test_manual.py`, `tests/test_security.py`, `tests/eval.py` (retrieval-quality benchmark) |
+| Tests | `tests/test_api.py` (API + security regression), `tests/test_chunker.py`, `tests/test_collection_ops.py`, `tests/test_generations.py`, `tests/test_manual.py`, `tests/test_security.py`, `tests/test_remote_mirror.py` (path-traversal regression for the remote-mirror endpoints), `tests/eval.py` (retrieval-quality benchmark) |
 
 ## Adding a New MCP Tool
 

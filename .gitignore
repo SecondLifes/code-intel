@@ -1,4 +1,5 @@
 .venv/
+.serena
 data/
 qdrant-bin/*.zip
 qdrant.log
@@ -13,3 +14,12 @@ backups/
 .qdrant-initialized
 analysis/
 .serena/
+storage/
+
+# uzak istemci (remote-client/) — gercek config (API anahtari icerir) ve
+# PyInstaller derleme ciktilari commit'lenmez, sadece config.example.json
+remote-client/config.json
+remote-client/build/
+remote-client/dist/
+remote-client/*.spec
+.serena
