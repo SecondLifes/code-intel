@@ -15,7 +15,7 @@ name = "code-intel"
 version = "1.0.0"
 description = "Delphi/Pascal kod tabanları için hibrit (anlamsal+kelime) arama, Türkçe RAG sohbet ve MCP sunucusu — Qdrant + fastembed + Ollama."
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Emrah BAŞPINAR" }]
 dependencies = [
     "fastapi>=0.130",
