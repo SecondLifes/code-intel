@@ -149,9 +149,9 @@ code-intel/
 
 - **Python 3.12 veya 3.13** — daha yenisi DEĞİL. Pinlenmiş bağımlılıkların (`numpy`, `onnxruntime-gpu`, `grpcio`, `lxml`, `mmh3`...) 3.14+ için henüz hazır Windows wheel'i yok, çok yeni bir yorumlayıcı kurulumda derleyici hatasıyla patlar. `tools/install.ps1` bunu sizin için kontrol eder. Tam açıklama için CONTRIBUTING.tr-TR.md "Desteklenen Python sürümleri"ne bakın.
 - **Qdrant** (`qdrant-bin/` altında paketlenmiş ikili, ya da kendi kurulumunuz)
-- **Ollama** — sohbet, derin araştırma, açıklamalar, çeviri ve karşılaştırma tablosu için. Bu makinede yerel, ya da ağınızdaki uzak bir sunucu — `tools/install.ps1` hangisini istediğinizi sorar.
+- **Ollama** — sohbet, derin araştırma, açıklamalar, çeviri ve karşılaştırma tablosu için. Bu makinede yerel, ya da ağınızdaki uzak bir sunucu — `tools/install.ps1` hangisini istediğinizi sorar. (Aşağıdaki GPU/CPU seçiminden BAĞIMSIZDIR — embedding/reranking, Ollama nerede çalışırsa çalışsın her zaman yerelde çalışır.)
 - **PowerShell 7+ (`pwsh`)** — `tools/*.ps1` PowerShell script'leridir (Windows-öncelikli; Python/FastAPI çekirdeğinin kendisi platform-bağımsızdır)
-- CUDA destekli bir GPU isteğe bağlıdır ama embedding verimi için şiddetle önerilir (bkz. `requirements.txt`'nin `onnxruntime-gpu` pinleme notu)
+- CUDA destekli bir GPU isteğe bağlıdır ama embedding verimi için şiddetle önerilir (bkz. `requirements.txt`'nin `onnxruntime-gpu` pinleme notu). GPU'nuz yok mu? `tools/install.ps1` GPU-mu-CPU-mu diye de sorar, CPU seçerseniz NVIDIA CUDA paketlerini boşuna indirmek yerine tamamen atlar.
 
 ---
 

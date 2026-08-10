@@ -14,7 +14,18 @@
            sadece uyarır, indirmeye ZORLAMAZ).
          - Uzak: bu makinede Ollama'yı hiç kontrol ETMEZ/kurdurmaz — sadece
            verdiğiniz uzak sunucu URL'sini mcp-config.json'a yazar.
-      4. `pip install -r requirements.txt` çalıştırır.
+      4. Embedding/reranker'ın (kod indeksleme + arama — bu AYRI bir konu,
+         Ollama'dan BAĞIMSIZ, her zaman bu makinede yerel çalışır) GPU mu CPU
+         mu kullanacağını sorar:
+         - GPU: requirements.txt'i olduğu gibi kurar (onnxruntime-gpu +
+           nvidia-cu12 CUDA DLL'leri dahil).
+         - CPU: onnxruntime-gpu / fastembed-gpu / nvidia-*-cu12 satırlarını
+           requirements.txt'ten FİLTRELER (indirmez) ve yerine CPU-only
+           `onnxruntime` kurar. Uzak Ollama seçimi bunu OTOMATİK yapmaz —
+           GPU'suz bir makinede boşuna CUDA indirmemek için bu ayrı soruyu
+           da açıkça CPU olarak yanıtlamanız gerekir.
+      5. `pip install -r requirements.txt` çalıştırır (ya da CPU modundaysa
+         filtrelenmiş hali + `onnxruntime`).
     Kasıtlı olarak .venv veya uv KULLANMAZ, sistemde kurulu Python'a kurar —
     bkz. CONTRIBUTING.md "Antivirüs uyarıları".
 
@@ -25,15 +36,22 @@
     OllamaMode Remote iken uzak sunucunun URL'si (örn. http://192.168.1.50:11434).
     Verilmezse interaktif sorulur.
 
+.PARAMETER EmbeddingMode
+    'GPU' veya 'CPU'. Verilmezse interaktif sorulur (nvidia-smi ile otomatik
+    algılanan varsayılanla). Ollama'nın yerel/uzak olmasından TAMAMEN BAĞIMSIZ
+    bir seçimdir.
+
 .EXAMPLE
     .\tools\install.ps1
-    .\tools\install.ps1 -OllamaMode Local
-    .\tools\install.ps1 -OllamaMode Remote -OllamaUrl http://192.168.1.50:11434
+    .\tools\install.ps1 -OllamaMode Local -EmbeddingMode GPU
+    .\tools\install.ps1 -OllamaMode Remote -OllamaUrl http://192.168.1.50:11434 -EmbeddingMode CPU
 #>
 param(
     [ValidateSet('Local', 'Remote')]
     [string]$OllamaMode,
-    [string]$OllamaUrl
+    [string]$OllamaUrl,
+    [ValidateSet('GPU', 'CPU')]
+    [string]$EmbeddingMode
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,13 +129,57 @@ if ($OllamaMode -eq 'Remote') {
     }
 }
 
-# ---------- 4) BAĞIMLILIKLAR ----------
+# ---------- 4) EMBEDDING: GPU mu CPU mu ----------
+# Uzak Ollama seçimi SADECE Ollama'yı (sohbet/derin araştırma LLM'i) etkiler.
+# Kod indeksleme/aramadaki embedding+reranker AYRI bir aşamadır, bu makinede
+# YEREL çalışır (FastEmbed/onnxruntime) — Ollama nerede olursa olsun gereklidir.
+# Burada sorulan, o yerel embedding'in GPU (CUDA, ~34x daha hızlı) mi yoksa
+# CPU mu kullanacağı.
+if (-not $EmbeddingMode) {
+    $gpuName = $null
+    try {
+        $smi = & nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>$null
+        if ($LASTEXITCODE -eq 0 -and $smi) { $gpuName = ($smi -split ',')[0].Trim() }
+    } catch { }
+
+    Write-Host ""
+    Write-Host "Embedding/reranker (kod indeksleme + arama) için GPU mu CPU mu?" -ForegroundColor Cyan
+    if ($gpuName) {
+        Write-Host "  Algılanan GPU: $gpuName"
+        Write-Host "  [1] GPU (varsayılan — CUDA hızlandırmalı, CPU'ya göre ~34x daha hızlı)"
+    } else {
+        Write-Host "  NVIDIA GPU algılanamadı (nvidia-smi bulunamadı/başarısız)."
+        Write-Host "  [1] GPU (yine de dene — CUDA sürücüsü/donanımı gerektirir)"
+    }
+    Write-Host "  [2] CPU-only (NVIDIA CUDA DLL indirmelerini tamamen ATLAR — daha küçük/hızlı kurulum, embedding daha yavaş çalışır)"
+    $defaultChoice = if ($gpuName) { '1' } else { '2' }
+    $choice = Read-Host "Seçiminiz [1/2] (varsayılan: $defaultChoice)"
+    if (-not $choice) { $choice = $defaultChoice }
+    $EmbeddingMode = if ($choice -eq '2') { 'CPU' } else { 'GPU' }
+}
+Write-Host "[Embedding] mod: $EmbeddingMode" -ForegroundColor Green
+
+# ---------- 5) BAĞIMLILIKLAR ----------
 Write-Host ""
-Write-Host "[Bağımlılıklar] pip install -r requirements.txt ..." -ForegroundColor Yellow
 Push-Location $ProjectRoot
 try {
-    & $SystemPython -m pip install -r requirements.txt
-    if ($LASTEXITCODE -ne 0) { throw "Bağımlılık kurulumu başarısız oldu (pip install -r requirements.txt) — çıktıdaki hataya bakın." }
+    if ($EmbeddingMode -eq 'CPU') {
+        Write-Host "[Bağımlılıklar] CPU-only mod — onnxruntime-gpu/fastembed-gpu/nvidia-*-cu12 atlanıyor, pip install -r requirements.txt (filtreli) ..." -ForegroundColor Yellow
+        $gpuPattern = '^(onnxruntime-gpu|fastembed-gpu|nvidia-[a-z0-9-]+-cu12)=='
+        $tempReq = Join-Path ([System.IO.Path]::GetTempPath()) "code-intel-requirements-cpu.txt"
+        Get-Content (Join-Path $ProjectRoot "requirements.txt") | Where-Object { $_ -notmatch $gpuPattern } | Set-Content -LiteralPath $tempReq -Encoding utf8
+        try {
+            & $SystemPython -m pip install -r $tempReq
+            if ($LASTEXITCODE -ne 0) { throw "Bağımlılık kurulumu başarısız oldu (pip install -r requirements.txt, CPU-only filtre) — çıktıdaki hataya bakın." }
+            Write-Host "[Bağımlılıklar] pip install onnxruntime==1.22.0 (CPU) ..." -ForegroundColor Yellow
+            & $SystemPython -m pip install "onnxruntime==1.22.0"
+            if ($LASTEXITCODE -ne 0) { throw "onnxruntime (CPU) kurulumu başarısız oldu." }
+        } finally { Remove-Item -LiteralPath $tempReq -ErrorAction SilentlyContinue }
+    } else {
+        Write-Host "[Bağımlılıklar] pip install -r requirements.txt (GPU dahil) ..." -ForegroundColor Yellow
+        & $SystemPython -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) { throw "Bağımlılık kurulumu başarısız oldu (pip install -r requirements.txt) — çıktıdaki hataya bakın." }
+    }
 } finally { Pop-Location }
 Write-Host "[Bağımlılıklar] kuruldu" -ForegroundColor Green
 

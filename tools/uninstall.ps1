@@ -63,6 +63,10 @@ if ($RemovePackages) {
         Write-Warning "Bu paketler sistem Python'unun GENEL ortamındaydı — aynı makinedeki başka projeler de kullanıyor olabilir."
         Write-Host "[Paketler] requirements.txt'teki paketler kaldırılıyor..." -ForegroundColor Yellow
         & $SystemPython -m pip uninstall -y -r (Join-Path $ProjectRoot "requirements.txt")
+        # CPU-only kurulumda (tools\install.ps1 -EmbeddingMode CPU) requirements.txt'te
+        # olmayan ayrı bir `onnxruntime` (GPU değil) paketi de kurulmuş olabilir —
+        # kurulu değilse pip zaten sessizce atlar, zararsız.
+        & $SystemPython -m pip uninstall -y onnxruntime 2>$null
         Write-Host "[Paketler] kaldırıldı" -ForegroundColor Green
     } else {
         Write-Warning "[Paketler] sistemde 'python' bulunamadı — atlandı"

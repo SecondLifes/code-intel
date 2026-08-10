@@ -153,7 +153,11 @@ sürümlerinden ÖNCE geldiğinden emin olup bu script'i tekrar çalıştırın.
     & $SystemPython -c "import fastapi" *> $null
     $depsOk = ($LASTEXITCODE -eq 0)
     if (-not $depsOk) {
-        Write-Host "[Panel] bağımlılıklar eksik — kuruluyor (pip)..." -ForegroundColor Yellow
+        # NOT: bu, tam (GPU dahil) requirements.txt'i kurar. CPU-only bir
+        # kurulum istiyorsanız (GPU'suz makine — CUDA indirmelerini atlar)
+        # önce tools\install.ps1 -EmbeddingMode CPU'yu çalıştırın; bu betik
+        # onu tekrar GPU'ya çevirmez, sadece eksikse ilk kez kurar.
+        Write-Host "[Panel] bağımlılıklar eksik — kuruluyor (pip, tam/GPU set — CPU-only için önce tools\install.ps1 çalıştırın)..." -ForegroundColor Yellow
         Push-Location $ProjectRoot
         try {
             & $SystemPython -m pip install -r requirements.txt

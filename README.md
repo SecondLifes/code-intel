@@ -148,9 +148,9 @@ code-intel/
 
 - **Python 3.12 or 3.13** — not newer. Pinned dependencies (`numpy`, `onnxruntime-gpu`, `grpcio`, `lxml`, `mmh3`...) don't have prebuilt Windows wheels for 3.14+ yet, so a too-new interpreter fails at install with a compiler error. `tools/install.ps1` checks this for you. See CONTRIBUTING.md "Supported Python versions" for the full explanation.
 - **Qdrant** (bundled binary under `qdrant-bin/`, or run your own)
-- **Ollama** — for chat, deep research, explanations, translation, and the comparison table. Either local on this machine, or a remote server on your LAN — `tools/install.ps1` asks which.
+- **Ollama** — for chat, deep research, explanations, translation, and the comparison table. Either local on this machine, or a remote server on your LAN — `tools/install.ps1` asks which. (This is independent of the GPU/CPU choice below — embedding/reranking always runs locally regardless of where Ollama runs.)
 - **PowerShell 7+ (`pwsh`)** — `tools/*.ps1` are PowerShell scripts (Windows-first; the Python/FastAPI core itself is cross-platform)
-- A CUDA-capable GPU is optional but strongly recommended for embedding throughput (see `requirements.txt`'s `onnxruntime-gpu` pinning note)
+- A CUDA-capable GPU is optional but strongly recommended for embedding throughput (see `requirements.txt`'s `onnxruntime-gpu` pinning note). No GPU? `tools/install.ps1` also asks GPU-vs-CPU and, if you pick CPU, skips downloading the NVIDIA CUDA packages entirely instead of pulling them for nothing.
 
 ---
 
