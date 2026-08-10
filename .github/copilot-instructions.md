@@ -43,7 +43,7 @@ This is a **Python/FastAPI/Qdrant/Ollama** project — a real, running hybrid co
 1. **Always generate code in Python** (≥3.12) unless explicitly requested in another language.
 2. **`snake_case`** for functions/variables/modules, **`PascalCase`** for classes, **`UPPER_SNAKE_CASE`** for constants.
 3. **Respect the `*_routes.py`/`*_svc.py` suffix convention** — routes are thin, services hold logic.
-4. **Prefer FastAPI `Depends(...)`** for injecting Qdrant/Ollama clients into route handlers, over inline instantiation.
+4. **Import shared infrastructure from `src/services/common.py`** (`cl`, `OLLAMA`, collection-name constants) — never construct a second `QdrantClient()`. This project does not use FastAPI `Depends(...)` anywhere.
 5. **Never put business logic in a route handler** — delegate to the matching `*_svc.py`.
 
 ## Code Style
@@ -92,7 +92,7 @@ When creating new features, follow this project's real two-layer split (no Domai
 ## What NOT to generate
 
 - ❌ Business logic inside a route handler
-- ❌ Global mutable state — pass clients/config explicitly or via `Depends`
+- ❌ New, undocumented global mutable state — `services/common.py`'s `STATE` dict and `cl`/`OLLAMA` singletons are the deliberate, established exception; don't dismantle them or add a second one
 - ❌ Magic numbers — declare named constants (see `HUGE_LINES` example)
 - ❌ Generic/broad exception catches without handling
 - ❌ Mutating a live Qdrant collection mid-reindex (always stage + atomic alias swap)
@@ -122,7 +122,7 @@ afterward, and never mutate a live Qdrant collection during reindex.
 
 - `AGENTS.md`, `README.md`, `.github/copilot-instructions.md`
 - `.claude/rules/**/*.md`, `.agents/skills/**/SKILL.md`
-- `src/**/*`, `examples/**/*`, `docs/**/*.md`
+- `src/**/*`, `tests/**/*.py`, `docs/**/*.md`
 
 ### Excludes (never useful as context)
 

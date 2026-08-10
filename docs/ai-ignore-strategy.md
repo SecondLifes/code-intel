@@ -42,7 +42,7 @@ These files are essential for AI context and must always remain indexed and acce
 | `AGENTS.md` | Universal rules for all AI agents (Codex CLI, Antigravity, Copilot, Cursor, Kiro) |
 | `README.md` | Project overview and quick start |
 | `src/**/*` | This project's actual generated deliverables (the default output location) |
-| `examples/**/*` | Good practice examples |
+| `tests/**/*.py` | Regression suite — test names document locked-in behavior |
 | `docs/**/*.md` | Documentation |
 | `.agents/rules/**/*.md` | **Single source of truth** for per-topic rules — generates `.claude/rules` and `.cursor/rules` |
 | `.agents/commands/**/*.md` | Single source of truth for slash-commands — generates `.claude/commands` |

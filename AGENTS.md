@@ -118,7 +118,7 @@ stack would actually flag.
 - **Runtime/Platform:** system-installed Python — **never a project-local `.venv`/`uv`**. `uv`'s trampoline executables and `.venv/Scripts/python.exe` are unsigned, freshly-copied/portable binaries that trigger antivirus false positives (Trojan) on some engines; a long-installed system Python avoids this. See `CONTRIBUTING.md`'s "Antivirüs uyarıları".
 - **Frameworks:** FastAPI (`uvicorn` ASGI server), MCP SDK (stdio + Streamable HTTP), Qdrant client, fastembed/fastembed-gpu, Ollama (local LLM inference, HTTP)
 - **Database:** Qdrant only (vector DB) — no relational database. Symbol graph relations stored in their own internal Qdrant collection, not embedded in every point's payload.
-- **Tests:** `pytest` (see `.agents/rules/testing.md`)
+- **Tests:** `pytest` — full discipline in `.agents/rules/testing.md`
 - **Build:** no compiled build step — `pip install -r requirements.txt` (pinned) is the install path; `pyproject.toml` holds loose ranges for packaging identity only
 - **File extensions:** `.py` (source), `.json`/`.ini` (config), `.jsonl` (chunk/eval data)
 
@@ -144,9 +144,10 @@ Flat within each layer — `src/api/<feature>_routes.py`,
 
 ### Method/Function Naming
 
-- Actions use verb-first names (`chunk_file`, `index_repository`, `search_code`).
+- Actions use verb-first names (`chunk_file`, `extract_calls`, `ensure_payload_indexes`, `log_feedback`).
+- Private module helpers take a leading underscore (`_find_body_node`, `_split_huge_node`) — the public/private split is by prefix, not by module placement.
 - No project-wide getter/setter convention — FastAPI route handlers are named after the endpoint's action, not by HTTP verb.
-- Boolean-returning functions/flags use `is_`/`has_` prefixes where applicable (e.g. `is_expired`, `huge` flag on oversized chunks).
+- Boolean-returning functions/flags use `is_`/`has_` prefixes where applicable (`gpu_available()`, `has_more`, `is_admin`, `has_vector`), or a bare adjective for a payload flag (`huge` on oversized chunks).
 
 ### Unit Test Naming (TDD)
 
@@ -188,7 +189,7 @@ Flat within each layer — `src/api/<feature>_routes.py`,
 | Approach | When to Use |
 |-----------|-------------|
 | Plain `def` route handler (FastAPI threadpool) | Every existing endpoint, including the SSE streams (`/api/ask/stream`, `/api/research/stream`) — this repo's actual, consistent convention |
-| SSE streaming (`sse-starlette`) | `/api/ask/stream`, `/api/research/stream` — token-budgeted, truncation-aware (surface Ollama's own `done_reason` rather than silently returning a cut-off answer) |
+| SSE streaming — FastAPI's own `StreamingResponse` | `/api/ask/stream`, `/api/research/stream` — `media_type="text/event-stream"` with hand-written `event:`/`data:` frames; token-budgeted, truncation-aware (surface Ollama's own `done_reason` rather than silently returning a cut-off answer). **Not `sse-starlette`** — that package is only present as a transitive dependency of `mcp` and is never imported by this project's code. |
 | Persistent job queue | Indexing jobs — survives a process restart mid-index |
 
 ### Anti-Patterns
@@ -227,10 +228,15 @@ not bloating the shared module.
 
 ### D — Dependency Inversion Principle (DIP)
 
-Route handlers receive service functions/clients (Qdrant client, Ollama
-client) via FastAPI's dependency-injection (`Depends(...)`) rather than
-importing and instantiating them inline — keeps routes testable against
-fakes.
+**This project does not use FastAPI's `Depends(...)` at all** (zero
+occurrences in `src/`). Shared infrastructure is instead reached through
+one module-level source of truth: `src/services/common.py` re-exports the
+single Qdrant client (`cl`), the Ollama endpoint (`OLLAMA`) and every
+collection-name constant from `retrieval.py`, and every route/service
+imports from there. The inversion that matters here is **"one shared
+definition, imported"** rather than each module constructing its own
+`QdrantClient()` or hardcoding a collection name — don't introduce a
+second client instance or a duplicated constant.
 
 > **Skills:** `.agents/skills/fastapi/SKILL.md`
 
@@ -310,7 +316,7 @@ boilerplate.
 |--------|---------------|
 | **Service** | `src/services/*_svc.py` — business logic orchestrating the Qdrant client, Ollama calls and the chunker |
 | **Strategy** | Per-language `Chunker` classes behind one extension registry (`chunker.py`) |
-| **Repository-like** | Qdrant client calls are centralized in services, never issued directly from route handlers |
+| **Shared-singleton access** | One Qdrant client (`cl`) and one Ollama endpoint, re-exported from `src/services/common.py` — never a second client instance constructed elsewhere |
 | **Staging + atomic swap** | Reindex builds into a separate collection, swapped in via alias only once verified — the project's own substitute for a transactional Unit of Work |
 
 > **Skills:** `.agents/skills/python/SKILL.md`
@@ -319,10 +325,10 @@ boilerplate.
 
 - ❌ **God module** — a `*_routes.py` or `*_svc.py` file doing unrelated feature areas; split by feature instead
 - ❌ **Business logic inside a route handler** — belongs in the matching `*_svc.py`
-- ❌ **Global mutable state** — pass clients/config explicitly or via FastAPI `Depends`
+- ❌ **New, undocumented global mutable state** — note the deliberate exception: `src/services/common.py`'s `STATE = {"index_job": None}` is the single shared job-status dict every module updates on purpose, and `cl`/`OLLAMA` are intentional shared singletons. Don't dismantle those; don't add a second one either.
 - ❌ **Hardcoded strings** for config that varies by environment — use `mcp-config.json`/`requirements.txt`-documented settings
 - ❌ **`pip install -r requirements.txt` re-run without re-applying the GPU fixup** — see Database section's known trap
-- ❌ **Adding an MCP tool without its REST parity endpoint** — breaks `test_api.py::test_mcp_rest_parity`
+- ❌ **Defining an MCP tool with raw `mcp.tool()` instead of this project's `@tool` decorator** — skips `TOOLS` registration, so no REST endpoint is generated and `test_api.py::test_mcp_rest_parity` fails
 - ❌ **Mutating a live Qdrant collection mid-reindex** — always stage + atomic alias swap
 - ❌ **Testing against a real Qdrant/Ollama instance in the default `pytest` run** — that belongs in `tests/manual/` (excluded by `pytest.ini`), not `tests/`
 
@@ -369,7 +375,18 @@ tests/
 └── manual/             ← Requires real GPU/Ollama/Qdrant — excluded from default run (pytest.ini norecursedirs)
 ```
 
-> **Dependency rule:** `api/*_routes.py → services/*_svc.py → chunker.py / retrieval.py / Qdrant client / Ollama client`. A route handler never calls Qdrant/Ollama directly — it always goes through a service function.
+> **Dependency rule (as actually practiced — two tiers, verified):**
+> `api/*_routes.py → services/*_svc.py → chunker.py / retrieval.py / Qdrant / Ollama`
+> is the path for anything with **real logic** — indexing, retrieval/RAG, manual
+> generation, symbol-graph work. Thin CRUD/passthrough endpoints, by contrast,
+> **do** call the shared `cl` client directly and that is the established pattern,
+> not a violation (verified: 47 direct `cl.*` calls across the API layer —
+> `admin_routes.py` 36, `search_routes.py` 7, `index_routes.py` 3,
+> `manual_routes.py` 1 — all simple operations like `cl.collection_exists()`,
+> `cl.get_collections()`, `cl.delete_collection()`). The line to hold: a route
+> may *reach* Qdrant, but must not *contain* business logic — the moment an
+> endpoint grows branching, batching, staging or multi-step orchestration, that
+> belongs in a `*_svc.py`.
 
 ---
 
@@ -383,8 +400,8 @@ Always load, regardless of tool:
 
 - `AGENTS.md` — universal rules
 - `README.md` — project overview
-- `src/**/*` — this project's actual generated deliverables (the default output location — see Working Directory above)
-- `examples/**/*` — good practice examples
+- `src/**/*` — this project's real, running application code
+- `tests/**/*.py` — the regression suite; test names document locked-in behavior
 - `docs/**/*.md` — documentation
 
 Skills are shared: `.agents/skills/**/SKILL.md` is read natively as a fallback

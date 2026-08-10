@@ -32,8 +32,9 @@ Kuralların, komutların ve becerilerin gerçek içeriği `.agents/` altında ya
 | `sync-workflow.md` | `.agents` değişince ne yapılması gerektiği — önce bu okunur. |
 | `kit-settings.md` | Kök `settings.json`'ın şeması. |
 | `local-machine-registry.md` | `.rad` hub referansı — cross-kit reference, shared rules. |
+| `testing.md` | Bu projenin gerçek test disiplini: `tests/` (harici servis gerektirmeyen varsayılan koşu) ↔ `tests/manual/` (gerçek GPU/Ollama/Qdrant isteyen, `pytest.ini` ile hariç tutulan) ayrımı, regresyon-adlandırma konvansiyonu, sözleşme testlerinin (`test_mcp_rest_parity`) neden elle tatmin edilecek bir iş değil güvence ağı olduğu. |
 
-Stack-özgü kurallar bu ekleme sırasında ayrı dosyalar olarak değil, doğrudan `AGENTS.md`/`.claude/CLAUDE.md`/`.gemini/rules/project-rules.md`/`.github/copilot-instructions.md` içine yazıldı (dependency-pin disiplini, MCP/REST paritesi, reindex atomicity, Türkçe yorum konvansiyonu) — CodeIntel'in kural yüzeyi henüz ayrı dosyalara bölünecek kadar büyük değil; büyüdükçe buraya `.agents/rules/qdrant-reindex.md` gibi ayrı dosyalar eklenebilir.
+Kalan stack-özgü kurallar (dependency-pin disiplini, MCP/REST paritesi, reindex atomicity, Türkçe yorum konvansiyonu) doğrudan `AGENTS.md`/`.claude/CLAUDE.md`/`.gemini/rules/project-rules.md`/`.github/copilot-instructions.md` içinde duruyor — bunlar dört aracın da fiziksel olarak görmesi gereken kimlik-seviyesi kurallar. Konu başına ayrı dosyaya bölünmeyi hak eden bir kural olgunlaştıkça `testing.md` gibi buraya taşınır.
 
 ### `.agents/commands/`
 

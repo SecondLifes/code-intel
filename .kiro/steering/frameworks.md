@@ -6,7 +6,7 @@
 
 - **When to use:** every HTTP-facing feature — web panel, REST API, SSE streaming endpoints.
 - **Style:** routers under `src/api/*_routes.py`, one per feature area; business logic delegated to `src/services/*_svc.py`.
-- **Features used:** `Depends(...)` for dependency injection (Qdrant/Ollama clients), `sse-starlette` for streaming, `pydantic` v2 models for request/response validation.
+- **Features used:** `APIRouter` per feature area, `pydantic` v2 models for request/response validation, and `StreamingResponse` with `media_type="text/event-stream"` for SSE (hand-written `event:`/`data:` frames — **not** `sse-starlette`, which is only a transitive dependency of `mcp` and never imported here). Shared Qdrant/Ollama access comes from `src/services/common.py`'s module-level singletons, not FastAPI `Depends(...)` — which this project does not use at all.
 - **Installation:** `pip install -r requirements.txt` (already pinned).
 - **Skills:** `.agents/skills/fastapi/SKILL.md`
 

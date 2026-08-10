@@ -26,7 +26,7 @@ size. The real dependency direction is flat and one-way instead:
 src/api/*_routes.py → src/services/*_svc.py → chunker.py / retrieval.py / Qdrant client / Ollama client
 ```
 
-- **Routes** never call Qdrant/Ollama directly — always through a service.
+- **Routes** may call the shared `cl` client directly for thin CRUD/passthrough work — that is the established pattern here (47 such calls across the API layer, verified). What a route must *not* contain is business logic: the moment an endpoint grows branching, batching, staging or multi-step orchestration, it belongs in a `*_svc.py`.
 - **Services** hold all business logic and orchestration.
 - **`chunker.py`/`retrieval.py`** are called by services, not by routes.
 

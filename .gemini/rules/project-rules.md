@@ -64,7 +64,7 @@ silently; user decides.
 
 ## Core Principles
 
-1. **Routes stay thin** — `src/api/*_routes.py` parses requests and calls a service; business logic lives in `src/services/*_svc.py`.
+1. **Routes stay thin, but may touch Qdrant** — a thin CRUD/passthrough endpoint calling the shared `cl` client directly is the established pattern (47 such calls, verified). Business logic — branching, batching, staging, multi-step orchestration — belongs in `src/services/*_svc.py`.
 2. **Pin discipline** — `onnxruntime-gpu==1.22.0` is a hand-verified critical pin; never bump without re-verifying GPU activation.
 
 ## Clean Code

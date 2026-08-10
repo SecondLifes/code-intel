@@ -14,7 +14,7 @@ This project uses **Python ≥3.12** with **FastAPI, the MCP SDK, Qdrant client 
 - **OCP:** New language support is a new `Chunker` class in the extension registry, not a branch inside an existing one.
 - **LSP:** Every per-language chunker returns the same chunk record shape.
 - **ISP:** Shared helpers (`services/common.py`) stay small; feature-specific helpers live in their own `*_svc.py`.
-- **DIP:** Route handlers receive Qdrant/Ollama clients via FastAPI `Depends(...)`, never inline instantiation.
+- **DIP:** One shared definition, imported — the Qdrant client (`cl`), Ollama endpoint and collection-name constants all come from `src/services/common.py`. Never construct a second `QdrantClient()` or duplicate a collection-name constant. (This project does not use FastAPI `Depends(...)` — zero occurrences in `src/`.)
 
 ### 2. Clean Code Always
 
@@ -30,7 +30,7 @@ This project uses **Python ≥3.12** with **FastAPI, the MCP SDK, Qdrant client 
 src/api/*_routes.py → src/services/*_svc.py → chunker.py / retrieval.py / Qdrant / Ollama
 ```
 
-**Routes never call Qdrant/Ollama directly** — always through a service.
+**A route may reach Qdrant, but must not contain business logic.** Thin CRUD/passthrough endpoints call the shared `cl` client directly — the established pattern here. Branching, batching, staging or multi-step orchestration belongs in a `*_svc.py`.
 
 ### 4. Naming Conventions
 
