@@ -21,6 +21,7 @@ Kuralların, komutların ve becerilerin gerçek içeriği `.agents/` altında ya
 | Dosya | Ne işe yarar |
 |---|---|
 | `AGENTS.md` | Codex CLI, Cursor, GitHub Copilot, Gemini/Antigravity ve Kiro'nun doğrudan okuduğu evrensel kural özeti — CodeIntel'in gerçek stack'i (Python/FastAPI/Qdrant/Ollama/tree-sitter), gerçek konvansiyonları (`.venv`/`uv` kullanılmaz, `onnxruntime-gpu` pin disiplini, MCP/REST paritesi, Türkçe kod yorumları) doldurulmuş hâlde. |
+| `GEMINI.md` | Gemini CLI'ın giriş noktası. Gemini CLI bağlamını `GEMINI.md` hiyerarşisinden kurar — `.gemini/rules/project-rules.md`'yi kendiliğinden **okumaz**. Bu dosya içerik çoğaltmaz, `@./.gemini/rules/project-rules.md` ile onu import eder; böylece o dosya düzenlendiği tek yer olarak kalır. |
 | `settings.json` | Bu AI-talimat katmanının kendi versiyonu (`versioning.current_version`) — uygulamanın kendi `pyproject.toml` versiyonundan (1.0.0) bağımsız, ayrı bir kavram. |
 
 ## `.agents/` — Tek Kaynak
@@ -31,6 +32,7 @@ Kuralların, komutların ve becerilerin gerçek içeriği `.agents/` altında ya
 |---|---|
 | `sync-workflow.md` | `.agents` değişince ne yapılması gerektiği — önce bu okunur. |
 | `kit-settings.md` | Kök `settings.json`'ın şeması. |
+| `analysis-output.md` | Bundle'lanmış `rad-prompt-studio`'nun üç master prompt'unun ortak girdi-çözümleme ve çıktı-adlandırma kuralı: hedef nasıl belirlenir, rapor nereye hangi adla yazılır (`%ProgramData%\rad\analysis\{repo}\{hedef}\{ai}_v{n}.md`), ve düzeltilen bulguların raporu ne zaman silinir. Bu dosya olmadan üç prompt da çıktı yolunu çözemez. |
 | `local-machine-registry.md` | `.rad` hub referansı — cross-kit reference, shared rules. |
 | `testing.md` | Bu projenin gerçek test disiplini: `tests/` (harici servis gerektirmeyen varsayılan koşu) ↔ `tests/manual/` (gerçek GPU/Ollama/Qdrant isteyen, `pytest.ini` ile hariç tutulan) ayrımı, regresyon-adlandırma konvansiyonu, sözleşme testlerinin (`test_mcp_rest_parity`) neden elle tatmin edilecek bir iş değil güvence ağı olduğu. |
 
@@ -62,6 +64,7 @@ Kalan stack-özgü kurallar (dependency-pin disiplini, MCP/REST paritesi, reinde
 | `.claude/CLAUDE.md` | Elle yazılır | Claude Code'un okuduğu kök talimat — CodeIntel kimliğiyle dolduruldu. |
 | `.claude/settings.json` | Elle yazılır | İzin ayarları. |
 | `.claude/rules/*.md`, `.claude/commands/*.md` | ⚙️ Üretilmiş | `.agents/`'ın kopyası. |
+| `.claude/skills/<skill-adı>` | ⚙️ **Üretilmiş link** | `.agents/skills/<skill-adı>`'a işaret eden junction (Windows) / symlink. Claude Code skill'leri **sadece** `.claude/skills/` altında keşfeder; `.agents/skills/` onun keşif konumlarından biri değil. İçerik değil, link — `.gitignore`'da, commit'lenmez, klonlandıktan sonra generator yeniden üretir. |
 | `.cursor/rules/*.md` | ⚙️ Üretilmiş | `.agents/rules/`'ın Cursor formatı. |
 | `.gemini/rules/project-rules.md` | Elle yazılır | Gemini/Antigravity özeti — dolduruldu. |
 | `.github/copilot-instructions.md` | Elle yazılır | Copilot ön-prompt — dolduruldu. |
@@ -73,6 +76,8 @@ Kalan stack-özgü kurallar (dependency-pin disiplini, MCP/REST paritesi, reinde
 | Dosya | Ne işe yarar |
 |---|---|
 | `register.bat` | Bu projeyi `.rad` hub'a kaydeder. |
+| `verify-kit.ps1` | Mekanik tutarlılık kapısı; CI'ın çalıştırdığı script'in aynısı, yerelde de `pwsh tools/verify-kit.ps1` ile çalışır. Kontroller: generator drift, `.cursor/rules` altındaki her dosya `.mdc` mi, `.claude/skills/` her skill için giriş taşıyor mu, her `SKILL.md`'nin frontmatter'ı geçerli mi, kalan `[FILL IN` var mı, README'nin gömdüğü görseller diskte var mı, `LICENSE` duruyor mu. |
+| `.github/workflows/verify.yml` | CI: her push ve PR'da kit doğrulama script'ini çalıştırır (ubuntu-latest, ön-yüklü PowerShell 7). Kontrollerin kendisi script'te, burada değil — tek uygulama, iki çağıran. |
 | `generate-ai-configs.ps1` | `.agents/rules`+`.agents/commands`'ı `.claude/`/`.cursor/`'a senkronlar. |
 
 Not: CodeIntel'in kendi gerçek `tools/install.ps1` vb. script'leri bu klasörde zaten vardı ve dokunulmadı.

@@ -404,9 +404,14 @@ Always load, regardless of tool:
 - `tests/**/*.py` — the regression suite; test names document locked-in behavior
 - `docs/**/*.md` — documentation
 
-Skills are shared: `.agents/skills/**/SKILL.md` is read natively as a fallback
-location by every tool below (Agent Skills open standard) — nobody needs a
-tool-specific skills copy.
+Skills are shared: `.agents/skills/**/SKILL.md` is the single editable copy —
+no tool ever gets its own duplicate of a SKILL.md. Claude Code does need its
+own *entry point*, because it discovers skills only under `.claude/skills/`;
+`tools/generate-ai-configs.ps1` creates one junction/symlink there per skill,
+pointing back at `.agents/skills/`. Those links are generated, gitignored, and
+never hand-made. (Corrected: this section previously claimed every tool reads
+`.agents/skills/` natively as a fallback location — it does not, and the
+result was that no skill in this kit ever triggered on its own.)
 
 For rules, load **only the format that matches the tool you are running as**:
 

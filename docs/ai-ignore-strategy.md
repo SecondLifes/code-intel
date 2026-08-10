@@ -46,7 +46,7 @@ These files are essential for AI context and must always remain indexed and acce
 | `docs/**/*.md` | Documentation |
 | `.agents/rules/**/*.md` | **Single source of truth** for per-topic rules — generates `.claude/rules` and `.cursor/rules` |
 | `.agents/commands/**/*.md` | Single source of truth for slash-commands — generates `.claude/commands` |
-| `.agents/skills/**/SKILL.md` | Single source of truth for skills — read natively by every supported tool, no copies generated |
+| `.agents/skills/**/SKILL.md` | Single source of truth for skills — content is never copied; Claude Code reaches it through generated links under `.claude/skills/` |
 | `.github/copilot-instructions.md` | Copilot pre-prompt |
 | `.claude/CLAUDE.md`, `.claude/rules/**/*.md` (generated), `.claude/commands/**/*.md` (generated) | Claude Code master prompt + generated rule/command copies |
 | `.cursor/rules/**/*.md` (generated) | Cursor rules |

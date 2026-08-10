@@ -151,7 +151,7 @@ language; use structured sections only when they improve execution or
 maintenance. Scale the artifact's length and structural weight to the task's
 complexity — heavy scaffolding on a simple task adds cost without adding
 control. For named structures to build from in Design mode, see
-`../design/prompt-patterns.md` (load on demand; Design mode only). Prefer positive instructions ("do X") over negative-only
+`design/prompt-patterns.md` (load on demand; Design mode only). Prefer positive instructions ("do X") over negative-only
 prohibitions ("don't do Y") where behaviorally equivalent — negative-only
 framing is harder for a model to execute reliably. Do not default to
 XML-tag-heavy structuring or elaborate persona description merely by

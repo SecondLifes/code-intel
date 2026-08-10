@@ -6,7 +6,7 @@
 ## WHEN TO LOAD
 
 Read this file only in **Design** mode (see WORK MODES in
-`prompt-engineer-analyst.md`) — creating a new prompt from requirements.
+`../prompt-engineer-analyst.md`) — creating a new prompt from requirements.
 Analysis, Correction, Optimization, Compression, Refactoring, and Full
 Review do not need it.
 
@@ -25,7 +25,7 @@ none of them is required for a prompt to be good.
 - Add each section only for a distinct behavioral requirement. Structure
   added to look thorough costs tokens and control without buying either.
 
-This follows the Artifact style rule in `prompt-engineer-analyst.md`:
+This follows the Artifact style rule in `../prompt-engineer-analyst.md`:
 structural convention is a stylistic assumption to verify against the
 target model, never an automatic default. The CORE PRINCIPLE still
 governs — the simplest prompt that reliably produces the intended
@@ -118,7 +118,7 @@ Rules:
 ## PRE-DELIVERY CHECKS
 
 Applied in addition to the REVISION RULES delivery checks in
-`prompt-engineer-analyst.md`, not instead of them:
+`../prompt-engineer-analyst.md`, not instead of them:
 
 - **Self-containment** — everything the prompt depends on is either stated
   in it or explicitly named as a required input. A prompt that silently

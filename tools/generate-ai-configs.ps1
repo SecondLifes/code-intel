@@ -8,11 +8,23 @@
     .agents/rules and .agents/commands. Claude Code and Cursor each require
     their own physical files (.claude/rules, .cursor/rules, .claude/commands)
     to auto-load them — this script keeps those in sync with the source.
+    Cursor's copies carry the .mdc extension, which its rules engine requires;
+    a plain .md file under .cursor/rules is silently ignored.
 
-    Skill CONTENT is NOT touched by this script. .agents/skills/*/SKILL.md is
-    read natively as a fallback location by Claude Code, Cursor, Codex CLI,
-    GitHub Copilot and Gemini/Antigravity CLI (Agent Skills open standard,
-    agentskills.io) — no per-tool copies of SKILL.md are needed or created.
+    Skill CONTENT is never copied or edited by this script, but skills DO need
+    a per-tool entry point. Claude Code discovers skills only from
+    .claude/skills/ — .agents/skills/ is not one of its discovery locations,
+    so a kit whose skills live only there gets none of them auto-triggered.
+    This script therefore creates one junction/symlink per skill under
+    .claude/skills/, pointing back at .agents/skills/<name>. Claude Code
+    resolves those links and loads each skill exactly once. Editing still
+    happens in exactly one place: .agents/skills/.
+
+    (Corrected: an earlier version of this script claimed .agents/skills/ was
+    "read natively as a fallback location by Claude Code, Cursor, Codex CLI,
+    GitHub Copilot and Gemini/Antigravity CLI". That was never verified and is
+    not true of Claude Code; it left every skill in every generated kit
+    unreachable by trigger matching.)
 
     What IS generated per skill: a thin slash-command wrapper at
     .claude/commands/<skill-name>.md. Skills normally trigger from
@@ -63,9 +75,28 @@ $AgentsRules    = Join-Path $RepoRoot ".agents/rules"
 $AgentsCommands = Join-Path $RepoRoot ".agents/commands"
 $AgentsSkills   = Join-Path $RepoRoot ".agents/skills"
 
-$RuleTargets    = @(".claude/rules", ".cursor/rules")
+# Per-target extension. Cursor is NOT .md: its rules engine recognizes only
+# ".mdc" under .cursor/rules and silently ignores a plain ".md" file there —
+# the official docs spell this out with an example ("api-guidelines.md
+# # Ignored (wrong extension)", cursor.com/docs/rules). The frontmatter these
+# files already carry (description/globs/alwaysApply) is Cursor's own format,
+# so the extension was the only thing standing between this kit and Cursor
+# actually loading its rules.
+$RuleTargets    = @(
+    @{ Path = ".claude/rules"; Extension = ".md"  },
+    @{ Path = ".cursor/rules"; Extension = ".mdc" }
+)
 $CommandTargets = @(".claude/commands")
 $SkillCommandMarker = "AUTO-GENERATED from .agents/skills"
+
+# Claude Code discovers skills ONLY from .claude/skills/ (plus ~/.claude/skills,
+# plugins and enterprise paths) — .agents/skills/ is not a discovery location
+# for it. Rather than copying every SKILL.md and creating a second editable
+# source, the generator links each skill into place: Claude Code resolves
+# symlinks in skill directories and loads a skill reachable from several
+# locations only once (code.claude.com/docs/en/skills). .agents/skills/ stays
+# the one place anything is ever edited.
+$SkillLinkTarget = ".claude/skills"
 
 # Folders this kit ships "empty" — each MUST carry its own README.md, because
 # git does not track empty directories. Without that file the folder silently
@@ -81,7 +112,10 @@ function Sync-GeneratedDirectory {
         [Parameter(Mandatory)] [string]$SourceDir,
         [Parameter(Mandatory)] [string]$TargetRelative,
         [Parameter(Mandatory)] [string]$RepoRoot,
-        [string]$IgnoreMarker
+        [string]$IgnoreMarker,
+        # Extension the generated copies carry in THIS target. Defaults to the
+        # source's own .md; Cursor is the exception — see $RuleTargets below.
+        [string]$TargetExtension = ".md"
     )
 
     $target = Join-Path $RepoRoot $TargetRelative
@@ -89,30 +123,45 @@ function Sync-GeneratedDirectory {
         New-Item -ItemType Directory -Path $target -Force | Out-Null
     }
 
-    $sourceNames = Get-ChildItem -Path $SourceDir -Filter *.md | Select-Object -ExpandProperty Name
+    $sourceFiles = @(Get-ChildItem -Path $SourceDir -Filter *.md)
+    # Match on BaseName, not Name: the target extension may differ from the
+    # source's (.md -> .mdc for Cursor), so a Name-based comparison would
+    # classify every freshly written file as stale and delete it immediately.
+    $sourceBaseNames = @($sourceFiles | Select-Object -ExpandProperty BaseName)
 
     # Copy first, delete stale second: if the script is interrupted between
     # the two steps, the target is left with stale-but-valid files rather
     # than files removed but not yet replaced.
-    Get-ChildItem -Path $SourceDir -Filter *.md | ForEach-Object {
-        $destination = Join-Path $target $_.Name
+    $sourceFiles | ForEach-Object {
+        $targetName  = "$($_.BaseName)$TargetExtension"
+        $destination = Join-Path $target $targetName
         Copy-Item -Path $_.FullName -Destination $destination -Force
-        Write-Host "  - synced       : $TargetRelative/$($_.Name)"
+        Write-Host "  - synced       : $TargetRelative/$targetName"
     }
 
-    $existingTargetFiles = @(Get-ChildItem -Path $target -Filter *.md -ErrorAction SilentlyContinue)
+    # Sweep every file the generator could own here, not just $TargetExtension —
+    # otherwise a target migrating from one extension to another (the .md -> .mdc
+    # switch) leaves its old copies behind forever, and Cursor would silently go
+    # on reading nothing while two sets of files sit side by side.
+    $existingTargetFiles = @(
+        Get-ChildItem -Path $target -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @(".md", ".mdc") }
+    )
 
     # Safety guard: a source that yields zero files while the target already
     # has content almost always means $SourceDir resolved to the wrong path,
     # not that every rule/command was legitimately deleted. Refuse to mass-
     # delete in that case and surface the problem instead of silently wiping
     # the target.
-    if ($sourceNames.Count -eq 0 -and $existingTargetFiles.Count -gt 0) {
+    if ($sourceBaseNames.Count -eq 0 -and $existingTargetFiles.Count -gt 0) {
         throw "Sync-GeneratedDirectory: source '$SourceDir' yielded 0 .md files but target '$TargetRelative' already has $($existingTargetFiles.Count) — refusing to delete. This usually means the source path is wrong, not that every file was legitimately removed. Verify `$SourceDir before re-running."
     }
 
     $staleFiles = @($existingTargetFiles | Where-Object {
-        if ($sourceNames -contains $_.Name) { return $false }
+        # A file is current only if BOTH its name and its extension match what
+        # this target is supposed to generate. Same BaseName but the old
+        # extension = a leftover from before the migration, and must go.
+        if (($sourceBaseNames -contains $_.BaseName) -and ($_.Extension -eq $TargetExtension)) { return $false }
         if ($IgnoreMarker) {
             $fileText = Get-Content -Path $_.FullName -Raw -ErrorAction SilentlyContinue
             if ($fileText -and $fileText.Contains($IgnoreMarker)) { return $false }  # owned by a different generator (e.g. per-skill commands) — leave it alone
@@ -134,7 +183,7 @@ Write-Host ""
 
 Write-Host "Regenerating rules..."
 foreach ($t in $RuleTargets) {
-    Sync-GeneratedDirectory -SourceDir $AgentsRules -TargetRelative $t -RepoRoot $RepoRoot
+    Sync-GeneratedDirectory -SourceDir $AgentsRules -TargetRelative $t.Path -RepoRoot $RepoRoot -TargetExtension $t.Extension
 }
 
 Write-Host ""
@@ -196,6 +245,86 @@ Get-ChildItem -Path $SkillCommandTarget -Filter *.md -ErrorAction SilentlyContin
             Write-Host "  - removed stale : .claude/commands/$($_.Name)"
         }
     }
+}
+
+Write-Host ""
+Write-Host "Linking skills into $SkillLinkTarget (one entry per .agents/skills/*)..."
+
+function Remove-LinkOrDirectory {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (-not $item) { return }
+
+    # A junction/symlink must be deleted as a link, never recursed into:
+    # Remove-Item -Recurse on a reparse point can follow it and delete the
+    # REAL .agents/skills content on the other side. This is the same hazard
+    # the .rad hub's own "never rm -rf through a link" discipline exists for.
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        [System.IO.Directory]::Delete($item.FullName, $false)
+    } else {
+        Remove-Item -LiteralPath $item.FullName -Recurse -Force
+    }
+}
+
+$skillLinkRoot = Join-Path $RepoRoot $SkillLinkTarget
+if (-not (Test-Path $skillLinkRoot)) {
+    New-Item -ItemType Directory -Path $skillLinkRoot -Force | Out-Null
+}
+
+$linkedSkillNames = New-Object System.Collections.Generic.List[string]
+$copiedFallback   = New-Object System.Collections.Generic.List[string]
+
+if (Test-Path $AgentsSkills) {
+    Get-ChildItem -Path $AgentsSkills -Directory | ForEach-Object {
+        $skillName   = $_.Name
+        $sourcePath  = $_.FullName
+        $linkPath    = Join-Path $skillLinkRoot $skillName
+        $linkedSkillNames.Add($skillName)
+
+        $existing = Get-Item -LiteralPath $linkPath -Force -ErrorAction SilentlyContinue
+        if ($existing -and ($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            # Already a link — only rebuild it if it points somewhere else.
+            $currentTarget = $existing.Target | Select-Object -First 1
+            if ($currentTarget -and ((Resolve-Path -LiteralPath $currentTarget -ErrorAction SilentlyContinue).Path -eq $sourcePath)) {
+                Write-Host "  - already-ok   : $SkillLinkTarget/$skillName"
+                return
+            }
+        }
+
+        if ($existing) { Remove-LinkOrDirectory -Path $linkPath }
+
+        # Junction first on Windows: unlike a symlink it needs neither elevation
+        # nor Developer Mode, so this works on an ordinary developer machine.
+        $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+        try {
+            New-Item -ItemType $linkType -Path $linkPath -Target $sourcePath -ErrorAction Stop | Out-Null
+            Write-Host "  - linked       : $SkillLinkTarget/$skillName -> .agents/skills/$skillName"
+        } catch {
+            # Last resort on a filesystem that refuses links at all (some network
+            # shares, a non-NTFS volume). A copy still makes the skill load; it is
+            # reported loudly because it re-introduces the second-editable-source
+            # problem this link exists to avoid.
+            Copy-Item -Path $sourcePath -Destination $linkPath -Recurse -Force
+            $copiedFallback.Add($skillName)
+            Write-Host "  - COPIED (link unsupported here) : $SkillLinkTarget/$skillName" -ForegroundColor Yellow
+        }
+    }
+}
+
+Get-ChildItem -Path $skillLinkRoot -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
+    if (-not $linkedSkillNames.Contains($_.Name)) {
+        Remove-LinkOrDirectory -Path $_.FullName
+        Write-Host "  - removed stale : $SkillLinkTarget/$($_.Name)"
+    }
+}
+
+if ($copiedFallback.Count -gt 0) {
+    Write-Host ""
+    Write-Host "WARNING: $($copiedFallback.Count) skill(s) had to be COPIED instead of linked:" -ForegroundColor Yellow
+    $copiedFallback | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host "Those copies will go stale — .agents/skills/ remains the only file to edit," -ForegroundColor Yellow
+    Write-Host "and re-running this script refreshes them." -ForegroundColor Yellow
 }
 
 Write-Host ""

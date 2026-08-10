@@ -1,10 +1,18 @@
-﻿{
-  "allowCommands": [
-    "pwsh tools/generate-ai-configs.ps1"
-  ],
-  "denyPaths": [
-    "**/*.env",
-    "**/*.key"
-  ]
+{
+  "$comment": "Claude Code project settings. Schema: permissions.allow / permissions.ask / permissions.deny, with rules written as Tool(specifier) — NOT the invented allowCommands/denyPaths keys this file used before, which Claude Code ignored entirely, so neither the credential protection nor the pre-approved commands actually existed.",
+  "permissions": {
+    "allow": [
+      "Bash(pwsh tools/generate-ai-configs.ps1)",
+      "Bash(pwsh tools/verify-kit.ps1)"
+    ],
+    "deny": [
+      "Read(./**/*.env)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Read(./**/*.key)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.pfx)",
+      "Read(./**/*.p12)"
+    ]
+  }
 }
-

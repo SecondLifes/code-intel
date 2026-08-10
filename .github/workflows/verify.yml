@@ -1,0 +1,37 @@
+name: verify
+
+# Mechanical consistency gate for this kit. Every check lives in
+# tools/verify-kit.ps1 rather than inline here, so the exact same gate can be
+# run locally before pushing:
+#
+#     pwsh tools/verify-kit.ps1
+#
+# One implementation, two callers — a workflow that reimplemented the checks
+# would drift from the local one, which is the class of bug this kit's whole
+# single-source-of-truth design exists to avoid.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ubuntu-latest ships PowerShell 7 preinstalled, so no setup step is
+      # needed. The generator handles the non-Windows case itself (symlink
+      # instead of junction for .claude/skills entries).
+      - name: Show PowerShell version
+        shell: pwsh
+        run: $PSVersionTable.PSVersion.ToString()
+
+      - name: Verify kit consistency
+        shell: pwsh
+        run: ./tools/verify-kit.ps1
