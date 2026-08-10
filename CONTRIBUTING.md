@@ -58,6 +58,22 @@ CodeIntel's own runtime behavior compounds this: the chunker spawns many short-l
 
 If you still want dependency isolation via a venv, prefer `python -m venv --symlinks .venv` (requires Windows Developer Mode) over `uv venv` — a symlink points at the *same* python.exe file the system already trusts, rather than creating a new one.
 
+## Supported Python versions
+
+**Python 3.12 or 3.13 only — not 3.14, not 3.15.** `tools/install.ps1` and `tools/start-system.ps1` both check this and refuse to proceed with a clear error otherwise, rather than letting `pip install` fail deep into a confusing compiler error.
+
+Why: several pinned dependencies don't yet ship prebuilt Windows wheels for newer CPython releases, and building them from source needs a C/C++ toolchain (MSVC, or gcc/clang) that most machines don't have installed. Verified against the live PyPI file listings for the exact pins in `requirements.txt`:
+
+| Package | cp312 | cp313 | cp314 |
+|---|---|---|---|
+| numpy 2.5.1 | ✅ | ✅ | ✅ |
+| grpcio 1.82.1 | ✅ | ✅ | ✅ |
+| lxml 6.1.1 | ✅ | ✅ | ✅ |
+| mmh3 5.2.1 | ✅ | ✅ | ✅ |
+| **onnxruntime-gpu 1.22.0** | ✅ | ✅ | ❌ |
+
+`onnxruntime-gpu` is the blocker for 3.14 — and it's pinned deliberately (see `requirements.txt`'s "KRİTİK PİN" comment, matched to a specific CUDA/nvidia-cu12 combination), so bumping it isn't a casual fix. Install Python 3.13 from [python.org/downloads/windows](https://www.python.org/downloads/windows/) if you're on anything newer.
+
 ## Technical Standards
 
 * **Security-sensitive changes** (anything touching `ollama_url`/outbound HTTP, HTML rendering via `esc()`/`escJs()` in the frontend or `_esc()`/`_esc_js()` in `src/manual.py`, the `STATE_LOCK` check-then-set pattern, or the staging+alias generation model in `src/services/generations.py`) need a regression test proving the fix, not just a read-through — see the git history around 2026-07-25 for the pattern (SSRF, stored-XSS, import atomicity, check-then-set race) each fixed with a test that fails against the old code and passes against the new.

@@ -134,7 +134,7 @@ code-intel/
 │   └── viewer.html           # Bağımsız dosya görüntüleyici
 │
 ├── tests/                    # pytest — testlerin çoğu canlı bir Qdrant gerektirir (@needs_qdrant, başarısız değil atlanır)
-├── tools/                    # start-system.ps1 / stop-system.ps1 / install-autostart.ps1
+├── tools/                    # install.ps1 / start-system.ps1 / stop-system.ps1 / uninstall.ps1 / install-autostart.ps1
 ├── qdrant-bin/                # Qdrant ikili dosyası (Windows)
 ├── mcp-config.json           # MCP sunucusu varsayılanları (Qdrant/Ollama URL'leri, model adları)
 ├── requirements.txt          # Pinlenmiş bağımlılık sürümleri (içindeki onnxruntime-gpu notuna bakın)
@@ -147,10 +147,10 @@ code-intel/
 
 ## 🔧 Ön Koşullar
 
-- **Python 3.12+**
+- **Python 3.12 veya 3.13** — daha yenisi DEĞİL. Pinlenmiş bağımlılıkların (`numpy`, `onnxruntime-gpu`, `grpcio`, `lxml`, `mmh3`...) 3.14+ için henüz hazır Windows wheel'i yok, çok yeni bir yorumlayıcı kurulumda derleyici hatasıyla patlar. `tools/install.ps1` bunu sizin için kontrol eder. Tam açıklama için CONTRIBUTING.tr-TR.md "Desteklenen Python sürümleri"ne bakın.
 - **Qdrant** (`qdrant-bin/` altında paketlenmiş ikili, ya da kendi kurulumunuz)
-- **Ollama** — sohbet, derin araştırma, açıklamalar, çeviri ve karşılaştırma tablosu için
-- **PowerShell 7+ (`pwsh`)** — `tools/start-system.ps1`/`stop-system.ps1` PowerShell script'leridir (Windows-öncelikli; Python/FastAPI çekirdeğinin kendisi platform-bağımsızdır)
+- **Ollama** — sohbet, derin araştırma, açıklamalar, çeviri ve karşılaştırma tablosu için. Bu makinede yerel, ya da ağınızdaki uzak bir sunucu — `tools/install.ps1` hangisini istediğinizi sorar.
+- **PowerShell 7+ (`pwsh`)** — `tools/*.ps1` PowerShell script'leridir (Windows-öncelikli; Python/FastAPI çekirdeğinin kendisi platform-bağımsızdır)
 - CUDA destekli bir GPU isteğe bağlıdır ama embedding verimi için şiddetle önerilir (bkz. `requirements.txt`'nin `onnxruntime-gpu` pinleme notu)
 
 ---
@@ -158,16 +158,19 @@ code-intel/
 ## ⚡ Hızlı Başlangıç
 
 ```bash
-# 1. Bağımlılıkları kur (pinlenmiş sürümler — requirements.txt'nin onnxruntime-gpu notuna bakın)
-#    Kasıtlı olarak sistemde kurulu Python kullanılıyor, proje-lokal .venv/uv DEĞİL —
-#    neden için CONTRIBUTING.tr-TR.md "Antivirüs uyarıları"na bakın.
-pip install -r requirements.txt
+# 1. Kur (Python sürümünüzü kontrol eder, yerel-mi-uzak-mı Ollama sorar, sonra
+#    `pip install -r requirements.txt`'i kasıtlı olarak sistemde kurulu
+#    Python'unuza karşı çalıştırır — proje-lokal .venv/uv DEĞİL, neden için
+#    CONTRIBUTING.tr-TR.md "Antivirüs uyarıları"na bakın)
+pwsh tools/install.ps1
 
 # 2. Qdrant + Ollama + paneli başlat (Windows)
 pwsh tools/start-system.ps1 -NoBrowser
 ```
 
 Ardından `http://127.0.0.1:8500`'ü açın — Ayarlar'dan bir klasör indeksleyin, sonra ana sayfadan arayın/sohbet edin. Panel yerine (veya panelle birlikte) bir MCP sunucusu olarak kullanmak için AI CLI'nızın MCP yapılandırmasını `src/mcp_server.py`'a (stdio) yönlendirin — okuduğu varsayılanlar (Qdrant/Ollama URL'leri, hızlı/derin model adları) için `mcp-config.json`'a bakın.
+
+Diğer yaşam döngüsü script'leri: `pwsh tools/stop-system.ps1` (panel + Qdrant'ı durdur), `pwsh tools/install-autostart.ps1` (Windows oturum açılışında çalıştır), `pwsh tools/uninstall.ps1` (servisleri durdur, autostart görevini kaldır; daha derin temizlik için `-RemovePackages`/`-RemoveData` — her birinin neye dokunup neye dokunmadığı için script'in kendi başlığına bakın).
 
 ```bash
 pytest tests/ -q   # testlerin çoğu için canlı bir Qdrant gerekir (tools/start-system.ps1); geri kalanı sorunsuzca atlanır

@@ -58,6 +58,22 @@ CodeIntel'in kendi çalışma zamanı davranışı da bunu güçlendiriyor: chun
 
 Yine de bir venv ile bağımlılık izolasyonu istiyorsanız, `uv venv` yerine `python -m venv --symlinks .venv`'i tercih edin (Windows Geliştirici Modu gerektirir) — bir sembolik bağlantı, yeni bir dosya oluşturmak yerine sistemin zaten güvendiği AYNI python.exe dosyasına işaret eder.
 
+## Desteklenen Python sürümleri
+
+**Sadece Python 3.12 veya 3.13 — 3.14 veya 3.15 DEĞİL.** `tools/install.ps1` ve `tools/start-system.ps1` bunu kontrol eder ve aksi durumda `pip install`'ın kafa karıştırıcı bir derleyici hatasıyla derinlerde patlamasına izin vermek yerine net bir hatayla durur.
+
+Neden: pinlenmiş bağımlılıklardan bazıları daha yeni CPython sürümleri için henüz hazır Windows wheel'i sunmuyor, kaynaktan derlemek de çoğu makinede kurulu olmayan bir C/C++ araç zinciri (MSVC, ya da gcc/clang) gerektiriyor. `requirements.txt`'teki tam pinler için gerçek PyPI dosya listelerine karşı doğrulandı:
+
+| Paket | cp312 | cp313 | cp314 |
+|---|---|---|---|
+| numpy 2.5.1 | ✅ | ✅ | ✅ |
+| grpcio 1.82.1 | ✅ | ✅ | ✅ |
+| lxml 6.1.1 | ✅ | ✅ | ✅ |
+| mmh3 5.2.1 | ✅ | ✅ | ✅ |
+| **onnxruntime-gpu 1.22.0** | ✅ | ✅ | ❌ |
+
+3.14 için engel `onnxruntime-gpu` — ve bu kasıtlı olarak pinlenmiş (bkz. `requirements.txt`'teki "KRİTİK PİN" notu, belirli bir CUDA/nvidia-cu12 kombinasyonuyla eşleştirilmiş), yani sürümünü yükseltmek gelişigüzel yapılacak bir düzeltme değil. Daha yenisindeyseniz [python.org/downloads/windows](https://www.python.org/downloads/windows/) adresinden Python 3.13 kurun.
+
 ## Teknik Standartlar
 
 * **Güvenlikle ilgili değişiklikler** (`ollama_url`/giden HTTP'ye, frontend'de `esc()`/`escJs()` veya `src/manual.py`'de `_esc()`/`_esc_js()` ile HTML render'a, `STATE_LOCK` check-then-set desenine, veya `src/services/generations.py`'deki staging+alias nesil modeline dokunan her şey) sadece okuma değil, düzeltmeyi KANITLAYAN bir regresyon testi gerektirir — desen için 2026-07-25 civarındaki git geçmişine bakın (SSRF, saklı-XSS, import atomikliği, check-then-set yarışı) — her biri eski kodda BAŞARISIZ olan, yeni kodda GEÇEN bir testle düzeltildi.

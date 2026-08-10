@@ -133,7 +133,7 @@ code-intel/
 │   └── viewer.html           # Standalone file viewer
 │
 ├── tests/                    # pytest — most tests need a live Qdrant (@needs_qdrant, skip not fail)
-├── tools/                    # start-system.ps1 / stop-system.ps1 / install-autostart.ps1
+├── tools/                    # install.ps1 / start-system.ps1 / stop-system.ps1 / uninstall.ps1 / install-autostart.ps1
 ├── qdrant-bin/                # Qdrant binary (Windows)
 ├── mcp-config.json           # MCP server defaults (Qdrant/Ollama URLs, model names)
 ├── requirements.txt          # Pinned dependency versions (see the onnxruntime-gpu note inside)
@@ -146,10 +146,10 @@ code-intel/
 
 ## 🔧 Prerequisites
 
-- **Python 3.12+**
+- **Python 3.12 or 3.13** — not newer. Pinned dependencies (`numpy`, `onnxruntime-gpu`, `grpcio`, `lxml`, `mmh3`...) don't have prebuilt Windows wheels for 3.14+ yet, so a too-new interpreter fails at install with a compiler error. `tools/install.ps1` checks this for you. See CONTRIBUTING.md "Supported Python versions" for the full explanation.
 - **Qdrant** (bundled binary under `qdrant-bin/`, or run your own)
-- **Ollama** — for chat, deep research, explanations, translation, and the comparison table
-- **PowerShell 7+ (`pwsh`)** — `tools/start-system.ps1`/`stop-system.ps1` are PowerShell scripts (Windows-first; the Python/FastAPI core itself is cross-platform)
+- **Ollama** — for chat, deep research, explanations, translation, and the comparison table. Either local on this machine, or a remote server on your LAN — `tools/install.ps1` asks which.
+- **PowerShell 7+ (`pwsh`)** — `tools/*.ps1` are PowerShell scripts (Windows-first; the Python/FastAPI core itself is cross-platform)
 - A CUDA-capable GPU is optional but strongly recommended for embedding throughput (see `requirements.txt`'s `onnxruntime-gpu` pinning note)
 
 ---
@@ -157,16 +157,19 @@ code-intel/
 ## ⚡ Quick Start
 
 ```bash
-# 1. Install dependencies (pinned versions — see requirements.txt's onnxruntime-gpu note)
-#    Uses your system-installed Python on purpose, not a project-local .venv/uv —
-#    see CONTRIBUTING.md "Antivirus warnings" for why.
-pip install -r requirements.txt
+# 1. Install (checks your Python version, asks local-vs-remote Ollama, then
+#    `pip install -r requirements.txt` against your system-installed Python
+#    on purpose, not a project-local .venv/uv — see CONTRIBUTING.md
+#    "Antivirus warnings" for why)
+pwsh tools/install.ps1
 
 # 2. Start Qdrant + Ollama + the panel (Windows)
 pwsh tools/start-system.ps1 -NoBrowser
 ```
 
 Then open `http://127.0.0.1:8500` — index a folder from Settings, then search/chat from the main page. To use it as an MCP server instead of (or alongside) the panel, point your AI CLI's MCP config at `src/mcp_server.py` (stdio) — see `mcp-config.json` for the defaults it reads (Qdrant/Ollama URLs, fast/deep model names).
+
+Other lifecycle scripts: `pwsh tools/stop-system.ps1` (stop panel + Qdrant), `pwsh tools/install-autostart.ps1` (run on Windows logon), `pwsh tools/uninstall.ps1` (stop services, remove the autostart task; `-RemovePackages`/`-RemoveData` for a deeper clean — see the script's own header for what each does and doesn't touch).
 
 ```bash
 pytest tests/ -q   # needs a live Qdrant (tools/start-system.ps1) for most tests; the rest skip cleanly

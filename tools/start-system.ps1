@@ -5,6 +5,8 @@
 .DESCRIPTION
     1. Qdrant  (qdrant-bin\qdrant.exe, veri: data\qdrant)  -> http://127.0.0.1:6333
     2. Ollama  (genelde kendiliğinden açık; kapalıysa 'ollama serve' denenir) -> :11434
+       mcp-config.json'da uzak bir ollama_url yapılandırılmışsa (tools\install.ps1
+       -OllamaMode Remote) bu adım tamamen atlanır.
     3. Panel   (sistemde kurulu Python + uvicorn src.panel:app) -> http://127.0.0.1:8500
     Her adımda port zaten dinleniyorsa o servis atlanır (tekrar çalıştırmak güvenlidir).
     Servisler gizli pencerede açılır, çıktıları logs\ altına yazılır.
@@ -77,7 +79,23 @@ if (Test-PortListening 6333) {
 }
 
 # ---------- 2) OLLAMA ----------
-if (Test-PortListening 11434) {
+# mcp-config.json'daki ollama_url uzak (127.0.0.1/localhost DIŞI) bir sunucuya
+# işaret ediyorsa (bkz. tools\install.ps1 -OllamaMode Remote), bu makinede
+# Ollama kurulu olsa bile ona hiç dokunmuyoruz — boşuna yerel bir 'ollama serve'
+# başlatmak ya da "kurulu değil" diye uyarmak yanlış olur.
+$mcpCfgPath = Join-Path $ProjectRoot "mcp-config.json"
+$configuredOllamaUrl = "http://127.0.0.1:11434"
+if (Test-Path $mcpCfgPath) {
+    try {
+        $mcpCfg = Get-Content $mcpCfgPath -Raw | ConvertFrom-Json
+        if ($mcpCfg.ollama_url) { $configuredOllamaUrl = $mcpCfg.ollama_url }
+    } catch { }
+}
+$isRemoteOllama = $configuredOllamaUrl -notmatch '(127\.0\.0\.1|localhost)'
+
+if ($isRemoteOllama) {
+    Write-Host "[Ollama] uzak sunucu yapılandırılmış ($configuredOllamaUrl) — bu makinede kontrol/başlatma ATLANDI" -ForegroundColor Yellow
+} elseif (Test-PortListening 11434) {
     Write-Host "[Ollama] zaten çalışıyor (:11434) — atlandı" -ForegroundColor Yellow
 } else {
     $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
@@ -109,7 +127,27 @@ if (Test-PortListening 8500) {
     Write-Host "[Panel] zaten çalışıyor (:8500) — atlandı" -ForegroundColor Yellow
 } else {
     if (-not $SystemPython) {
-        throw "Sistemde kurulu 'python' PATH'te bulunamadı. Python 3.12+ kurun (https://www.python.org/downloads/) ve PATH'e eklendiğinden emin olun."
+        throw "Sistemde kurulu 'python' PATH'te bulunamadı. Python 3.12 veya 3.13 kurun -> https://www.python.org/downloads/windows/  (PATH'e eklendiğinden emin olun)."
+    }
+
+    $pyVerRaw = & $SystemPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+    $SupportedPyMinors = @(12, 13)
+    $pyVerParts = $pyVerRaw -split '\.'
+    $pyVerOk = ($pyVerParts.Count -eq 2) -and ($pyVerParts[0] -eq '3') -and ($SupportedPyMinors -contains [int]$pyVerParts[1])
+    if (-not $pyVerOk) {
+        throw @"
+Desteklenmeyen Python sürümü: $pyVerRaw  ($SystemPython)
+
+Code-Intel'in pinlenmiş bağımlılıkları (numpy, onnxruntime-gpu, grpcio, lxml,
+mmh3...) yalnızca Python 3.12 ve 3.13 için önceden derlenmiş (wheel) paket
+sunuyor. Daha yeni sürümlerde (3.14+) en azından onnxruntime-gpu'nun Windows
+wheel'i henüz yok; kaynaktan derleme de bir C/C++ derleyici gerektiriyor ve
+genelde başarısız oluyor.
+
+Çözüm: Python 3.13'ü kurun -> https://www.python.org/downloads/windows/
+Kurulumda "Add python.exe to PATH" işaretleyin, PATH'te 3.13'ün diğer Python
+sürümlerinden ÖNCE geldiğinden emin olup bu script'i tekrar çalıştırın.
+"@
     }
 
     & $SystemPython -c "import fastapi" *> $null
