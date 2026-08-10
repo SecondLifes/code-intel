@@ -1,0 +1,7 @@
+{
+  "$comment": "Per-kit operational settings — committed to git, extensible. Schema documented in .agents/rules/kit-settings.md.",
+  "versioning": {
+    "scheme": "semver",
+    "current_version": "0.1.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/Thumbs.db": true,
+    "**/.DS_Store": true
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.serena": true,
+    "**/data": true,
+    "**/logs": true,
+    "**/backups": true,
+    "**/snapshots": true,
+    "**/qdrant-bin": true
+  }
+}

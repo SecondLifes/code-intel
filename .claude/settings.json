@@ -1,0 +1,10 @@
+﻿{
+  "allowCommands": [
+    "pwsh tools/generate-ai-configs.ps1"
+  ],
+  "denyPaths": [
+    "**/*.env",
+    "**/*.key"
+  ]
+}
+

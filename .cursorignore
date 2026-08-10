@@ -1,0 +1,56 @@
+# =============================================================================
+# .cursorignore — CodeIntel AI Spec-Kit
+# Excludes files and folders from Cursor AI indexing/context.
+# See docs/ai-ignore-strategy.md for the full strategy.
+# =============================================================================
+
+# --- Build Artifacts ---
+__pycache__/
+*.pyc
+
+# --- IDE / Tool Temporary Files ---
+.pytest_cache/
+.serena/
+
+# --- Output / Data Directories (real, generated at runtime) ---
+data/
+logs/
+backups/
+snapshots/
+qdrant-bin/
+
+# --- Dependencies (this project deliberately has no .venv — see CONTRIBUTING.md) ---
+.venv/
+
+# --- Sensitive Files ---
+*.key
+*.pfx
+*.p12
+.env
+.env.*
+
+# --- Large / Noisy Files ---
+*.log
+*.dmp
+*.bak
+*.tmp
+
+# --- OS Artifacts ---
+Thumbs.db
+.DS_Store
+
+# =============================================================================
+# IMPORTANT: Do NOT add these paths — they are essential for AI context:
+#   AGENTS.md
+#   README.md
+#   .agents/            (single source of truth: rules, commands, skills)
+#   tools/               (generate-ai-configs.ps1, register.bat)
+#   .github/copilot-instructions.md
+#   .claude/
+#   .cursor/rules/
+#   .gemini/
+#   .kiro/
+#   src/
+#   tests/
+#   docs/
+# =============================================================================
