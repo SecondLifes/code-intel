@@ -43,6 +43,18 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 
+# Is this the unfilled blank scaffold rather than a real kit? In the scaffold,
+# placeholders ARE the product and the banner PNGs cannot exist yet (they are
+# generated per kit from Prompts/image-prompts.md). Failing on either there
+# would mean the template can never be green, which trains people to ignore the
+# gate. Both stay hard failures in a real kit.
+$readmePath  = Join-Path $RepoRoot 'README.md'
+$IsScaffold  = (Test-Path $readmePath) -and
+               ((Get-Content $readmePath -TotalCount 1) -match '\[Project Name\]')
+if ($IsScaffold) {
+    Write-Host "Detected the unfilled blank scaffold: placeholder and banner checks are advisory here." -ForegroundColor Cyan
+}
+
 function Add-Failure { param([string]$Check, [string]$Detail) $script:failures.Add("[$Check] $Detail") }
 function Add-Warning { param([string]$Check, [string]$Detail) $script:warnings.Add("[$Check] $Detail") }
 function Write-Section { param([string]$Name) Write-Host ""; Write-Host "== $Name" -ForegroundColor Cyan }
@@ -156,13 +168,22 @@ $placeholderHits = @(
             $rel -notlike '.specify/*' -and $rel -notlike '.git/*' -and
             $rel -notlike '.claude/skills/*' -and $rel -ne 'tools/verify-kit.ps1'
         } |
-        Select-String -Pattern '\[FILL IN' -SimpleMatch
+        # -SimpleMatch treats the pattern as literal text, so the regex-escaped
+        # '\[FILL IN' it was first written with searched for an actual backslash
+        # and matched nothing -- the check reported a clean scaffold that is in
+        # fact full of placeholders. Literal pattern, literal match.
+        Select-String -Pattern '[FILL IN' -SimpleMatch
 )
 if ($placeholderHits.Count -gt 0) {
     $shown = $placeholderHits | Select-Object -First 20 | ForEach-Object {
         "$($_.Path.Substring($RepoRoot.Length + 1)):$($_.LineNumber)"
     }
-    Add-Failure 'placeholders' "$($placeholderHits.Count) unfilled [FILL IN marker(s):`n    $($shown -join "`n    ")"
+    $detail = "$($placeholderHits.Count) unfilled [FILL IN marker(s):`n    $($shown -join "`n    ")"
+    if ($IsScaffold) {
+        Add-Warning 'placeholders' "$detail`n    (expected: this is the blank scaffold, where placeholders are the product)"
+    } else {
+        Add-Failure 'placeholders' $detail
+    }
 } else {
     Write-Host "  OK — none outside .specify/"
 }
@@ -175,7 +196,12 @@ Get-ChildItem $RepoRoot -File -Filter 'README*.md' | ForEach-Object {
     [regex]::Matches((Get-Content $readme.FullName -Raw), '!\[[^\]]*\]\((docs/images/[^)\s]+)\)') | ForEach-Object {
         $imgRel = $_.Groups[1].Value
         if (-not (Test-Path (Join-Path $RepoRoot $imgRel))) {
-            Add-Failure 'readme-images' "$($readme.Name) embeds '$imgRel' which does not exist"
+            $msg = "$($readme.Name) embeds '$imgRel' which does not exist"
+            if ($IsScaffold) {
+                Add-Warning 'readme-images' "$msg (expected in the scaffold: banners are generated per kit from Prompts/image-prompts.md)"
+            } else {
+                Add-Failure 'readme-images' "$msg — generate it from Prompts/image-prompts.md, or drop the embed"
+            }
             $readmeImageProblems++
         }
     }
@@ -189,6 +215,69 @@ if (Test-Path (Join-Path $RepoRoot 'LICENSE')) {
 } else {
     Add-Failure 'license' "README references a license but no LICENSE file exists at the repo root"
 }
+
+# --- 8. Declared counts vs. reality -------------------------------------------
+# The generator's map gate only checks that each rule/skill is MENTIONED in
+# docs/proje-haritasi.md. It never checks the numbers those documents state, so
+# every kit drifted: docs claiming "16 rules" next to 18 on disk, "28 skills"
+# next to 33. A number is a claim like any other and goes stale the same way.
+Write-Section "Declared counts"
+$realCounts = @{
+    'rule'  = @(Get-ChildItem (Join-Path $RepoRoot '.agents/rules') -Filter *.md -ErrorAction SilentlyContinue).Count
+    'skill' = @(Get-ChildItem (Join-Path $RepoRoot '.agents/skills') -Directory -ErrorAction SilentlyContinue |
+                Where-Object { -not $_.Name.StartsWith('.') }).Count
+}
+Write-Host ("  on disk: {0} rule(s), {1} skill(s)" -f $realCounts['rule'], $realCounts['skill'])
+
+$countDocs = @('AGENTS.md', 'README.md', 'README.tr-TR.md', 'docs/proje-haritasi.md',
+               '.claude/CLAUDE.md', '.github/copilot-instructions.md', '.gemini/rules/project-rules.md')
+$countMismatches = 0
+foreach ($rel in $countDocs) {
+    $full = Join-Path $RepoRoot $rel
+    if (-not (Test-Path $full)) { continue }
+    $lines = Get-Content $full
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        # "18 rules", "33 skill", "29 kural", "34 beceri" — number immediately
+        # followed by the noun. Deliberately narrow: prose like "one of the 3
+        # databases" is not a claim about this kit's rule/skill inventory.
+        foreach ($m in [regex]::Matches($lines[$i], '(?i)\b(\d{1,3})\s+(rules?|skills?|kural|beceri)\b')) {
+            $claimed = [int]$m.Groups[1].Value
+            $kind = if ($m.Groups[2].Value -match '(?i)^(rule|kural)') { 'rule' } else { 'skill' }
+            if ($claimed -ne $realCounts[$kind]) {
+                Add-Failure 'counts' "$rel`:$($i+1) claims $claimed $kind(s); there are $($realCounts[$kind]) on disk"
+                $countMismatches++
+            }
+        }
+    }
+}
+if ($countMismatches -eq 0) { Write-Host "  OK — every stated rule/skill count matches disk" }
+
+# --- 9. Dead repo-relative references -----------------------------------------
+# A backticked repo-relative path in an AI-primary file is a promise that the
+# path exists. script-expert shipped three dead .agents/** references and
+# prompt-analyzer-expert three dead ACKNOWLEDGMENTS links; nothing caught either.
+Write-Section "Dead references"
+$refDocs = @('AGENTS.md', '.claude/CLAUDE.md', '.github/copilot-instructions.md',
+             '.gemini/rules/project-rules.md', 'docs/ai-ignore-strategy.md', 'docs/proje-haritasi.md')
+$deadRefs = 0
+foreach ($rel in $refDocs) {
+    $full = Join-Path $RepoRoot $rel
+    if (-not (Test-Path $full)) { continue }
+    $lines = Get-Content $full
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        foreach ($m in [regex]::Matches($lines[$i], '`((?:\.agents|\.claude|\.cursor|\.github|\.kiro|\.specify|\.gemini|docs|examples|src|tools|Prompts)/[^`]+)`')) {
+            $path = $m.Groups[1].Value
+            # Skip anything with a glob or a placeholder — those are patterns,
+            # not paths, and resolving them is not this check's job.
+            if ($path -match '[\*\?]' -or $path -match '\[FILL IN' -or $path -match '[<>]') { continue }
+            if (-not (Test-Path (Join-Path $RepoRoot $path))) {
+                Add-Failure 'dead-ref' "$rel`:$($i+1) references '$path', which does not exist"
+                $deadRefs++
+            }
+        }
+    }
+}
+if ($deadRefs -eq 0) { Write-Host "  OK — every backticked repo-relative path resolves" }
 
 # --- Result -------------------------------------------------------------------
 Write-Host ""

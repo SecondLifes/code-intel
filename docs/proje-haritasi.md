@@ -53,7 +53,7 @@ Kalan stack-özgü kurallar (dependency-pin disiplini, MCP/REST paritesi, reinde
 | `qdrant-clients-sdk/`, `qdrant-search-quality/`, `qdrant-performance-optimization/`, `qdrant-monitoring/`, `qdrant-scaling/`, `qdrant-deployment-options/` | `qdrant/skills` (resmi org, npx skills) | Qdrant client kullanımı, arama kalitesi, performans, izleme, ölçekleme, dağıtım |
 | `python-mcp-server-generator/` | `github/awesome-copilot` (npx skills) | MCP sunucusu tasarımı — `src/mcp_server.py`'nin 17-tool yüzeyiyle doğrudan ilgili |
 
-`qdrant-advisor` aranırken bulunamadı — o isimde bir skill `qdrant/skills` reposunda yok (gerçek 10 skill listesi kurulum sırasında doğrulandı); istenen 7 skill'den 6'sı gerçekten var ve kuruldu.
+`qdrant-advisor` aranırken bulunamadı — o isimde bir skill `qdrant/skills` reposunda yok (gerçek 12 skill listesi kurulum sırasında doğrulandı); istenen 12 skill'den 6'sı gerçekten var ve kuruldu.
 
 ---
 
