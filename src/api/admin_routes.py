@@ -536,21 +536,48 @@ def hardware_suggest():
             "sized": [{"model": t, "gb": gb, "coder": "coder" in t.lower(), "gen": model_generation(t)}
                       for t, gb in sorted(sized, key=lambda tg: -tg[1])]}
 
+def _page(name: str) -> FileResponse:
+    """Panel HTML sayfası — her zaman YENİDEN DOĞRULANARAK servis edilir.
+
+    NEDEN (canlı yaşandı, 2026-08-11): bu sayfaların JavaScript'i satır içi,
+    yani sayfa önbellekten gelirse KOD da eski kalır. Cache-Control yokken
+    tarayıcı sezgisel tazelik uyguluyor (Last-Modified'a göre) ve panel
+    yeniden başlatılsa bile ESKİ JS çalışmaya devam ediyordu — sunucu doğru
+    kodu verdiği hâlde. Bunun kötü tarafı sadece gecikme değil: bir düzeltmeyi
+    test ederken "hâlâ bozuk" görünüyor, insan yanlış yerde hata arıyor.
+    (Doğrudan ölçüldü: `?nocache=1` ile zorlanana kadar yeni kod çalışmadı.)
+
+    "no-cache" = önbelleğe al ama KULLANMADAN ÖNCE doğrula; "no-store" DEĞİL.
+
+    Maliyeti ÖLÇÜLDÜ, tahmin edilmedi: FileResponse ETag/Last-Modified üretir
+    ama koşullu isteği KENDİSİ ele almaz (304 mantığı Starlette'te StaticFiles'ta
+    yaşar, FileResponse'ta değil) — `If-None-Match` ile denendi, 304 değil 200 +
+    69964 bayt döndü. Yani her sayfa yüklemesi tam indirme. Bu bilinçli olarak
+    kabul edildi: panel yerel (127.0.0.1) ve tek kullanıcılı, ~70 KB ölçülebilir
+    bir gecikme yaratmıyor; buna karşılık eski JS çalıştırmanın maliyeti yanlış
+    yerde hata aranan bir hata ayıklama seansı. Panel uzaktan servis edilmeye
+    başlanırsa burada gerçek 304 desteği eklemeye değer.
+
+    `/static/vendor/*` bilinçli olarak KAPSAM DIŞI: üçüncü parti dosyalar
+    (highlight.js, sweetalert2) nadiren değişir ve uzun önbellek onlarda
+    doğru davranıştır."""
+    return FileResponse(ROOT / "static" / name, headers={"Cache-Control": "no-cache"})
+
 @router.get("/")
 def index_page():
-    return FileResponse(ROOT / "static" / "index.html")
+    return _page("index.html")
 
 @router.get("/settings")
 def settings_page():
-    return FileResponse(ROOT / "static" / "settings.html")
+    return _page("settings.html")
 
 @router.get("/api")
 def api_page():
-    return FileResponse(ROOT / "static" / "api.html")
+    return _page("api.html")
 
 @router.get("/viewer")
 def viewer_page():
-    return FileResponse(ROOT / "static" / "viewer.html")
+    return _page("viewer.html")
 
 # ---------------- kayıtlı çalışma alanları (workspace) ----------------
 # Arama tercihleri paketi (koleksiyon seçimi, mod, filtreler, rerank, gruplama)

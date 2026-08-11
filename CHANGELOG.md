@@ -46,6 +46,23 @@ Versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **The panel kept running stale JavaScript after an update.** The panel's HTML
+  pages carry their JavaScript inline and were served with no `Cache-Control`,
+  so browsers applied heuristic freshness and reused the cached page — meaning a
+  restarted panel still ran the *old* code while the server was serving the new
+  one. The failure mode is worse than latency: a fix under test looks like it
+  did not work, sending you to debug the wrong place. All four pages (`/`,
+  `/settings`, `/api`, `/viewer`) now send `Cache-Control: no-cache`, verified
+  by loading an edited page without any cache-busting query. `/static/vendor/*`
+  is deliberately excluded — third-party assets should stay cached.
+- **The golden set silently measured a collection that did not exist.** 12 of its
+  60 questions targeted `RESTRequest4Delphi`, which was never indexed on this
+  machine; each scored 0 without any error, so 20% of the benchmark was dead
+  weight that made every real improvement look smaller than it was (true MRR
+  0.727 was being reported as 0.581). Those questions were removed, and
+  `tests/eval.py` now warns loudly about any golden-set collection missing from
+  Qdrant so the same rot cannot return unnoticed. New honest baseline over 48
+  questions: Recall@8 92%, MRR 0.727, nDCG@8 0.773.
 - **The identifier-name boost did not discriminate between partial matches.** It
   had two tiers: ×3.0 when every query word appeared in the name, a flat ×1.5
   when *any* did. For "UUID oluşturma", every candidate with "uuid" in its name
