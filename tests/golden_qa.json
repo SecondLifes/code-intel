@@ -18,7 +18,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "veritabanina baglanti acma",
+    "question": "veritabanına bağlantı açma",
     "expected_names": [
       "Connect",
       "Open"
@@ -26,7 +26,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "SQL sorgusu calistirma execute",
+    "question": "SQL sorgusu çalıştırma execute",
     "expected_names": [
       "Execute",
       "ExecSQL"
@@ -34,7 +34,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "kayit ekleme insert",
+    "question": "kayıt ekleme insert",
     "expected_names": [
       "Insert",
       "Append"
@@ -42,7 +42,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "bellek serbest birakma free destroy",
+    "question": "bellek serbest bırakma free destroy",
     "expected_names": [
       "Free",
       "Destroy"
@@ -58,7 +58,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "dataset alanlari field degerleri",
+    "question": "dataset alanları field değerleri",
     "expected_names": [
       "Field",
       "FieldByName"
@@ -66,7 +66,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "stored procedure cagirma",
+    "question": "stored procedure çağırma",
     "expected_names": [
       "Procedure",
       "StoredProc"
@@ -74,7 +74,7 @@
     "collection": "UniDAC 10.3"
   },
   {
-    "question": "loader class yukleme",
+    "question": "loader class yükleme",
     "expected_names": [
       "GetLoaderClass",
       "Loader"
@@ -83,49 +83,49 @@
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "blob veriye parca ekleme append",
+    "question": "blob veriye parça ekleme append",
     "expected_names": [
       "AppendPiece"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "SQL generator kayit sayisi sorgusu uretme",
+    "question": "SQL generator kayıt sayısı sorgusu üretme",
     "expected_names": [
       "GenerateRecCountSQL"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "sqlite istemci kutuphanesini yukleme",
+    "question": "sqlite istemci kütüphanesini yükleme",
     "expected_names": [
       "LoadClientLibrary"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "bytes to sql timestamp donusumu",
+    "question": "bytes to sql timestamp dönüşümü",
     "expected_names": [
       "BytesToSQLTimeStamp"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "http baglantisinda receive timeout ayarlama",
+    "question": "http bağlantısında receive timeout ayarlama",
     "expected_names": [
       "SetReceiveTimeout"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "wildcard mask eslestirme fonksiyonu",
+    "question": "wildcard mask eşleştirme fonksiyonu",
     "expected_names": [
       "MatchesMask"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "numeric degerin sonsuz olup olmadigini kontrol etme",
+    "question": "numeric değerin sonsuz olup olmadığını kontrol etme",
     "expected_names": [
       "GetIsInfinity",
       "GetIsNegInfinity"
@@ -133,28 +133,28 @@
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "memdata kayit guncelleme update record",
+    "question": "memdata kayıt güncelleme update record",
     "expected_names": [
       "UpdateRecord"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "dataset mevcut anahtar kolonlarini alma",
+    "question": "dataset mevcut anahtar kolonlarını alma",
     "expected_names": [
       "GetCurrentKeys"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "odbc istemci surumunu alma client version",
+    "question": "odbc istemci sürümünü alma client version",
     "expected_names": [
       "GetClientVersion"
     ]
   },
   {
     "collection": "UniDAC 10.3",
-    "question": "uni baglanti kesme disconnect",
+    "question": "uni bağlantı kesme disconnect",
     "expected_names": [
       "DoDisconnect",
       "Disconnect"
@@ -169,21 +169,21 @@
   },
   {
     "collection": "Jedi",
-    "question": "registry anahtarini acma",
+    "question": "registry anahtarını açma",
     "expected_names": [
       "RegOpenKey"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "windows kisayol olusturma shell link",
+    "question": "windows kısayol oluşturma shell link",
     "expected_names": [
       "ShellLinkCreate"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "midi kanal ses seviyesi degistirme",
+    "question": "midi kanal ses seviyesi değiştirme",
     "expected_names": [
       "SendChannelVolumeChange"
     ]
@@ -197,7 +197,7 @@
   },
   {
     "collection": "Jedi",
-    "question": "satirdaki son bosluk olmayan karakteri bulma",
+    "question": "satırdaki son boşluk olmayan karakteri bulma",
     "expected_names": [
       "LastNonSpaceChar",
       "LastNoSpaceChar"
@@ -212,42 +212,42 @@
   },
   {
     "collection": "Jedi",
-    "question": "xor sifreli stream cozme decode",
+    "question": "xor şifreli stream çözme decode",
     "expected_names": [
       "DecodeStream"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "font stillerini stringe cevirme",
+    "question": "font stillerini stringe çevirme",
     "expected_names": [
       "FontStylesToString"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "treeview secim degisme olayi selection changing",
+    "question": "treeview seçim değişme olayı selection changing",
     "expected_names": [
       "DoSelectionChanging"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "bitmap buyutme filtresi ayarlama stretch filter",
+    "question": "bitmap büyütme filtresi ayarlama stretch filter",
     "expected_names": [
       "SetStretchFilter"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "pencerenin dock edilebilir olup olmadigi kontrolu",
+    "question": "pencerenin dock edilebilir olup olmadığı kontrolü",
     "expected_names": [
       "IsDockable"
     ]
   },
   {
     "collection": "Jedi",
-    "question": "pe import listesi tum ogeleri yenileme",
+    "question": "pe import listesi tüm öğeleri yenileme",
     "expected_names": [
       "RefreshAllItems"
     ]
@@ -261,42 +261,42 @@
   },
   {
     "collection": "mORMot2",
-    "question": "bellek blogu sikistirma compress",
+    "question": "bellek bloğu sıkıştırma compress",
     "expected_names": [
       "CompressMem"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "variant degeri json olarak kaydetme",
+    "question": "variant değeri json olarak kaydetme",
     "expected_names": [
       "VariantSaveJSON"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "rest istek basligindan deger okuma in header",
+    "question": "rest istek başlığından deger okuma in header",
     "expected_names": [
       "GetInHeader"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "veritabani tablo adlarini listeleme",
+    "question": "veritabanı tablo adlarını listeleme",
     "expected_names": [
       "GetTableNames"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "mevcut kullanici icin veri sifreleme",
+    "question": "mevcut kullanici için veri şifreleme",
     "expected_names": [
       "CryptDataForCurrentUser"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "gzip dosya acma uncompress",
+    "question": "gzip dosya açma uncompress",
     "expected_names": [
       "FileUnCompress",
       "UnCompress"
@@ -304,14 +304,14 @@
   },
   {
     "collection": "mORMot2",
-    "question": "servis komut satiri argumanlarini ayristirma",
+    "question": "servis komut satırı argümanlarını ayrıştırma",
     "expected_names": [
       "ParseCommandArgs"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "thread adini log ile ayarlama",
+    "question": "thread adını log ile ayarlama",
     "expected_names": [
       "SetThreadNameWithLog",
       "SetThreadName"
@@ -319,42 +319,42 @@
   },
   {
     "collection": "mORMot2",
-    "question": "oturum korumali degerleri hesaplama auth session",
+    "question": "oturum korumalı değerleri hesaplama auth session",
     "expected_names": [
       "ComputeProtectedValues"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "pdf metin cizim modu ayarlama text rendering",
+    "question": "pdf metin çizim modu ayarlama text rendering",
     "expected_names": [
       "SetTextRenderingMode"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "orm tablo satir degerlerini alma row values",
+    "question": "orm tablo satır degerlerini alma row values",
     "expected_names": [
       "GetRowValues"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "utf8 kayit karsilastirma compare record",
+    "question": "utf8 kayıt karşılaştırma compare record",
     "expected_names": [
       "Utf8CompareRecord"
     ]
   },
   {
     "collection": "mORMot2",
-    "question": "mongodb dokumani json'dan olusturma",
+    "question": "mongodb dokümanı json'dan oluşturma",
     "expected_names": [
       "DocFromJSON"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "bearer token ile kimlik dogrulama",
+    "question": "bearer token ile kimlik doğrulama",
     "expected_names": [
       "TokenBearer"
     ]
@@ -368,49 +368,49 @@
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "http 500 hatasinda exception firlatma ayari",
+    "question": "http 500 hatasında exception fırlatma ayari",
     "expected_names": [
       "RaiseExceptionOn500"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "okuma zaman asimi ayarlama read timeout",
+    "question": "okuma zaman aşımı ayarlama read timeout",
     "expected_names": [
       "ReadTimeout"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "proxy devre disi birakma",
+    "question": "proxy devre dışı bırakma",
     "expected_names": [
       "DeactivateProxy"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "istege cookie cerez ekleme",
+    "question": "isteğe cookie çerez ekleme",
     "expected_names": [
       "AddCookie"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "yanit icerik turu content type",
+    "question": "yanıt icerik türü content type",
     "expected_names": [
       "ContentType"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "asenkron patch istegi gonderme",
+    "question": "asenkron patch isteği gönderme",
     "expected_names": [
       "PatchAsync"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "baglanti zaman asimi connect timeout",
+    "question": "bağlantı zaman aşımı connect timeout",
     "expected_names": [
       "ConnectTimeout"
     ]
@@ -424,14 +424,14 @@
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "yanit durum kodu status code",
+    "question": "yanıt durum kodu status code",
     "expected_names": [
       "StatusCode"
     ]
   },
   {
     "collection": "RESTRequest4Delphi",
-    "question": "istek basliklarini temizleme clear headers",
+    "question": "istek başlıklarını temizleme clear headers",
     "expected_names": [
       "ClearHeaders"
     ]
