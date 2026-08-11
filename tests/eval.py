@@ -1,8 +1,15 @@
 """Arama kalitesi değerlendirme koşucusu — "tahmin" değil ÖLÇÜLEBİLİR sayılar.
 
 golden_qa.json artık ÇOK KOLEKSİYONLU: her kayıtta "collection" alanı var
-(60 soru: unidac 22, Jedi 12, Synopse-mORMot2 14, RESTRequest4Delphi 12).
+(48 soru: "UniDAC 10.3" 22, "Jedi" 12, "mORMot2" 14).
 Metrikler: Recall@k, MRR, nDCG@k (binary, ilk isabet), gecikme p50/p95.
+
+ÖLÜ KOLEKSİYON UYARISI: 2026-08-11'e kadar set'te 12 soru daha vardı
+(RESTRequest4Delphi) ve o koleksiyon bu makinede hiç indekslenmemişti — her
+biri sessizce 404 alıp 0 puanlanıyordu. Sonuç: GENEL sayıların %20'si ölü
+ağırlıktı ve her gerçek iyileşme olduğundan küçük görünüyordu (gerçek MRR
+0.727 iken GENEL 0.581 raporlanıyordu). Sorular kaldırıldı; aşağıdaki
+`_warn_dead_collections` aynı çürümenin sessizce geri dönmesini engeller.
 
 Çalıştır (Qdrant + ilgili indeksler ayakta olmalı; sistemde kurulu Python):
   python tests/eval.py                      # tüm koleksiyonlar
@@ -31,6 +38,29 @@ def _first_hit_rank(names: list[str], expected: list[str]) -> int | None:
     return None
 
 
+def _warn_dead_collections(qa: list[dict]) -> list[str]:
+    """Golden set'te ADI GEÇEN ama Qdrant'ta OLMAYAN koleksiyonları bulur.
+
+    Bu kontrol olmadan ölü bir koleksiyonun soruları sessizce 0 puanlanır ve
+    ortalamayı aşağı çeker — ölçüm bozulur ama hiçbir yerde hata görünmez.
+    Tam olarak bu oldu (bkz. modül docstring'i), o yüzden artık her koşuda
+    açıkça bağırıyor."""
+    wanted = {x.get("collection", "") for x in qa}
+    try:
+        live = {c.name for c in retrieval.cl.get_collections().collections}
+    except Exception as e:
+        print(f"UYARI: koleksiyon listesi alinamadi ({str(e)[:80]}) — olu koleksiyon kontrolu atlandi")
+        return []
+    dead = sorted(c for c in wanted if c and c not in live)
+    if dead:
+        print("\n" + "!" * 70)
+        print(f"UYARI: golden set'te OLMAYAN koleksiyon(lar) var: {', '.join(dead)}")
+        print("Bu sorular kacinilmaz olarak 0 puanlanir ve TUM ortalamalari dusurur.")
+        print("Ya ilgili koleksiyonu indeksleyin ya da sorulari golden_qa.json'dan cikarin.")
+        print("!" * 70)
+    return dead
+
+
 def run(collections: list[str] | None, mode: str, top_k: int, rerank: bool = False,
         expand: bool = False, verbose: bool = True) -> dict:
     qa = json.loads((pathlib.Path(__file__).parent / "golden_qa.json").read_text(encoding="utf-8"))
@@ -38,6 +68,7 @@ def run(collections: list[str] | None, mode: str, top_k: int, rerank: bool = Fal
         qa = [x for x in qa if x.get("collection", "unidac") in collections]
     if not qa:
         print("Seçilen koleksiyon(lar) için soru yok."); return {}
+    _warn_dead_collections(qa)
 
     per_coll: dict[str, dict] = {}
     latencies: list[float] = []
