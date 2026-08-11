@@ -183,7 +183,7 @@ def _ans_put(r, answer: str, hits: list, total: int):
                 vectors_config=_m.VectorParams(size=1, distance=_m.Distance.DOT))
         from qdrant_client import models as _m
         cl.upsert(retrieval.ANSWER_COLL, points=[_m.PointStruct(id=_ans_key(r), vector=[0.0],
-            payload={"answer": answer, "hits": hits[:6], "total": total, "model": mdl,
+            payload={"answer": answer, "hits": hits[:6], "total": total, "model": r.model,
                      "date": datetime.now(timezone.utc).isoformat()})])
     except Exception:
         pass
