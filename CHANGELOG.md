@@ -23,6 +23,21 @@ Versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **Searching while an answer was still streaming crashed the panel with
+  `TypeError: Cannot set properties of null (setting 'innerHTML')`.** `run()`
+  only disabled the Go button, but three other paths call it directly — the
+  Enter key, suggestion chips (`pick()`) and `jumpTo()`. A second search reset
+  `#out`, destroying `#ans`/`#anssrc`/`#cmpwrap` while the previous stream was
+  still writing into them; the stale loop then wrote to `null`, and that
+  TypeError landed in the old `run()`'s `catch`, painting a red error box over
+  the *new* search's results. Searches now carry a sequence number (stale runs
+  write nothing) and the previous request is genuinely aborted, which also ends
+  the abandoned generation instead of leaving the GPU busy for the rest of a
+  ~220 s deep answer — the cause of the "screen freezes, then results appear"
+  behaviour. `compareFunctions()` had the identical hazard and is guarded the
+  same way. Regression test: `tests/test_panel_overlap.py`, which runs the real
+  `run()`/`runAskStream()` extracted from `index.html` against a fake DOM and
+  was verified to reproduce the crash on the pre-fix version.
 - **Claude Code could not discover any of this kit's skills.** It looks only
   under `.claude/skills/`; `.agents/skills/` is not one of its discovery
   locations, so every skill here was unreachable by trigger matching and only

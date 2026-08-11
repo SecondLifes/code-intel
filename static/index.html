@@ -288,6 +288,16 @@ pre mark{background:rgba(73,179,156,.28);color:inherit;border-radius:3px;padding
 <script>
 let LANG=localStorage.getItem('ci-lang')||'tr', MODE='hybrid', ACT=localStorage.getItem('ci-act')||'ask';
 let CMP_Q='', CMP_HITS=[];   // Stabilite/Performans karşılaştırma tablosu için son sorgu+kaynaklar
+// Çalışan aramanın sıra numarası + iptal kolu. GEREKÇE (kullanıcı ekran
+// görüntüsü: "TypeError: Cannot set properties of null (setting 'innerHTML')",
+// ekran bir süre kilitleniyor sonra sonuçlar geliyor): run() yalnız $('go')
+// düğmesini kilitliyordu, ama run() üç ayrı yoldan daha çağrılabiliyor —
+// Enter tuşu (input'un onkeydown'ı), öneri çipleri (pick()) ve jumpTo().
+// Akış sürerken ikinci bir run() $('out')'u sıfırlayınca #ans/#anssrc/#cmpwrap
+// DOM'dan siliniyor, hâlâ dönen ESKİ akış döngüsü null'a innerHTML yazıp
+// patlıyor; üstelik eski run()'ın catch'i bu hatayı YENİ aramanın çıktısının
+// üzerine basıyordu (kullanıcının gördüğü sıra tam olarak buydu).
+let RUN_SEQ=0, RUN_ABORT=null;
 const T=(t,e)=>LANG==='tr'?t:e, $=id=>document.getElementById(id);
 
 // ---- SweetAlert2 sarmalayıcıları — native alert/confirm/prompt yerine, panel temasıyla ----
@@ -656,12 +666,19 @@ async function run(){
   // (kullanici bildirimi: "yeni aramalarda eski arama verilerini temizlemiyor"):
   //  - toggleGrouping() bayat ALL_HITS'i okuyup olmayan #hitlist'e yazip patliyordu,
   //  - Stabilite/Performans tablosu bayat CMP_Q/CMP_HITS ile ONCEKI soruya gore kuruluyordu.
+  // Önceki arama hâlâ akıyorsa GERÇEKTEN iptal et: yalnız DOM yazımını
+  // engellemek yetmez, sunucudaki üretim de sürüyor (derin modda ~220 sn GPU
+  // meşgul) — "ekran bir süre kilitleniyor" hissinin sebebi buydu.
+  if(RUN_ABORT)RUN_ABORT.abort();
+  RUN_ABORT=new AbortController();
+  const myRun=++RUN_SEQ, sig=RUN_ABORT.signal;
   LAST_Q=q;LAST_OFFSET=0;ALL_HITS=[];CMP_Q='';CMP_HITS=[];
   $('go').disabled=true;
   $('out').innerHTML=`<div class="answer"><span class="spin"></span>${ACT==='ask'?T('Kod aranıyor, yanıt yazılıyor…','Searching code, writing answer…'):T('Aranıyor…','Searching…')}</div>`;
   try{
     if(ACT==='find'){
-      const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(searchBody(0))})).json();
+      const r=await(await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(searchBody(0)),signal:sig})).json();
+      if(myRun!==RUN_SEQ)return;   // bayat koşu: DOM artık yeni aramanın
       ALL_HITS=r.hits||[];
       $('out').innerHTML=r.error?err(r.error):(r.hits.length
         ?`<div class="reslabel" id="reslabel">${r.hits.length} / ${r.total} ${T('sonuç gösteriliyor','results shown')} · ${r.ms} ms · ${MODE}${r.rerank?' · 🎯':''}</div>`+
@@ -670,12 +687,18 @@ async function run(){
         :none());
       applyCodeEnhancements();
     }else{
-      await runAskStream(q, ACT==='research');
+      await runAskStream(q, ACT==='research', myRun, sig);
     }
-  }catch(e){$('out').innerHTML=err(e);}
-  $('go').disabled=false;$('q').focus();
+  }catch(e){
+    // İptal edilmiş ya da bayat koşu ASLA ekrana yazmaz — eski davranışta tam
+    // burası yeni aramanın sonucunu hata kutusuyla eziyordu.
+    if(myRun!==RUN_SEQ||e.name==='AbortError')return;
+    $('out').innerHTML=err(e);
+  }finally{
+    if(myRun===RUN_SEQ){$('go').disabled=false;$('q').focus();}
+  }
 }
-async function runAskStream(q, research){
+async function runAskStream(q, research, myRun, sig){
   // research=true: derin araştırma modu — context pack (tam kod + çağrı/tip/unit
   // bağlamı) + derin model; adımlar SSE 'step' olaylarıyla ekranda görünür
   // Kayitli bir secim yoksa BOS gonderilir: sunucu `r.model or _CFG.get(...)`
@@ -692,7 +715,8 @@ async function runAskStream(q, research){
     ?{q,collections:SELECTED_COLLS,lang:LANG,model,related_k:parseInt($('rk-select').value)||5,ollama_url:ollamaUrl}
     :{q,collections:SELECTED_COLLS,mode:MODE,lang:LANG,model,history:CHAT_HISTORY,ollama_url:ollamaUrl};
   const resp=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(bodyObj)});
+    body:JSON.stringify(bodyObj),signal:sig});
+  if(myRun!==RUN_SEQ)return;
   if(!resp.ok||!resp.body){$('out').innerHTML=err('HTTP '+resp.status);return;}
   $('out').innerHTML=`<div class="answer" id="ans"><span class="spin"></span></div><div id="anstoggle" class="ans-toggle" onclick="togAns()"></div><div class="metaline" id="ansmeta"></div><div id="anssrc"></div><div id="cmpwrap"></div>`;
   CMP_Q=q;CMP_HITS=[];
@@ -702,6 +726,9 @@ async function runAskStream(q, research){
   while(true){
     const {done,value}=await reader.read();
     if(done)break;
+    // Bu okuma sırasında yeni bir arama başladıysa DOM'umuz (#ans/#anssrc/
+    // #cmpwrap) çoktan silinmiş demektir — tek satır bile yazmadan çekil.
+    if(myRun!==RUN_SEQ)return;
     buf+=dec.decode(value,{stream:true});
     let i;
     while((i=buf.indexOf('\n\n'))>=0){
@@ -735,6 +762,7 @@ async function runAskStream(q, research){
       else if(d.t){text+=d.t;$('ans').innerHTML=citeFmt(text)+'<span class="spin"></span>';updateAnsToggle();}
     }
   }
+  if(myRun!==RUN_SEQ)return;
   $('ans').innerHTML=text?citeFmt(text):$('ans').innerHTML.replace('<span class="spin"></span>','');
   if(text){CHAT_HISTORY.push({q,a:text});if(CHAT_HISTORY.length>8)CHAT_HISTORY.shift();persistChat();}
   // Sıra 4 (kullanıcı, ekran görüntüsüyle bulunan gerçek hata): "Derin"de cevap
@@ -800,10 +828,15 @@ function renderCompareTable(rows){
 }
 async function compareFunctions(){
   const btn=$('cmp-btn');if(!btn)return;
+  // Karşılaştırma da uzun sürer (büyük model) ve tam olarak akış döngüsüyle AYNI
+  // tuzağa düşüyordu: bu sırada yeni bir arama başlarsa #cmpwrap silinir ve
+  // aşağıdaki yazım null'a çarpardı. Aynı sıra numarasıyla korunuyor.
+  const myRun=RUN_SEQ;
   const orig=btn.innerHTML;btn.disabled=true;btn.innerHTML=`<span class="spin"></span>${T('Karşılaştırılıyor…','Comparing…')}`;
   try{
     const r=await(await fetch('/api/compare',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({q:CMP_Q,hits:CMP_HITS,lang:LANG,ollama_url:localStorage.getItem('ci-ollama-url')||''})})).json();
+    if(myRun!==RUN_SEQ)return;   // bayat: bu tablonun ait olduğu arama artık ekranda değil
     if(r.error){await ciError(r.error);btn.disabled=false;btn.innerHTML=orig;return;}
     // name/unit/collection modelin echo'suna HİÇ güvenmeden ASIL hit'ten alınır.
     // Canlı testte görüldü: model "name" alanına bazen dosya/satır bilgisini de
