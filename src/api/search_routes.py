@@ -202,7 +202,7 @@ def ask(r: AskReq, request: Request):
         return {"answer": "Bu soruyla eşleşen kod bulamadım." if r.lang == "tr" else "No matching code found.", "hits": []}
     prompt = _build_ask_prompt(r, hits)
     body = json.dumps({"model": r.model, "prompt": prompt, "stream": False,
-                       "options": {"num_predict": 600}, "think": False}).encode()
+                       "options": {"num_predict": 600, "num_ctx": retrieval.fit_num_ctx(prompt, 600)}, "think": False}).encode()
     ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
     t0 = time.time()
     txt = json.loads(urllib.request.urlopen(
@@ -248,7 +248,7 @@ def ask_stream(r: AskReq, request: Request):
             return
         prompt = _build_ask_prompt(r, hits)
         body = json.dumps({"model": r.model, "prompt": prompt, "stream": True,
-                           "options": {"num_predict": 600}, "think": False}).encode()
+                           "options": {"num_predict": 600, "num_ctx": retrieval.fit_num_ctx(prompt, 600)}, "think": False}).encode()
         t0 = time.time()
         full = []   # akan yanıt biriktirilir — sonda önbelleğe yazmak için
         try:
@@ -372,7 +372,7 @@ def research_stream(r: ResearchReq, request: Request):
         # doğal bitiş) izlenip istemciye AÇIKÇA iletiliyor; limit her zaman
         # yetmese bile kullanıcı en azından cevabın kesilmiş olabileceğini bilir.
         body = json.dumps({"model": mdl, "prompt": prompt, "stream": True,
-                           "options": {"num_predict": 3000}, "think": False}).encode()
+                           "options": {"num_predict": 3000, "num_ctx": retrieval.fit_num_ctx(prompt, 3000)}, "think": False}).encode()
         t0 = time.time()
         done_reason = None
         try:
@@ -438,7 +438,7 @@ def compare(r: CompareReq, request: Request):
                   '[{"i":1,"name":"...","stability":8,"performance":6,"reason":"..."}]'
                   f"\n\nQUESTION: {r.q}\n\nFUNCTIONS:\n{items}")
     body = json.dumps({"model": mdl, "prompt": prompt, "stream": False,
-                       "options": {"num_predict": 1500}, "think": False}).encode()
+                       "options": {"num_predict": 1500, "num_ctx": retrieval.fit_num_ctx(prompt, 1500)}, "think": False}).encode()
     ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
     try:
         txt = json.loads(urllib.request.urlopen(

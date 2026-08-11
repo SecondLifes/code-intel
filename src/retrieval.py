@@ -90,9 +90,34 @@ def gpu_available() -> bool:
 
 cl = QdrantClient(QDRANT, timeout=120)
 
+CTX_MIN, CTX_MAX, CTX_CHARS_PER_TOKEN = 4096, 16384, 3.5
+
+def fit_num_ctx(prompt: str, num_predict: int) -> int:
+    """Bu prompt'un GERÇEKTEN sığacağı num_ctx değerini hesaplar.
+
+    NEDEN GEREKLİ (canlı doğrulandı, 2026-08-11): Ollama'nın varsayılan bağlam
+    penceresi 4096 token'dır (resmî FAQ: "Ollama defaults to a context window
+    size of 4096 tokens") ve `num_ctx` gönderilmezse prompt SESSİZCE bu boyuta
+    kırpılır — hata da uyarı da yok. `ollama ps` çıktısı bunu doğrudan gösterdi:
+    24000 karakterlik bir bağlamla çağırırken bile `CONTEXT 4096`.
+
+    Etkisi ciddiydi: get_context_pack() token_budget'a göre (varsayılan 6000-8000
+    token) özenle bir bağlam paketi kuruyor, sonra o paketin büyük kısmı modele
+    HİÇ ulaşmıyordu — yani "token bütçeli bağlam paketi" özelliği fiilen devre
+    dışıydı ve cevaplar eksik bağlamdan üretiliyordu.
+
+    Üst sınır (CTX_MAX) bilinçli: num_ctx büyüdükçe KV cache VRAM'i büyür. Bu
+    makinede modeller zaten VRAM'i aşıp CPU'ya taşıyor (Ollama log'u: "49 layers
+    (13 overflowing)"), sınırsız büyütmek durumu kötüleştirir.
+    """
+    need = int(len(prompt) / CTX_CHARS_PER_TOKEN) + num_predict + 256   # 256 = güvenlik payı
+    return max(CTX_MIN, min(need, CTX_MAX))
+
 def ollama_generate(model: str, prompt: str, num_predict: int = 500, timeout: int = 600) -> str:
     body = json.dumps({"model": model, "prompt": prompt, "stream": False,
-                        "options": {"num_predict": num_predict}, "think": False}).encode()
+                        "options": {"num_predict": num_predict,
+                                     "num_ctx": fit_num_ctx(prompt, num_predict)},
+                        "think": False}).encode()
     return json.loads(urllib.request.urlopen(
         urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
         timeout=timeout).read()).get("response", "").strip()
