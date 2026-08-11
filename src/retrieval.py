@@ -122,7 +122,15 @@ def ollama_generate(model: str, prompt: str, num_predict: int = 500, timeout: in
         urllib.request.Request(OLLAMA + "/api/generate", body, {"Content-Type": "application/json"}),
         timeout=timeout).read()).get("response", "").strip()
 
-_WORD_RE = re.compile(r"[a-zA-Z0-9]+")
+# [^\W_]+ = harf/rakam (Unicode), alt çizgi hariç. ESKİDEN [a-zA-Z0-9]+ idi ve
+# Türkçe kelimeleri her aksanlı harfte PARÇALIYORDU — bu kod tabanının yorumları
+# Türkçe ve kullanıcı Türkçe arıyor, yani doğrudan arama kalitesini bozuyordu:
+#   "UUID oluşturma" -> ['olu','turma','uuid']   ("oluşturma" yok oldu)
+#   "bağlantı açma"  -> ['a','ba','lant','ma']   (tamamı anlamsız parça)
+#   "şifre doğrulama"-> ['do','ifre','rulama']
+# "a"/"ba"/"ma" gibi parçalar rastgele tanımlayıcı token'larıyla eşleşip
+# _fuse_collection'daki isim-boost'u SAHTE olarak tetikliyordu.
+_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 def _tokenize(s: str) -> set[str]:
     """camelCase/PascalCase-aware tokenizer, e.g. 'SplitString' -> {'split','string'}.
@@ -132,7 +140,13 @@ def _tokenize(s: str) -> set[str]:
     actual named function the user is looking for."""
     if not s:
         return set()
+    # İKİ sınır kuralı gerekli. Birincisi klasik camelCase (küçük→BÜYÜK).
+    # İkincisi KISALTMA sınırı (BÜYÜK→BÜYÜKküçük): Delphi kimlikleri kısaltma
+    # önekiyle dolu — TCRConnection, TDBGrid, IHTTPClient, TJSONObject. Yalnız
+    # birinci kuralla "TCRConnection" HİÇ bölünmüyordu ({'tcrconnection'}), yani
+    # "connection" sorgusuyla asla eşleşmiyor, isim-boost'u hiç alamıyordu.
     s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)
+    s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
     return set(_WORD_RE.findall(s.lower()))
 
 def _dense_query(collection: str, dv: list[float], limit: int, flt=None):
