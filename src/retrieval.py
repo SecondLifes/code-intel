@@ -992,7 +992,8 @@ def get_context_pack(task: str, collections: list[str] | None = None, token_budg
     add("primary", f"{primary['name']} ({primary['unit']})",
         full.get("code", primary["code"]),
         {"collection": primary["collection"], "id": primary["id"], "unit": primary["unit"],
-         "line_start": primary["line_start"], "truncated": full.get("truncated", False)})
+         "line_start": primary["line_start"], "line_end": primary["line_end"],
+         "truncated": full.get("truncated", False)})
 
     if include_relations:
         rel = get_relations(primary["collection"], primary["id"])
@@ -1020,8 +1021,14 @@ def get_context_pack(task: str, collections: list[str] | None = None, token_budg
                 f"\nused_by ({len(ud.get('used_by', []))}): " + ", ".join(ud.get("used_by", [])[:15]))
 
     for h in hits[1:1 + related_k]:
+        # line_start/line_end BURADA da taşınmalı: research_stream bu section'ları
+        # doğrudan UI kaynak kartına çeviriyor ve satır aralığını "Tarayıcıda Göster"
+        # ile kod genişletmede kullanıyor. Eksik olduklarında UI "L0-0" gösterip
+        # dosyanın başına atlıyordu (kullanıcı bildirimi + ekran görüntüsü).
         add("related", f"{h['name']} ({h['unit']})", h["code"][:1500],
-            {"collection": h["collection"], "id": h["id"], "unit": h["unit"], "score": h["score"]})
+            {"collection": h["collection"], "id": h["id"], "unit": h["unit"],
+             "line_start": h.get("line_start"), "line_end": h.get("line_end"),
+             "score": h["score"]})
 
     return {"task": task, "collections": colls, "token_budget": token_budget,
             "used_tokens_est": used // 4, "sections": sections, "omitted": omitted,

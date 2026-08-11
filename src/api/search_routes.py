@@ -280,6 +280,38 @@ def ask_stream(r: AskReq, request: Request):
 # ---------------- derin araştırma modu (Sıra 8) ----------------
 # Tek atımlık RAG'in üstü: get_context_pack ile ana sembolün TAM kodu + çağrı/tip/
 # unit bağlamı toplanır, derin modelle sentezlenir; adımlar SSE ile UI'da görünür.
+def _bare_name(s: dict) -> str:
+    """Kullanıcı (ekran görüntüsü): kaynak kartında fonksiyon adının yanında
+    "(unit.pas)" yazıyordu — halbuki unit zaten meta satırında ayrıca gösteriliyor
+    (srcCard). Kök neden: get_context_pack() section title'ı LLM prompt bağlamı
+    İÇİN "isim (unit)" olarak kuruyor (add() çağrıları, bkz. retrieval.py) — bu
+    title UI'ya "name" olarak birebir kopyalanıyordu. Prompt tarafı böyle kalmalı
+    (LLM için faydalı); yalnız UI'ya giden isimden bilinen " (unit)" soyuluyor."""
+    title, unit = s.get("title", "") or "", s.get("unit", "") or ""
+    suffix = f" ({unit})"
+    return title[:-len(suffix)] if unit and title.endswith(suffix) else title
+
+
+def section_to_hit(s: dict) -> dict:
+    """Bir get_context_pack section'ını UI kaynak kartı ("hit") sözlüğüne çevirir.
+
+    SAF fonksiyon — Qdrant/Ollama gerektirmez, bu yüzden doğrudan test edilebilir
+    (tests/test_research_sources.py). research_stream'in içinde satır içi bir
+    sözlük kurulumu olarak yaşarken test edilemiyordu ve iki gerçek hata orada
+    fark edilmeden durdu:
+      1. line_end, kopyala-yapıştır hatasıyla line_start'tan okunuyordu — her
+         kaynak kartı "L143-143" gibi tek satırlık görünüyordu.
+      2. get_context_pack'in related section'ları satır alanlarını hiç
+         taşımıyordu; varsayılan 0'a düşüp UI'da "L0-0" çıkıyor, "Tarayıcıda
+         Göster" dosyanın başına atlıyordu (retrieval.py'de düzeltildi).
+    """
+    return {"collection": s.get("collection"), "id": s.get("id"), "name": _bare_name(s),
+            "unit": s.get("unit", ""), "kind": s["kind"],
+            "line_start": s.get("line_start") or 0,
+            "line_end": s.get("line_end") or 0,
+            "score": s.get("score", ""), "code": s["text"][:1200], "why": {}}
+
+
 class ResearchReq(BaseModel):
     q: str; collections: list[str] = ["unidac"]; model: str = ""; lang: str = "tr"
     token_budget: int = 6000
@@ -310,22 +342,7 @@ def research_stream(r: ResearchReq, request: Request):
             yield f"event: error\ndata: {json.dumps(pack, ensure_ascii=False)}\n\n"
             return
         secs = pack.get("sections", [])
-        # Kullanıcı (ekran görüntüsü): kaynak kartında fonksiyon adının yanında
-        # "(unit.pas)" yazıyordu — halbuki unit zaten meta satırında ayrıca
-        # gösteriliyor (srcCard). Kök neden: get_context_pack() section title'ı
-        # LLM prompt bağlamı İÇİN "isim (unit)" olarak kuruyor (add() çağrıları,
-        # bkz. retrieval.py) — bu title BURADA "name" olarak birebir kopyalanmış.
-        # Prompt tarafı böyle kalmalı (LLM için faydalı); yalnız burada, UI'ya
-        # giden isimden bilinen " (unit)" son eki soyuluyor.
-        def _bare_name(s: dict) -> str:
-            title, unit = s.get("title", "") or "", s.get("unit", "") or ""
-            suffix = f" ({unit})"
-            return title[:-len(suffix)] if unit and title.endswith(suffix) else title
-        meta_hits = [{"collection": s.get("collection"), "id": s.get("id"), "name": _bare_name(s),
-                       "unit": s.get("unit", ""), "kind": s["kind"], "line_start": s.get("line_start", 0),
-                       "line_end": s.get("line_start", 0), "score": s.get("score", ""),
-                       "code": s["text"][:1200], "why": {}}
-                      for s in secs if s["kind"] in ("primary", "related")]
+        meta_hits = [section_to_hit(s) for s in secs if s["kind"] in ("primary", "related")]
         yield ("event: meta\ndata: " + json.dumps({
             "hits": meta_hits, "total": len(secs), "model": mdl,
             "pack": {"sections": len(secs), "used_tokens_est": pack.get("used_tokens_est"),
