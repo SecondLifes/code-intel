@@ -377,6 +377,9 @@ def research_stream(r: ResearchReq, request: Request):
         # kendi done_reason alanı ("length" = token sınırına takıldı, "stop" =
         # doğal bitiş) izlenip istemciye AÇIKÇA iletiliyor; limit her zaman
         # yetmese bile kullanıcı en azından cevabın kesilmiş olabileceğini bilir.
+        # Derin model bu makinede VRAM'e tek basina ancak sigiyor — hizli model
+        # hala residentse 500 aliniyordu (bkz. retrieval.free_vram_for docstring'i).
+        retrieval.free_vram_for(mdl, ollama_url)
         body = json.dumps({"model": mdl, "prompt": prompt, "stream": True,
                            "options": {"num_predict": 3000, "num_ctx": retrieval.fit_num_ctx(prompt, 3000)}, "think": False}).encode()
         t0 = time.time()

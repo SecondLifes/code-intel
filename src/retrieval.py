@@ -113,6 +113,35 @@ def fit_num_ctx(prompt: str, num_predict: int) -> int:
     need = int(len(prompt) / CTX_CHARS_PER_TOKEN) + num_predict + 256   # 256 = güvenlik payı
     return max(CTX_MIN, min(need, CTX_MAX))
 
+def free_vram_for(model: str, base_url: str = "") -> None:
+    """`model` DIŞINDA yüklü olan Ollama modellerini bellekten boşaltır.
+
+    NEDEN (canlı doğrulandı, 2026-08-11): bu makinede RTX 5080'in 16.3 GB VRAM'i
+    var ama derin model 19 GB istiyor. Ollama log'u sebebi rakamla veriyordu:
+      "projected to use 19728 MiB vs 14985 MiB free ... need to reduce by 5767 MiB"
+    HTTP 500 tam olarak burada doğuyordu ve tetikleyici MODEL DEĞİŞTİRMEKTİ —
+    panel hızlı model (8.9 GB) ile derin model (19 GB) arasında gidip geliyor;
+    ikisi aynı anda residentken büyük olan asla sığmıyor. Resmî Ollama
+    dokümanı: "For GPU inference, new models must fit entirely within VRAM".
+
+    Kullanıcı kararı: derin modda KALİTE düşmesin, yavaşlık kabul. Bu yüzden
+    çözüm küçük modele geçmek DEĞİL — sadece diğerlerini boşaltıp büyük modele
+    tüm VRAM'i bırakmak. Maliyeti model değişiminde bir yeniden yükleme (~12 sn).
+
+    Sessizce başarısız olur: boşaltma bir iyileştirmedir, asıl isteği düşürmemeli.
+    """
+    base = base_url or OLLAMA
+    try:
+        loaded = json.loads(urllib.request.urlopen(base + "/api/ps", timeout=5).read())
+        for m in loaded.get("models", []):
+            name = m.get("name") or m.get("model") or ""
+            if name and name != model:
+                body = json.dumps({"model": name, "keep_alive": 0}).encode()
+                urllib.request.urlopen(urllib.request.Request(
+                    base + "/api/generate", body, {"Content-Type": "application/json"}), timeout=30).read()
+    except Exception:
+        pass
+
 def ollama_generate(model: str, prompt: str, num_predict: int = 500, timeout: int = 600) -> str:
     body = json.dumps({"model": model, "prompt": prompt, "stream": False,
                         "options": {"num_predict": num_predict,
