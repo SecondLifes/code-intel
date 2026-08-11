@@ -178,17 +178,45 @@ def _tokenize(s: str) -> set[str]:
     s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
     return set(_WORD_RE.findall(s.lower()))
 
+NAME_BOOST_MAX = 3.0
+
 def _name_boost(query_tokens: set[str], name_tokens: set[str]) -> float:
-    """Bir adayın isim-eşleşme çarpanı. TEK kaynak: hem füzyon (_fuse_collection)
-    hem de rerank kolu bunu çağırır — eskiden aynı if/elif İKİ yerde kopyalanmıştı
-    ve birini ayarlayıp diğerini unutmak sessiz bir tutarsızlık üretiyordu."""
+    """Bir adayın isim-eşleşme çarpanı — eşleşmenin GÜCÜYLE orantılı. TEK kaynak:
+    hem füzyon (_fuse_collection) hem de rerank kolu bunu çağırır.
+
+    ESKİ DAVRANIŞ VE NEDEN YANLIŞTI: iki kademe vardı — sorgunun TÜM kelimeleri
+    isimde geçiyorsa 3.0, HERHANGİ biri geçiyorsa düz 1.5. İkinci kademe hiçbir
+    şeyi ayırt etmiyordu: "UUID oluşturma" sorgusunda adında "uuid" geçen her
+    aday, ismi ne kadar alakalı olursa olsun AYNI 1.5'i alıyordu. Yani boost,
+    tam-eşleşme dışındaki her durumda sıralamaya bilgi katmıyor, sadece
+    "eşleşenler" kümesini topluca yukarı itiyordu.
+
+    ŞİMDİ iki oran çarpılıyor:
+      kapsam  = |q ∩ n| / |q|   sorgunun ne kadarı isimde geçiyor (baskın terim)
+      kesinlik= |q ∩ n| / |n|   ismin ne kadarı sorguyla ilgili (düzeltici)
+      çarpan  = 1 + (MAX-1) * kapsam * (0.5 + 0.5 * kesinlik)
+    Kesinlik BİLEREK yarı ağırlıkta: tek başına kullanıldığında (saf F1 denendi)
+    kısa ama alakasız isimleri ödüllendirip Jedi'de gerilemeye yol açıyor
+    (MRR 0.656 -> 0.601). Yarı ağırlıkla yalnızca eşit kapsamlı adaylar
+    arasında ayrıştırıcı oluyor — asıl amaç da buydu.
+
+    Tam eşleşmede (q == n) kapsam=kesinlik=1 olduğu için çarpan yine tam olarak
+    MAX'tır; q ⊆ n ama isimde fazladan kelime varsa artık MAX'ın biraz altında
+    kalır — istenen budur, birebir isim fazlalıklı isimden önce gelmeli.
+
+    ÖLÇÜM (golden set, 60 soru, hibrit, k=8; eski -> yeni):
+      GENEL   MRR 0.560 -> 0.581,  nDCG@8 0.594 -> 0.618,  Recall 70% -> 73%
+      mORMot2 MRR 0.436 -> 0.505   (en zayıf koleksiyon, hedeflenen yerdi)
+      UniDAC  MRR 0.893 -> 0.908,  Jedi 0.656 -> 0.653 (gürültü sınırında)
+    """
     if not query_tokens or not name_tokens:
         return 1.0
-    if query_tokens.issubset(name_tokens):
-        return 3.0
-    if query_tokens & name_tokens:
-        return 1.5
-    return 1.0
+    inter = len(query_tokens & name_tokens)
+    if not inter:
+        return 1.0
+    coverage = inter / len(query_tokens)
+    precision = inter / len(name_tokens)
+    return 1.0 + (NAME_BOOST_MAX - 1.0) * coverage * (0.5 + 0.5 * precision)
 
 def _dense_query(collection: str, dv: list[float], limit: int, flt=None):
     return cl.query_points(collection_name=collection, query=dv, using="dense", limit=limit,
@@ -231,7 +259,9 @@ def _fuse_collection(collection: str, sources, query_tokens: set[str]):
         b = _name_boost(query_tokens, _tokenize(p.payload.get("name") or ""))
         if b != 1.0:
             scores[pid] *= b
-            why[pid]["name_boost"] = b
+            # Artık sürekli bir değer (2.33 gibi) — UI'da "isim boost ×" olarak
+            # gösterildiği için yuvarlanmadan 2.3333333333333335 yazılırdı.
+            why[pid]["name_boost"] = round(b, 2)
     return {pid: (scores[pid], (collection, points[pid]), why[pid]) for pid in points}
 
 def get_collection_priority(collection: str) -> int:

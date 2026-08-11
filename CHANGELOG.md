@@ -23,6 +23,19 @@ Versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **The identifier-name boost did not discriminate between partial matches.** It
+  had two tiers: ×3.0 when every query word appeared in the name, a flat ×1.5
+  when *any* did. For "UUID oluşturma", every candidate with "uuid" in its name
+  got the same ×1.5 regardless of how relevant the rest of the name was, so
+  outside exact matches the boost added no ranking information — it just lifted
+  the whole "matched at least one word" set. The multiplier is now proportional
+  to match strength (query coverage, corrected by how much of the name is
+  query-relevant), and an exact name match now outranks a name that merely
+  contains the query. Measured on the golden set (60 questions, hybrid, k=8):
+  overall MRR 0.560 → 0.581, nDCG@8 0.594 → 0.618, Recall@8 70% → 73%; the
+  weakest collection mORMot2 went 0.436 → 0.505 and UniDAC reached 100% recall.
+  Three rejected alternatives were measured too — a pure-F1 variant regressed
+  Jedi (0.656 → 0.601), which is why name-precision carries only half weight.
 - **Searching while an answer was still streaming crashed the panel with
   `TypeError: Cannot set properties of null (setting 'innerHTML')`.** `run()`
   only disabled the Go button, but three other paths call it directly — the
