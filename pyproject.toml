@@ -13,7 +13,7 @@
 
 [project]
 name = "code-intel"
-version = "1.0.0"
+version = "1.1.0"
 description = "Delphi/Pascal kod tabanları için hibrit (anlamsal+kelime) arama, Türkçe RAG sohbet ve MCP sunucusu — Qdrant + fastembed + Ollama."
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }

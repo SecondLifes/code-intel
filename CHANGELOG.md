@@ -21,6 +21,8 @@ Versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-11
+
 ### Added
 
 - **The Stability/Performance comparison table is now navigable.** The function
