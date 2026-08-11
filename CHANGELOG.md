@@ -21,6 +21,29 @@ Versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The Stability/Performance comparison table is now navigable.** The function
+  name and the file name in each row jump to that function's source card (which
+  opens and briefly flashes so the target is obvious in a long list), and each
+  row carries a 🌐 button that opens the file in the side viewer at the
+  function's line — without scrolling back to the card first. If the source
+  cards are no longer on screen, the jump falls back to the browser view rather
+  than doing nothing. Regression test `tests/test_compare_table_links.py` locks
+  the link that makes this work at all: the table's jump target and `srcCard()`'s
+  real DOM id must stay on the same scheme, otherwise clicking silently does
+  nothing.
+- **Comparison-table scores now influence search ranking.** Scores are persisted
+  per `(collection, chunk_id)` and applied as a deliberately *weak* tie-breaker
+  (×0.88–×1.12; a mid-scale score is exactly neutral). They can reorder
+  candidates that fusion already scored similarly, but cannot lift an unrelated
+  result to the top — the scores are LLM estimates from reading code, not real
+  profiling, so a wrong guess must not be able to bury a relevant hit. Re-scoring
+  a chunk overwrites its previous score, out-of-range model output is clamped,
+  and the shift is shown in the result's "why" tooltip as `puan N/10 ×M`. The
+  same multiplier is applied in the rerank branch so enabling rerank does not
+  silently discard the effect.
+
 ### Fixed
 
 - **The identifier-name boost did not discriminate between partial matches.** It

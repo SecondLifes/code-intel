@@ -46,8 +46,10 @@ OWNER_COLL = "_owners"          # owner kayıt defteri (Owner→Collection model
 GROUP_COLL = "_groups"          # group kayıt defteri (fonksiyonel/konu etiketi)
 APIKEY_COLL = "_api_keys"       # API anahtarı kayıt defteri (Sıra 11a — rol ayrımlı: read|admin)
 JOB_COLL = "_index_jobs"        # kalıcı iş kaydı (Sıra 26) — panel çökerse/yeniden başlarsa devam edebilsin
+CMPSCORE_COLL = "_cmp_scores"   # Stabilite/Performans tablosunun ürettiği puanlar (kullanıcı isteği)
 INTERNAL_COLLS = {"_index_history", "_index_profiles", SEARCH_LOG_COLL, SYMBOL_COLL,
-                  WORKSPACE_COLL, UNITDOC_COLL, ANSWER_COLL, OWNER_COLL, GROUP_COLL, APIKEY_COLL, JOB_COLL}
+                  WORKSPACE_COLL, UNITDOC_COLL, ANSWER_COLL, OWNER_COLL, GROUP_COLL, APIKEY_COLL,
+                  JOB_COLL, CMPSCORE_COLL}
 
 # Cross-encoder reranker: çok dilli (Türkçe sorgu + İngilizce kod çalışır).
 # İlk kullanımda (~1.1GB) indirilir, sonra kalıcı önbellekten yüklenir.
@@ -345,6 +347,92 @@ def log_feedback(collection: str, id: int, q: str, verdict: str, name: str = "")
     except Exception as e:
         return {"error": str(e)[:200]}
 
+# ---------------- Stabilite/Performans puanlarının sıralamaya etkisi ----------------
+# Kullanıcı isteği: karşılaştırma tablosundaki puanlar arama sıralamasını etkilesin.
+# Kullanıcı kararı (bu oturumda açıkça soruldu): etki ZAYIF olsun — yalnızca
+# eşitlik bozucu — ve YALNIZCA puanlanan chunk'a uygulansın.
+#
+# Neden zayıf: bu puanlar gerçek profiling DEĞİL, kod okumaya dayalı LLM
+# tahminidir (/api/compare prompt'u bunu modele de açıkça söylüyor). Güçlü bir
+# çarpan, yanlış bir tahminin alakalı sonucu aşağı itmesi anlamına gelirdi.
+# ±%12'lik bant, benzer füzyon skorlu iki aday arasında sırayı değiştirmeye
+# yeter ama alakasız bir sonucu tepeye taşıyamaz.
+CMP_SCORE_WEIGHT = 0.12   # çarpan bandı: 1 ± bu değer
+CMP_SCORE_NEUTRAL = 5.5   # 1-10 ölçeğinin ortası — bu puan hiçbir etki yapmaz
+_cmp_cache: dict[tuple[str, int], float] = {}
+_cmp_cache_at = 0.0
+CMP_CACHE_TTL = 30.0      # sn — MCP sunucusu ayrı süreç olabilir, yazımı görebilsin
+
+def _cmp_point_id(collection: str, chunk_id: int) -> str:
+    """Deterministik nokta id'si — aynı chunk yeniden puanlanınca ÜZERİNE yazılır,
+    yeni bir kayıt birikmez (aksi halde ortalama alma/ayıklama derdi doğardı)."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"cmp:{collection}:{chunk_id}"))
+
+def save_compare_scores(rows: list[dict], hits: list[dict], q: str = "") -> int:
+    """Karşılaştırma tablosunun satırlarını kalıcılaştırır. `rows[i].i` 1 tabanlı
+    ve `hits` içindeki sırayı gösterir — koleksiyon/chunk id BURADAN alınır,
+    modelin echo ettiği isimden DEĞİL (model isim alanına dosya/satır bilgisi
+    karıştırabiliyor; /api/compare'in kendi notuna bakınız). Sessizce başarısız
+    olur: puan saklama bir iyileştirmedir, tablonun kendisini düşürmemeli."""
+    global _cmp_cache_at
+    pts = []
+    for x in rows:
+        try:
+            h = hits[int(x.get("i", 0)) - 1]
+        except (ValueError, TypeError, IndexError):
+            continue
+        coll, cid = h.get("collection"), h.get("id")
+        if not coll or cid is None:
+            continue
+        st = max(1.0, min(10.0, float(x.get("stability") or 0)))
+        pf = max(1.0, min(10.0, float(x.get("performance") or 0)))
+        pts.append(models.PointStruct(
+            id=_cmp_point_id(coll, int(cid)), vector=[0.0],
+            payload={"collection": coll, "chunk_id": int(cid), "stability": st,
+                     "performance": pf, "combined": (st + pf) / 2.0,
+                     "name": str(h.get("name") or "")[:200], "q": q[:300],
+                     "date": datetime.now(timezone.utc).isoformat()}))
+    if not pts:
+        return 0
+    try:
+        if not cl.collection_exists(CMPSCORE_COLL):
+            cl.create_collection(CMPSCORE_COLL,
+                vectors_config=models.VectorParams(size=1, distance=models.Distance.DOT))
+        cl.upsert(CMPSCORE_COLL, points=pts)
+        _cmp_cache_at = 0.0   # önbelleği geçersiz kıl — yeni puanlar hemen etkili olsun
+        return len(pts)
+    except Exception:
+        return 0
+
+def _cmp_scores() -> dict[tuple[str, int], float]:
+    """(koleksiyon, chunk_id) -> birleşik puan (1-10). Tümü belleğe alınır:
+    puanlar elle üretiliyor (her sorguda değil), yani sayıları küçük kalır ve
+    her aramada 200 aday için Qdrant'a sormaktan çok daha ucuzdur."""
+    global _cmp_cache, _cmp_cache_at
+    if time.time() - _cmp_cache_at < CMP_CACHE_TTL:
+        return _cmp_cache
+    out: dict[tuple[str, int], float] = {}
+    try:
+        if cl.collection_exists(CMPSCORE_COLL):
+            page = None
+            while True:
+                batch, page = cl.scroll(CMPSCORE_COLL, limit=1000, offset=page, with_payload=True)
+                for p in batch:
+                    c, cid = p.payload.get("collection"), p.payload.get("chunk_id")
+                    if c is not None and cid is not None:
+                        out[(c, int(cid))] = float(p.payload.get("combined") or CMP_SCORE_NEUTRAL)
+                if page is None:
+                    break
+    except Exception:
+        return _cmp_cache          # okunamazsa son bilinen hali kullan, aramayı düşürme
+    _cmp_cache, _cmp_cache_at = out, time.time()
+    return out
+
+def _cmp_multiplier(combined: float) -> float:
+    """1-10 puanı, 1 ± CMP_SCORE_WEIGHT bandındaki bir çarpana çevirir.
+    5.5 (ölçeğin ortası) tam olarak 1.0 verir — puanlanmamış adayla eşit."""
+    return 1.0 + CMP_SCORE_WEIGHT * (combined - CMP_SCORE_NEUTRAL) / (10.0 - CMP_SCORE_NEUTRAL)
+
 def ensure_payload_indexes(collection: str):
     """unit/kind/name/lang alanlarına keyword payload index — kind/lang filtresi
     ve get_relations'ın unit scroll'u için. İdempotent (varsa hata yutulur)."""
@@ -416,6 +504,10 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
     # değişmez, bu yüzden gereksiz Qdrant çağrısından kaçınmak için atlanır.
     priority_boost = {c: 1.0 + 0.08 * get_collection_priority(c) for c in collections} if len(collections) > 1 else {}
 
+    # Stabilite/Performans puanları (varsa) — tek seferde okunur, aday başına
+    # Qdrant çağrısı YOK. Hiç puan yoksa sözlük boştur ve sıralama aynen kalır.
+    cmp_scores = _cmp_scores()
+
     all_scored: dict[tuple, tuple] = {}   # (collection, id) -> (score, (collection, point))
     all_why: dict[tuple, dict] = {}       # (collection, id) -> sıralama açıklaması
     errors = {}
@@ -428,9 +520,16 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
         fused = _fuse_collection(c, sources, query_tokens)
         boost = priority_boost.get(c, 1.0)
         for pid, (score, cp, w) in fused.items():
-            all_scored[(c, pid)] = (score * boost, cp)
+            combined = cmp_scores.get((c, pid))
+            cmp_mult = _cmp_multiplier(combined) if combined is not None else 1.0
+            all_scored[(c, pid)] = (score * boost * cmp_mult, cp)
             if boost != 1.0:
                 w["priority_boost"] = round(boost, 2)
+            if combined is not None:
+                # "neden geldi" açıklamasına girer: kullanıcı sıradaki kaymayı
+                # puana bağlayabilsin (UI zaten why alanlarını gösteriyor).
+                w["cmp_score"] = round(combined, 1)
+                w["cmp_boost"] = round(cmp_mult, 3)
             all_why[(c, pid)] = w
     if not all_scored:
         return {"error": "Hiçbir seçili koleksiyonda arama yapılamadı: " + json.dumps(errors, ensure_ascii=False)}
@@ -460,6 +559,12 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
                 prob = 1.0 / (1.0 + math.exp(-rr[i]))
                 all_why.setdefault((c_, p.id), {})["rerank_prob"] = round(prob, 3)
                 prob *= _name_boost(query_tokens, _tokenize(p.payload.get("name") or ""))
+                # Füzyon koluyla AYNI puan çarpanı — rerank açıkken puanların
+                # etkisiz kalması sessiz bir tutarsızlık olurdu (isim-boost'un
+                # iki yere kopyalanmasıyla aynı tuzak).
+                combined = cmp_scores.get((c_, p.id))
+                if combined is not None:
+                    prob *= _cmp_multiplier(combined)
                 prob *= RERANK_PRIOR_K / (RERANK_PRIOR_K + i)
                 scores.append(prob)
             order = sorted(range(len(pool)), key=lambda i: scores[i], reverse=True)

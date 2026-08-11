@@ -464,7 +464,12 @@ def compare(r: CompareReq, request: Request):
     except Exception:
         return JSONResponse({"error": "Model gecerli bir tablo uretemedi." if r.lang == "tr"
                              else "Model did not return a valid table.", "raw": txt[:500]}, status_code=502)
-    return {"rows": rows, "model": mdl}
+    # Kullanıcı isteği: bu puanlar arama sıralamasını da etkilesin. Puanlar
+    # (koleksiyon, chunk_id) anahtarıyla kalıcılaştırılır; sıralamaya ZAYIF bir
+    # eşitlik-bozucu çarpan olarak girer (bkz. retrieval.CMP_SCORE_WEIGHT).
+    # Modelin echo ettiği isim DEĞİL, r.hits'teki asıl kayıt kullanılır.
+    saved = retrieval.save_compare_scores(rows, r.hits, r.q)
+    return {"rows": rows, "model": mdl, "scores_saved": saved}
 
 # ---------------- arama sonucu geri bildirimi (👍/👎) ----------------
 class FeedbackReq(BaseModel):
