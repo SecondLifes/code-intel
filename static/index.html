@@ -582,8 +582,11 @@ $('group-toggle').checked=GROUP_MODE;
 function toggleGrouping(checked){
   GROUP_MODE=checked;
   localStorage.setItem('ci-groupmode',checked?'1':'0');
-  if(ALL_HITS.length){
-    $('hitlist').innerHTML=renderHitList(ALL_HITS);
+  // #hitlist yalniz 'find' modunda var — 'Cevapla'/'Derin' modunda yokken
+  // gruplamayi acmak null.innerHTML ile patliyordu.
+  const hl=$('hitlist');
+  if(ALL_HITS.length&&hl){
+    hl.innerHTML=renderHitList(ALL_HITS);
     applyCodeEnhancements();
   }
 }
@@ -625,7 +628,13 @@ function chatChip(){
 }
 async function run(){
   const q=$('q').value.trim();if(!q)return;
-  LAST_Q=q;LAST_OFFSET=0;
+  // TUM arama-basina durum burada sifirlanmali. Eskiden yalniz LAST_Q/LAST_OFFSET
+  // sifirlaniyordu; ALL_HITS yalniz 'find' dalinda, CMP_* yalniz runAskStream'de
+  // atandigi icin MOD DEGISTIRINCE onceki aramanin verisi hayatta kaliyordu
+  // (kullanici bildirimi: "yeni aramalarda eski arama verilerini temizlemiyor"):
+  //  - toggleGrouping() bayat ALL_HITS'i okuyup olmayan #hitlist'e yazip patliyordu,
+  //  - Stabilite/Performans tablosu bayat CMP_Q/CMP_HITS ile ONCEKI soruya gore kuruluyordu.
+  LAST_Q=q;LAST_OFFSET=0;ALL_HITS=[];CMP_Q='';CMP_HITS=[];
   $('go').disabled=true;
   $('out').innerHTML=`<div class="answer"><span class="spin"></span>${ACT==='ask'?T('Kod aranıyor, yanıt yazılıyor…','Searching code, writing answer…'):T('Aranıyor…','Searching…')}</div>`;
   try{
