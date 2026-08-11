@@ -178,6 +178,18 @@ def _tokenize(s: str) -> set[str]:
     s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
     return set(_WORD_RE.findall(s.lower()))
 
+def _name_boost(query_tokens: set[str], name_tokens: set[str]) -> float:
+    """Bir adayın isim-eşleşme çarpanı. TEK kaynak: hem füzyon (_fuse_collection)
+    hem de rerank kolu bunu çağırır — eskiden aynı if/elif İKİ yerde kopyalanmıştı
+    ve birini ayarlayıp diğerini unutmak sessiz bir tutarsızlık üretiyordu."""
+    if not query_tokens or not name_tokens:
+        return 1.0
+    if query_tokens.issubset(name_tokens):
+        return 3.0
+    if query_tokens & name_tokens:
+        return 1.5
+    return 1.0
+
 def _dense_query(collection: str, dv: list[float], limit: int, flt=None):
     return cl.query_points(collection_name=collection, query=dv, using="dense", limit=limit,
                             with_payload=True, query_filter=flt).points
@@ -216,13 +228,10 @@ def _fuse_collection(collection: str, sources, query_tokens: set[str]):
             points[p.id] = p
             why.setdefault(p.id, {})[f"{label}_rank"] = rank + 1
     for pid, p in points.items():
-        name_tokens = _tokenize(p.payload.get("name") or "")
-        if query_tokens and query_tokens.issubset(name_tokens):
-            scores[pid] *= 3.0    # every query word literally in the identifier name
-            why[pid]["name_boost"] = 3.0
-        elif query_tokens & name_tokens:
-            scores[pid] *= 1.5    # partial overlap
-            why[pid]["name_boost"] = 1.5
+        b = _name_boost(query_tokens, _tokenize(p.payload.get("name") or ""))
+        if b != 1.0:
+            scores[pid] *= b
+            why[pid]["name_boost"] = b
     return {pid: (scores[pid], (collection, points[pid]), why[pid]) for pid in points}
 
 def get_collection_priority(collection: str) -> int:
@@ -420,11 +429,7 @@ def search(q: str, collections: list[str], mode: str = "hybrid", top_k: int = 8,
             for i, (_s, (c_, p)) in enumerate(pool):
                 prob = 1.0 / (1.0 + math.exp(-rr[i]))
                 all_why.setdefault((c_, p.id), {})["rerank_prob"] = round(prob, 3)
-                name_tokens = _tokenize(p.payload.get("name") or "")
-                if query_tokens and query_tokens.issubset(name_tokens):
-                    prob *= 3.0
-                elif query_tokens & name_tokens:
-                    prob *= 1.5
+                prob *= _name_boost(query_tokens, _tokenize(p.payload.get("name") or ""))
                 prob *= RERANK_PRIOR_K / (RERANK_PRIOR_K + i)
                 scores.append(prob)
             order = sorted(range(len(pool)), key=lambda i: scores[i], reverse=True)
