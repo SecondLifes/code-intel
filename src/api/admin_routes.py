@@ -427,11 +427,18 @@ def pick_folder():
 
 @router.get("/api/ollama/models")
 def ollama_models():
+    # fast_default/deep_default de dönülüyor: UI model adını İSTEKLE BİRLİKTE
+    # gönderdiği için (r.model dolu olunca sunucu _CFG'ye hiç bakmaz), model
+    # varsayılanları frontend'de sabit yazılıyken mcp-config.json fiilen
+    # ETKİSİZDİ — kullanıcı config'i değiştirip panelde hiçbir şeyin
+    # değişmediğini görüyordu. Artık tek kaynak config.
+    defaults = {"fast_default": retrieval._CFG.get("fast_model", "gemma4:12b"),
+                "deep_default": retrieval._CFG.get("deep_model", "qwen3.6")}
     try:
         d = json.loads(urllib.request.urlopen(OLLAMA + "/api/tags", timeout=5).read())
-        return {"models": [m["name"] for m in d.get("models", [])]}
+        return {"models": [m["name"] for m in d.get("models", [])], **defaults}
     except Exception as e:
-        return {"models": [], "error": str(e)[:120]}
+        return {"models": [], "error": str(e)[:120], **defaults}
 
 # ---------------- donanım tarama + uyumlu Ollama modeli önerisi ----------------
 def _ps(cmd: str, timeout: int = 15) -> str:

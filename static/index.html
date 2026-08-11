@@ -647,7 +647,11 @@ async function run(){
 async function runAskStream(q, research){
   // research=true: derin araştırma modu — context pack (tam kod + çağrı/tip/unit
   // bağlamı) + derin model; adımlar SSE 'step' olaylarıyla ekranda görünür
-  const model=research?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
+  // Kayitli bir secim yoksa BOS gonderilir: sunucu `r.model or _CFG.get(...)`
+  // yaptigi icin mcp-config.json'daki fast_model/deep_model devreye girer.
+  // Eskiden burada model adi SABIT yaziliydi, bu yuzden config'i degistirmek
+  // panelde hicbir sey degistirmiyordu.
+  const model=research?(localStorage.getItem('ci-mdeep')||''):(localStorage.getItem('ci-mfast')||'');
   const url=research?'/api/research/stream':'/api/ask/stream';
   // 3. tur, Madde 6 (kullanıcı): uzak Ollama sunucusu — yalnız bu iki sohbet
   // ucuna eklenir (ayarlar sayfasında kaydedilir), boşsa alan hiç gönderilmez
@@ -805,7 +809,7 @@ async function explain(id,collection,depth,btn){
   btn.disabled=true;const old=btn.innerHTML;btn.innerHTML='<span class="spin"></span>';
   $('s'+id).classList.add('open');
   try{
-    const model=depth==='deep'?(localStorage.getItem('ci-mdeep')||'qwen3.6'):(localStorage.getItem('ci-mfast')||'gemma4:12b');
+    const model=depth==='deep'?(localStorage.getItem('ci-mdeep')||''):(localStorage.getItem('ci-mfast')||'');  // bos = sunucu config'i kullansin
     const r=await(await fetch('/api/explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id:+id,depth,model})})).json();
     const e=$('e'+id);e.textContent=r.text+(r.cached?'  📌':'');e.classList.add('has');
   }catch(x){await ciError(x);}

@@ -887,7 +887,10 @@ $('idx-coll').addEventListener('change',refreshHistory);
 $('idx-coll').addEventListener('blur',refreshHistory);
 async function loadModels(){try{
   const d=await(await fetch('/api/ollama/models')).json();
-  for(const [sel,def,key] of [['m-fast','gemma4','ci-mfast'],['m-deep','qwen3.6','ci-mdeep']]){
+  // Varsayilanlar artik SUNUCUDAN (mcp-config.json) geliyor — eskiden burada
+  // sabit yazili oldugu icin config'i degistirmek panelde hicbir sey degistirmiyordu.
+  for(const [sel,def,key] of [['m-fast',d.fast_default||'gemma4','ci-mfast'],
+                               ['m-deep',d.deep_default||'qwen3.6','ci-mdeep']]){
     const s=$(sel);s.innerHTML=(d.models||[]).map(m=>`<option>${m}</option>`).join('');
     const saved=localStorage.getItem(key);
     const want=(saved&&d.models.includes(saved))?saved:(d.models.find(m=>m.startsWith(def))||d.models[0]||'');

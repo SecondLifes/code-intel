@@ -485,7 +485,11 @@ def explain_chunk(collection: str, id: int, depth: str = "fast", model: str = ""
     key = "tr_deep" if depth == "deep" else "tr"
     if pt.payload.get(key):
         return {"cached": True, "text": pt.payload[key]}
-    mdl = model or ("qwen3.6" if depth == "deep" else "gemma4:12b")
+    # mcp-config.json OKUNMALI — burada model adı koda gömülüyken config'teki
+    # fast_model/deep_model bu yol için fiilen ETKİSİZDİ (kullanıcı config'i
+    # değiştirip "neden değişmedi" diyordu). Diğer çağrı yerleriyle aynı desen.
+    mdl = model or _CFG.get("deep_model" if depth == "deep" else "fast_model",
+                             "qwen3.6" if depth == "deep" else "gemma4:12b")
     doc = pt.payload.get("doc", "")
     if depth == "fast" and doc:
         prompt = ("Asagidaki Ingilizce kod dokumantasyon ozetini dogal, net bir Turkceye cevir. "
@@ -512,7 +516,7 @@ def review_chunk(collection: str, id: int, model: str = "") -> dict:
     if not pt:
         return {"error": f"chunk bulunamadı: {id}"}
     pt = pt[0]
-    mdl = model or "qwen3.6"
+    mdl = model or _CFG.get("deep_model", "qwen3.6")   # bkz. explain_chunk'taki aynı not
     prompt = ("Asagidaki Delphi kodunu bir kod incelemesi (code review) gozuyle incele. "
               "SADECE gercek/somut sorunlari (bellek sizintisi, null/nil kontrolu eksikligi, "
               "exception guvenligi, kaynak kapatma, mantik hatasi, race condition) rapor et. "
