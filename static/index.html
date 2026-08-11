@@ -460,6 +460,9 @@ function applyCodeEnhancements(root){
     const lang=el.dataset.hljsLang||'';
     hlApply(el,lang,()=>{el.innerHTML=markQuery(el.innerHTML);});
   });
+  // boyama bittikten sonra gercek yukseklik belli olur -> tasmayan kartlarda
+  // "genislet" dugmesini gizle
+  setTimeout(()=>{try{pruneExpandButtons(root);}catch(e){}},0);
 }
 // Sorgu terimlerini kod önizlemesinde işaretle — "bu sonuç neden geldi"nin
 // satır-düzeyi yanıtı. Tag içlerine (span/mark) bulaşmasın diye tag-dışı guard'lı.
@@ -568,7 +571,26 @@ function srcCard(h,i){
 // ZORLA senkron reflow yaptırınca sorun kayboluyor). void el.offsetHeight
 // bu yüzden eklendi — tarayıcının layout/paint'i hemen taze bilgiyle
 // güncellemesini garantiler.
+// Kullanici bildirimi: "genislet dugmesi cogunda calismiyor". OLCULDU: dugme
+// aslinda DOGRU calisiyor — .open sinifi max-height'i 132px'den 520px'e cikariyor.
+// Sorun su ki arama sonuclarinin cogu kisa fonksiyon ve onizleme ZATEN 132px'e
+// siginca genisletecek bir sey kalmiyor, tiklamak gorunur hicbir sey yapmiyor.
+// (Sunucudan "tam kod" cekmeyi denedim ve olctum: 12 sonucun 12'sinde tam kod
+// onizlemeyle AYNI — search() zaten tam kodu donduruyor, kirpma yok. O yuzden
+// ek bir uc eklemek olu agirlik olurdu.) Gercek cozum: tasma yoksa dugmeyi hic
+// gosterme, boylece dugme her zaman ise yarar.
 function tog(id){const el=$('s'+id);el.classList.toggle('open');void el.offsetHeight;}
+
+// Kart cizildikten sonra: icerik gercekten tasiyor mu? Tasmiyorsa "genislet"i
+// gizle (ve basligin tiklama imlecini kaldir) — yaniltici bir dugme birakma.
+function pruneExpandButtons(root){
+  (root||document).querySelectorAll('.src').forEach(el=>{
+    const cw=el.querySelector('.codewrap'), btn=el.querySelector('button.more');
+    if(!cw||!btn)return;
+    const overflows=cw.scrollHeight>cw.clientHeight+2;
+    btn.style.display=overflows?'':'none';
+  });
+}
 
 let LAST_Q='', LAST_OFFSET=0, ALL_HITS=[];
 const PAGE_SIZE=8;

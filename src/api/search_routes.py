@@ -119,7 +119,7 @@ def _sanitize_ollama_url(url: str, trusted: bool) -> str:
     return f"{p.scheme}://{p.netloc}"
 
 class AskReq(BaseModel):
-    q: str; collections: list[str] = ["unidac"]; mode: str = "hybrid"; model: str = "gemma4:12b"; lang: str = "tr"
+    q: str; collections: list[str] = ["unidac"]; mode: str = "hybrid"; model: str = ""; lang: str = "tr"
     # çok turlu sohbet: istemci önceki turları [{"q":..., "a":...}, ...] olarak
     # gönderir — sunucu tarafında oturum TUTULMAZ (stateless), geçmişin sahibi istemcidir
     history: list[dict] = []
@@ -183,13 +183,18 @@ def _ans_put(r, answer: str, hits: list, total: int):
                 vectors_config=_m.VectorParams(size=1, distance=_m.Distance.DOT))
         from qdrant_client import models as _m
         cl.upsert(retrieval.ANSWER_COLL, points=[_m.PointStruct(id=_ans_key(r), vector=[0.0],
-            payload={"answer": answer, "hits": hits[:6], "total": total, "model": r.model,
+            payload={"answer": answer, "hits": hits[:6], "total": total, "model": mdl,
                      "date": datetime.now(timezone.utc).isoformat()})])
     except Exception:
         pass
 
 @router.post("/api/ask")
 def ask(r: AskReq, request: Request):
+    # research_stream/compare zaten boyle coozuyordu; ask/ask_stream ise r.model'i
+    # HAM kullaniyordu. AskReq varsayilani sabit "gemma4:12b" oldugu icin bu uzun
+    # sure gizli kaldi — UI bos model gonderdigi anda Ollama'ya {"model": ""}
+    # gidiyor ve Ollama 404 donuyordu ("HTTP Error 404: Not Found").
+    mdl = r.model or retrieval._CFG.get("fast_model", "gemma4:12b")
     cached = _ans_get(r)
     if cached:
         return {"answer": cached["answer"], "cached": True, "model": cached.get("model"),
@@ -201,7 +206,7 @@ def ask(r: AskReq, request: Request):
     if not hits:
         return {"answer": "Bu soruyla eşleşen kod bulamadım." if r.lang == "tr" else "No matching code found.", "hits": []}
     prompt = _build_ask_prompt(r, hits)
-    body = json.dumps({"model": r.model, "prompt": prompt, "stream": False,
+    body = json.dumps({"model": mdl, "prompt": prompt, "stream": False,
                        "options": {"num_predict": 600, "num_ctx": retrieval.fit_num_ctx(prompt, 600)}, "think": False}).encode()
     ollama_url = _sanitize_ollama_url(r.ollama_url, getattr(request.state, "trusted_client", False))
     t0 = time.time()
@@ -209,11 +214,12 @@ def ask(r: AskReq, request: Request):
         urllib.request.Request((ollama_url or OLLAMA) + "/api/generate", body, {"Content-Type": "application/json"}),
         timeout=600).read()).get("response", "").strip()
     _ans_put(r, txt, hits, sr.get("total", len(hits)))
-    return {"answer": txt, "sec": round(time.time() - t0, 1), "model": r.model, "ms_search": sr["ms"],
+    return {"answer": txt, "sec": round(time.time() - t0, 1), "model": mdl, "ms_search": sr["ms"],
             "total": sr.get("total", len(hits)), "hits": hits}
 
 @router.post("/api/ask/stream")
 def ask_stream(r: AskReq, request: Request):
+    mdl = r.model or retrieval._CFG.get("fast_model", "gemma4:12b")   # bkz. ask()'teki not
     """SSE akışlı RAG sohbet — /api/ask ile aynı arama+prompt yolu, ama Ollama
     yanıtı token token akıtılır: önce `meta` olayı (kaynak hit'ler + arama süresi),
     sonra `data:` satırlarında {"t": parça}, en sonda `done` olayı. Panel arayüzü
@@ -239,7 +245,7 @@ def ask_stream(r: AskReq, request: Request):
     hits = sr["hits"]
 
     def gen():
-        meta = {"hits": hits, "ms_search": sr.get("ms"), "total": sr.get("total", len(hits)), "model": r.model}
+        meta = {"hits": hits, "ms_search": sr.get("ms"), "total": sr.get("total", len(hits)), "model": mdl}
         yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
         if not hits:
             msg = "Bu soruyla eşleşen kod bulamadım." if r.lang == "tr" else "No matching code found."
@@ -247,7 +253,7 @@ def ask_stream(r: AskReq, request: Request):
             yield "event: done\ndata: {}\n\n"
             return
         prompt = _build_ask_prompt(r, hits)
-        body = json.dumps({"model": r.model, "prompt": prompt, "stream": True,
+        body = json.dumps({"model": mdl, "prompt": prompt, "stream": True,
                            "options": {"num_predict": 600, "num_ctx": retrieval.fit_num_ctx(prompt, 600)}, "think": False}).encode()
         t0 = time.time()
         full = []   # akan yanıt biriktirilir — sonda önbelleğe yazmak için
